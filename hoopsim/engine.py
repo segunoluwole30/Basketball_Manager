@@ -58,8 +58,8 @@ class Tuning:
     home_make_bonus: float = 0.016
     # Teams with a big lead ease off and trailing teams push harder. Per point
     # of lead, the leader's make chance drops (and the trailer's rises) by this.
-    score_effect: float = 0.0015
-    score_effect_cap: float = 0.03
+    score_effect: float = 0.0022
+    score_effect_cap: float = 0.04
     # How strongly ratings move outcomes. 1.0 = raw ratings; lower compresses
     # every rating toward 10 so talent gaps produce realistic point margins.
     skill_impact: float = 0.5
@@ -131,7 +131,11 @@ class _Side:
         self.score = 0
         self.period_points: list[int] = []
         self.team_fouls = 0
+        self.late_fouls = 0            # fouls in the last 2 minutes of this period
         self.possessions = 0
+        self.timeouts = sim.rules.timeouts_per_game
+        self.late_timeouts = 0         # used in the final minute of this period
+        self.run_against = 0           # unanswered points by the opponent
 
     @property
     def bench(self) -> list[_InGame]:
@@ -246,6 +250,8 @@ class _GameSim:
     def score(self, side: _Side, points: int) -> None:
         side.score += points
         side.period_points[-1] += points
+        side.run_against = 0
+        self.other(side).run_against += points
         for ig in side.lineup:
             ig.line.plus_minus += points
         for ig in self.other(side).lineup:
@@ -262,7 +268,14 @@ class _GameSim:
         if ig.fouled_out:
             return -1e9
         if crunch:
-            return ig.ca / 10 + 6 * (ig.energy - 0.8)
+            score = ig.ca / 10 + 6 * (ig.energy - 0.8)
+            if self.clock <= 60:
+                lead = ig.team.score - self.other(ig.team).score
+                if lead > 0:               # we'll be fouled: get the free-throw shooters on
+                    score += 0.25 * (ig.p.attributes.free_throw - 10)
+                elif lead < 0:             # we need shooters
+                    score += 0.2 * (ig.p.attributes.three_point - 10)
+            return score
         if garbage:
             return -ig.ca / 10 + 2 * ig.energy
         expected = ig.target_seconds * min(1.0, self.elapsed / self.regulation)
@@ -310,9 +323,17 @@ class _GameSim:
     def foul(self, defense: _Side, fouler: _InGame) -> None:
         fouler.line.pf += 1
         defense.team_fouls += 1
+        if self.clock <= 120:
+            defense.late_fouls += 1
         if fouler.fouled_out:
             self.log(defense, f"{fouler.p.name} fouls out")
             self.substitutions(defense)
+
+    def in_bonus(self, defense: _Side) -> bool:
+        """Free throws for non-shooting fouls: from the 5th team foul, or the 2nd foul
+        inside the last two minutes of a period."""
+        return (defense.team_fouls >= self.rules.team_fouls_bonus
+                or (self.clock <= 120 and defense.late_fouls >= 2))
 
     def free_throws(self, offense: _Side, shooter: _InGame, n: int) -> bool:
         """Shoot ``n`` free throws. Returns True if the last one was missed (live ball)."""
@@ -365,7 +386,8 @@ class _GameSim:
 
     # -- shot selection -------------------------------------------------------
     def _zone_weights(self, ig: _InGame, offense: _Side, defense: _Side,
-                      fast_break: bool, putback: bool) -> list[float]:
+                      fast_break: bool, putback: bool,
+                      bias: Optional[dict] = None) -> list[float]:
         mix = self.t.zone_mix
         drive = 0.7 * ig.r("finishing") + 0.15 * ig.r("speed") + 0.15 * ig.r("ball_handling")
         w = {
@@ -386,6 +408,8 @@ class _GameSim:
             w[RIM] *= 4; w[MID] *= 0.5
         if putback:
             w[RIM] *= 3; w[CLOSE] *= 1.5; w[THREE] *= 0.3
+        for zone, factor in (bias or {}).items():
+            w[zone] *= factor
         return [w[z] for z in ZONES]
 
     def _defender(self, offense: _Side, defense: _Side, slot: int) -> _InGame:
@@ -433,21 +457,41 @@ class _GameSim:
 
     # -- one shot attempt -----------------------------------------------------
     def attempt(self, offense: _Side, defense: _Side, fast_break: bool,
-                putback: Optional[_InGame] = None) -> str:
+                putback: Optional[_InGame] = None, bias: Optional[dict] = None,
+                heave: bool = False, time_left: float = 0.0) -> str:
         """Returns 'score' (dead ball), 'miss' or 'miss_ft' (live rebound).
 
-        ``putback`` is the offensive rebounder going straight back up.
+        ``putback`` is the offensive rebounder going straight back up. ``bias``
+        multiplies zone weights (e.g. {THREE: 8} when a three is needed).
+        ``heave`` is a hurried shot at the buzzer with ``time_left`` seconds to get it off.
         """
         rng, t = self.rng, self.t
+        need_three = bool(bias) and bias.get(THREE, 1) >= 4
         if putback is not None:
             slot = offense.lineup.index(putback)
         else:
-            weights = [math.exp(USAGE * (_offense_skill(ig) - 10)) for ig in offense.lineup]
+            weights = [math.exp(USAGE * (_offense_skill(ig) - 10)
+                                + (0.35 * (ig.r("three_point") - 10) if need_three or heave else 0))
+                       for ig in offense.lineup]
             slot = rng.choices(range(5), weights)[0]
         shooter = offense.lineup[slot]
         defender = self._defender(offense, defense, slot)
+        if heave:
+            # Catch-and-fire with the clock running out: worse the less time there is.
+            # ~3% from the backcourt with under a second, ~14% for a rushed 3-second look.
+            p = _clamp(0.02 + 0.04 * time_left + 0.01 * (shooter.r("three_point") - 10), 0.01, 0.18)
+            shooter.line.fga += 1
+            shooter.line.tpa += 1
+            if rng.random() < p:
+                shooter.line.fgm += 1
+                shooter.line.tpm += 1
+                self.score(offense, 3)
+                self.log(offense, f"{shooter.p.name} BEATS THE BUZZER from deep!")
+                return "score"
+            self.log(offense, f"{shooter.p.name} misses at the buzzer")
+            return "miss"
         zone = _pick(rng, ZONES, self._zone_weights(shooter, offense, defense, fast_break,
-                                                     putback is not None))
+                                                     putback is not None, bias))
         points = 3 if zone == THREE else 2
 
         # Block?
@@ -531,13 +575,34 @@ class _GameSim:
         """
         rng, t = self.rng, self.t
         offense.possessions += 1
+
+        # End-of-game: a trailing defence fouls to stop the clock.
+        if self.should_foul(defense, offense):
+            return self.intentional_foul(offense, defense)
+
+        plan = self.plan_possession(offense, defense, transition)
+        mode, planned_seconds, bias = plan if plan else ("normal", None, None)
+        if mode == "run_out":
+            self.log(offense, f"{offense.team.abbreviation} dribble out the clock")
+            self.advance(self.clock)
+            return "dead"
+        if mode == "heave":
+            # The shot goes up as the horn sounds: it uses all the remaining time.
+            time_left = self.clock
+            self.advance(self.clock)
+            return self._finish(offense, defense,
+                                self.attempt(offense, defense, False, heave=True, time_left=time_left))
+
         pace = 0.6 * offense.tactics.pace + 0.4 * defense.tactics.pace
         fb_base = {"steal": t.fast_break_after_steal, "drb": t.fast_break_after_rebound}.get(transition, 0)
         fb_base *= math.exp(0.05 * (pace - 10)
                             + 0.04 * (defense.tactics.crash_offensive_glass - 10))
-        fast_break = rng.random() < fb_base
+        # Teams protecting a lead or holding for a last shot don't run.
+        fast_break = mode in ("normal", "hurry") and rng.random() < fb_base
         if fast_break:
             seconds = rng.uniform(3, 7)
+        elif planned_seconds is not None:
+            seconds = planned_seconds
         else:
             mean = t.seconds_per_possession * math.exp(-0.025 * (pace - 10))
             if defense.tactics.defensive_scheme is DefensiveScheme.PRESS:
@@ -581,7 +646,7 @@ class _GameSim:
             fouler = _pick(rng, defense.lineup,
                            [math.exp(-0.08 * (d.r("basketball_iq") - 10)) for d in defense.lineup])
             self.foul(defense, fouler)
-            bonus = defense.team_fouls >= self.rules.team_fouls_bonus
+            bonus = self.in_bonus(defense)
             self.log(defense, f"Foul on {fouler.p.name}" + (" (bonus)" if bonus else ""))
             self.substitutions(offense)
             self.substitutions(defense)
@@ -593,8 +658,115 @@ class _GameSim:
             if self.clock <= 0:
                 return "dead"
 
-        result = self.attempt(offense, defense, fast_break)
+        result = self.attempt(offense, defense, fast_break, bias=bias)
         return self._finish(offense, defense, result)
+
+    # -- end-of-game strategy -------------------------------------------------
+    def final_period(self) -> bool:
+        """The 4th quarter or an overtime: the period where the game can end."""
+        return self.period >= 4
+
+    def should_foul(self, defense: _Side, offense: _Side) -> bool:
+        """Should the defence foul straight away to stop the clock?"""
+        if not self.final_period() or self.clock > 45 or self.clock < 0.5:
+            return False
+        deficit = offense.score - defense.score
+        if deficit <= 0:
+            return False
+        if deficit <= 3:
+            # Otherwise the offence holds the ball and the game is over.
+            return self.clock <= self.rules.shot_clock_seconds
+        # Down 4+: extend the game if it's still catchable (~3 points per 6s of fouling).
+        return deficit <= min(12, 3 + self.clock / 6)
+
+    def intentional_foul(self, offense: _Side, defense: _Side) -> str:
+        rng = self.rng
+        while self.clock > 0:
+            self.advance(rng.uniform(1, 4))
+            if rng.random() < 0.65:        # offence gets it to a good shooter
+                target = max(offense.lineup,
+                             key=lambda ig: ig.p.attributes.free_throw + 3 * rng.random())
+            else:                          # defence catches a poor one first
+                target = min(offense.lineup, key=lambda ig: ig.p.attributes.free_throw)
+            # Foul with a role player, not a star or someone about to foul out.
+            fouler = min(defense.lineup, key=lambda d: (d.line.pf >= 5, d.ca))
+            self.foul(defense, fouler)
+            bonus = self.in_bonus(defense)
+            self.log(defense, f"Intentional foul: {fouler.p.name} fouls {target.p.name}")
+            if bonus:
+                self.substitutions(offense)
+                last_missed = self.free_throws(offense, target, 2)
+                return self._finish(offense, defense, "miss_ft" if last_missed else "score")
+            self.substitutions(offense)
+            self.substitutions(defense)
+        return "dead"
+
+    def plan_possession(self, offense: _Side, defense: _Side,
+                        transition: str) -> Optional[tuple[str, Optional[float], Optional[dict]]]:
+        """Clock management. Returns (mode, seconds to use, zone bias) or None for normal play.
+
+        Modes: 'normal', 'hurry', 'hold' (no fast break), 'run_out' (no shot), 'heave'.
+        """
+        rng, clock = self.rng, self.clock
+        sc = self.rules.shot_clock_seconds
+        lead = offense.score - defense.score
+        final = self.final_period()
+
+        if final and lead > 0:
+            if clock <= sc:
+                return ("run_out", None, None)       # shot clock is off: game over
+            if clock <= 2 * sc + 10:
+                return ("hold", rng.uniform(sc - 6, sc - 1), None)   # milk the clock
+        if clock <= 3:
+            return ("heave", None, None)
+
+        if final and lead < 0 and clock <= 75:
+            need = -lead
+            if need == 3 and clock <= 30:
+                bias = {THREE: 30.0}                 # only a three ties it
+            elif need >= 4:
+                bias = {THREE: 4.0}
+            elif need == 2 and clock <= 30:
+                bias = {RIM: 1.6, CLOSE: 1.4, THREE: 0.35}   # play for the tie
+            else:
+                bias = None
+            if self.late_timeout(offense, transition, need):
+                clock = max(0.5, clock - 3)          # ball advanced to the frontcourt
+            if need <= 3 and clock <= sc:
+                # Good look, but leave time for a putback.
+                return ("hold", max(0.5, clock - rng.uniform(3, 7)), bias)
+            return ("hurry", rng.uniform(3, 8), bias)
+
+        if final and lead == 0 and clock <= sc + 2:
+            self.late_timeout(offense, transition, 0)
+            return ("hold", max(0.3, self.clock - rng.uniform(0.5, 3)), None)
+
+        if clock <= sc:                              # end of a quarter: last shot
+            return ("hold", max(0.3, clock - rng.uniform(0.5, 3)), None)
+        if clock <= sc + 14 and not final:           # two-for-one
+            return ("hurry", _clamp(clock - sc - rng.uniform(1, 5), 3, sc - 1), None)
+        return None
+
+    def late_timeout(self, side: _Side, transition: str, deficit: int) -> bool:
+        """Trailing or tied late: burn a timeout to advance the ball and set a play."""
+        if (self.clock <= 40 and deficit <= 6 and side.timeouts > 0
+                and side.late_timeouts < 3 and transition in ("dead", "drb")
+                and self.rng.random() < 0.8):
+            side.late_timeouts += 1
+            return self.call_timeout(side, "draw up a play")
+        return False
+
+    def call_timeout(self, side: _Side, reason: str) -> bool:
+        if side.timeouts <= 0:
+            return False
+        side.timeouts -= 1
+        self.log(side, f"Timeout {side.team.abbreviation} ({reason}), {side.timeouts} left")
+        for team in (self.home, self.away):
+            for ig in team.players.values():
+                ig.energy = min(1.0, ig.energy + 0.03)
+        self.substitutions(self.home)
+        self.substitutions(self.away)
+        return True
 
     def _finish(self, offense: _Side, defense: _Side, result: str) -> str:
         """Keep playing through offensive rebounds until the possession ends."""
@@ -625,6 +797,10 @@ class _GameSim:
         self.clock = minutes * 60.0
         for side in (self.home, self.away):
             side.team_fouls = 0
+            side.late_fouls = 0
+            side.late_timeouts = 0
+            if self.period > 4:
+                side.timeouts = self.rules.timeouts_per_overtime
             side.period_points.append(0)
             if self.period > 1:
                 recovery = self.t.halftime_recovery if self.period == 3 else self.t.period_break_recovery
@@ -639,8 +815,15 @@ class _GameSim:
             ending = self.possession(offense, self.other(offense), ending)
             offense = self.other(offense)
             if ending == "dead" and self.clock > 0:
-                self.substitutions(self.home)
-                self.substitutions(self.away)
+                # Stop the bleeding: timeout on an 8-0 run (saving a few for the end).
+                for side in (self.home, self.away):
+                    if side.run_against >= 8 and side.timeouts > 2 and self.clock > 120:
+                        side.run_against = 0
+                        self.call_timeout(side, "stop the run")
+                        break
+                else:
+                    self.substitutions(self.home)
+                    self.substitutions(self.away)
 
     def run(self) -> GameSim:
         tip = self.jump_ball()

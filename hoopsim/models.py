@@ -556,6 +556,8 @@ class LeagueRules:
     shot_clock_seconds: int = 24
     personal_foul_limit: int = 6
     team_fouls_bonus: int = 5      # team fouls per quarter before free throws
+    timeouts_per_game: int = 7
+    timeouts_per_overtime: int = 2
 
     def to_dict(self) -> dict:
         return asdict(self)

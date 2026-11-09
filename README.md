@@ -80,6 +80,22 @@ clock -> turnover? (handler security vs defenders' hands, press/zone)
   closing lineups in close fourth quarters, and benches in blowouts.
 - **Hidden attributes**: consistency sets game-to-game form; clutch shifts late shooting.
 - **Score effects**: leaders ease off and trailers push, which keeps margins realistic.
+- **End-of-game strategy** (4th quarter and OT):
+  - A trailing defence fouls to stop the clock. It always fouls when down 1–3 with
+    the shot clock off, and fouls when down 4+ inside 45s while the deficit is still
+    catchable. It fouls with role players and hunts poor free-throw shooters.
+  - The NBA last-two-minutes penalty applies: the second foul in the last two
+    minutes puts a team in the bonus.
+  - A leader milks the shot clock, then dribbles out the game once the shot clock is off.
+  - A trailing team hurries, needs a three when down 3, and plays for the tying two
+    when down 2. A tied team holds for the last shot.
+  - Crunch-time lineups bring on free-throw shooters to protect a lead and three-point
+    shooters to chase one.
+- **End of quarters**: two-for-ones, holding for the last shot, and buzzer heaves
+  whose odds depend on the time left.
+- **Timeouts**: 7 per game and 2 per overtime. They're called to stop 8-0 runs and,
+  late in close games, to advance the ball and set a play. They allow substitutions
+  and a short rest.
 - All base rates live in `Tuning`. `skill_impact` controls how much talent gaps matter.
 
 `simulate_game` is pure (it doesn't change the league). `play_game`, `play_day` and
@@ -89,13 +105,12 @@ clock -> turnover? (handler security vs defenders' hands, press/zone)
 
 `python -m hoopsim.calibrate` simulates whole seasons and compares them with
 2023-24 NBA per-team-game averages. All 17 tracked stats are currently within
-tolerance: pace 98.8, 112.5 pts, 47.3% FG, 36.7% 3PT, 34.8 3PA, 21.8 FTA, 24% ORB,
-26.0 AST, 7.6 STL, 5.1 BLK, 13.8 TOV, 19.0 PF, 56% home wins. The average winning
-margin is 12.2 points (NBA: about 12).
+tolerance. The average winning margin is 11.5 points (NBA: about 12).
 
 Known gaps:
-- **Too few overtimes** (2.5% against the NBA's ~6%): there's no end-of-game
-  strategy yet (intentional fouling, holding for the last shot, timeouts).
+- **Overtime is still a little rare**: 3.8% of games against the NBA's ~6% (it was
+  2.2% before end-game strategy). Close finishes are common enough (20% of games are
+  within 3 with 30s left), but fewer of them end tied.
 - **Guards rebound a little too little.**
 - **No in-game injuries.**
 
