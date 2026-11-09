@@ -404,6 +404,97 @@ class GameResult:
         return cls(**d)
 
 
+STAT_FIELDS = ("fgm", "fga", "tpm", "tpa", "ftm", "fta", "orb", "drb",
+               "ast", "stl", "blk", "tov", "pf", "plus_minus")
+
+
+@dataclass
+class PlayerLine:
+    """One player's box-score line. ``fgm``/``fga`` include three-pointers."""
+
+    player_id: int
+    starter: bool = False
+    seconds: float = 0.0
+    fgm: int = 0
+    fga: int = 0
+    tpm: int = 0
+    tpa: int = 0
+    ftm: int = 0
+    fta: int = 0
+    orb: int = 0
+    drb: int = 0
+    ast: int = 0
+    stl: int = 0
+    blk: int = 0
+    tov: int = 0
+    pf: int = 0
+    plus_minus: int = 0
+
+    @property
+    def pts(self) -> int:
+        return 2 * self.fgm + self.tpm + self.ftm
+
+    @property
+    def trb(self) -> int:
+        return self.orb + self.drb
+
+    @property
+    def minutes(self) -> float:
+        return self.seconds / 60
+
+    def to_dict(self) -> dict:
+        d = asdict(self)
+        d["seconds"] = round(self.seconds, 1)
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "PlayerLine":
+        return cls(**d)
+
+
+@dataclass
+class TeamBox:
+    team_id: int
+    period_points: list[int] = field(default_factory=list)
+    lines: list[PlayerLine] = field(default_factory=list)
+    possessions: int = 0
+
+    @property
+    def points(self) -> int:
+        return sum(self.period_points)
+
+    def totals(self) -> PlayerLine:
+        total = PlayerLine(player_id=0)
+        for line in self.lines:
+            total.seconds += line.seconds
+            for f in STAT_FIELDS:
+                setattr(total, f, getattr(total, f) + getattr(line, f))
+        total.plus_minus = 0
+        return total
+
+    def to_dict(self) -> dict:
+        return {"team_id": self.team_id, "period_points": list(self.period_points),
+                "lines": [l.to_dict() for l in self.lines], "possessions": self.possessions}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "TeamBox":
+        return cls(d["team_id"], list(d["period_points"]),
+                   [PlayerLine.from_dict(l) for l in d["lines"]], d.get("possessions", 0))
+
+
+@dataclass
+class BoxScore:
+    home: TeamBox
+    away: TeamBox
+
+    def to_dict(self) -> dict:
+        return {"home": self.home.to_dict(), "away": self.away.to_dict()}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "BoxScore":
+        return cls(TeamBox.from_dict(d["home"]), TeamBox.from_dict(d["away"]))
+
+
 @dataclass
 class Game:
     id: int
@@ -413,6 +504,7 @@ class Game:
     away_team_id: int
     playoff: bool = False
     result: Optional[GameResult] = None
+    box_score: Optional[BoxScore] = None
 
     def __post_init__(self) -> None:
         if self.home_team_id == self.away_team_id:
@@ -428,13 +520,23 @@ class Game:
         return self.home_team_id if self.result.home_score > self.result.away_score else self.away_team_id
 
     def to_dict(self) -> dict:
-        d = asdict(self)
-        d["result"] = self.result.to_dict() if self.result else None
-        return d
+        return {
+            "id": self.id, "season": self.season, "day": self.day,
+            "home_team_id": self.home_team_id, "away_team_id": self.away_team_id,
+            "playoff": self.playoff,
+            "result": self.result.to_dict() if self.result else None,
+            "box_score": self.box_score.to_dict() if self.box_score else None,
+        }
 
     @classmethod
     def from_dict(cls, d: dict) -> "Game":
-        return cls(**{**d, "result": GameResult.from_dict(d["result"]) if d.get("result") else None})
+        return cls(
+            id=d["id"], season=d["season"], day=d["day"],
+            home_team_id=d["home_team_id"], away_team_id=d["away_team_id"],
+            playoff=d.get("playoff", False),
+            result=GameResult.from_dict(d["result"]) if d.get("result") else None,
+            box_score=BoxScore.from_dict(d["box_score"]) if d.get("box_score") else None,
+        )
 
 
 # --------------------------------------------------------------------------
