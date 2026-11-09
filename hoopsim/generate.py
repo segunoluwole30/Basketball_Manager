@@ -11,16 +11,15 @@ from __future__ import annotations
 
 import random
 from datetime import date, timedelta
-from itertools import combinations, permutations
 from typing import Optional
 
+from .lineup import POSITIONS, auto_lineup
 from .models import (
     ABILITY_MAX, ABILITY_MIN, ATTR_MAX, Attributes, Contract, ContractOption, Game,
     HiddenAttributes, League, LeagueRules, Physique, Player, Position, Team, Tactics,
     clamp, compute_ability,
 )
 
-POSITIONS = list(Position)
 
 # Offsets from a league-average 10, in Attributes field order:
 #            fin cls mid 3pt ft pas bh vis per int stl blk orb drb spd str vrt sta iq cmp
@@ -207,52 +206,6 @@ def generate_contract(player: Player, league: League, rng: random.Random) -> Con
 # --------------------------------------------------------------------------
 # Teams, lineups, schedule
 # --------------------------------------------------------------------------
-_MINUTES_SHAPE = [34, 34, 33, 32, 32, 24, 20, 16, 12, 8, 6, 4, 3, 2, 1]
-
-
-def best_starting_five(players: list[Player]) -> list[Player]:
-    """Players for PG, SG, SF, PF, C (in that order) maximising total effective ability.
-
-    Brute force over the top 10 candidates: C(10,5) * 5! = 30k checks, instant.
-    """
-    candidates = sorted(players, key=lambda p: p.current_ability, reverse=True)[:10]
-    if len(candidates) < 5:
-        raise ValueError("need at least 5 players")
-    rating = {(p.id, pos): p.ability_at(pos) for p in candidates for pos in POSITIONS}
-    best, best_score = None, -1
-    for group in combinations(candidates, 5):
-        for order in permutations(group):
-            score = sum(rating[p.id, pos] for p, pos in zip(order, POSITIONS))
-            if score > best_score:
-                best, best_score = list(order), score
-    return best
-
-
-def auto_lineup(league: League, team_id: int) -> None:
-    """Pick a starter for each position, then share 240 minutes down the bench."""
-    tactics = league.teams[team_id].tactics
-    roster = [p for p in league.roster(team_id) if p.is_available]
-    if len(roster) < 5:
-        tactics.starters, tactics.minutes_targets = [], {}
-        return
-    starters = best_starting_five(roster)
-    bench = [p for p in roster if p not in starters]  # already sorted by ability
-    rotation = (starters + bench)[:tactics.rotation_depth]
-
-    total = 48 * 5
-    shape = _MINUTES_SHAPE[:len(rotation)]
-    scale = total / sum(shape)
-    minutes = [min(40, round(m * scale)) for m in shape]
-    i = 0
-    while sum(minutes) != total:  # fix rounding drift, starters first
-        step = 1 if sum(minutes) < total else -1
-        if 1 <= minutes[i] + step <= 40:
-            minutes[i] += step
-        i = (i + 1) % len(minutes)
-    tactics.starters = [p.id for p in starters]
-    tactics.minutes_targets = {p.id: m for p, m in zip(rotation, minutes)}
-
-
 def round_robin(team_ids: list[int]) -> list[list[tuple[int, int]]]:
     """Circle-method rounds; each team plays every other team once."""
     ids = list(team_ids)
@@ -292,7 +245,7 @@ def generate_schedule(league: League, rng: random.Random) -> None:
 
 def generate_league(*, seed: int = 0, num_teams: int = 12, season: int = 2026,
                     roster_size: int = 13, free_agents: int = 30,
-                    name: str = "Hoops League") -> League:
+                    scouting_noise: float = 25.0, name: str = "Hoops League") -> League:
     if not 2 <= num_teams <= len(TEAM_NAMES):
         raise ValueError(f"num_teams must be 2-{len(TEAM_NAMES)}")
     rng = random.Random(seed)
@@ -316,17 +269,25 @@ def generate_league(*, seed: int = 0, num_teams: int = 12, season: int = 2026,
             arena_capacity=rng.randrange(16000, 21000, 500),
         ))
 
-    # Two of each position plus extras, so every team can field a lineup.
+    # Fill rosters with a snake draft so talent is spread out like a real
+    # league, but not evenly: each team's judgement is noisy (``scouting_noise``)
+    # and some reach for players. Two of each position plus extras per team.
     position_plan = POSITIONS * 2 + [rng.choice(POSITIONS) for _ in range(roster_size - 10)]
-    for team in league.teams.values():
-        numbers = rng.sample(range(100), roster_size)
-        for pos, number in zip(position_plan, numbers):
-            player = generate_player(rng, league.next_player_id(), league.current_date, position=pos)
-            player.team_id = team.id
-            player.jersey_number = number
-            player.contract = generate_contract(player, league, rng)
-            league.add_player(player)
-        auto_lineup(league, team.id)
+    order = list(league.teams)
+    rng.shuffle(order)
+    numbers = {tid: rng.sample(range(100), roster_size) for tid in order}
+    for rnd, pos in enumerate(position_plan):
+        pool = [generate_player(rng, 0, league.current_date, position=pos) for _ in order]
+        for tid in (order if rnd % 2 == 0 else order[::-1]):
+            pick = max(pool, key=lambda p: p.current_ability + rng.gauss(0, scouting_noise))
+            pool.remove(pick)
+            pick.id = league.next_player_id()
+            pick.team_id = tid
+            pick.jersey_number = numbers[tid][rnd]
+            pick.contract = generate_contract(pick, league, rng)
+            league.add_player(pick)
+    for tid in order:
+        auto_lineup(league, tid)
 
     for _ in range(free_agents):
         # Free agents are the leftovers: mostly fringe players, the odd useful vet.
