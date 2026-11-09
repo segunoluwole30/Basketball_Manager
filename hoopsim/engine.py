@@ -37,15 +37,15 @@ ZONE_TEXT = {RIM: "layup", CLOSE: "floater", MID: "jumper", THREE: "three"}
 class Tuning:
     """League-wide base rates. Calibrated so all-10 rosters look like a modern pro league."""
 
-    seconds_per_possession: float = 14.8   # until the first shot/turnover
+    seconds_per_possession: float = 15.2   # until the first shot/turnover
     possession_sd: float = 4.5
     turnover_rate: float = 0.143
     steal_share: float = 0.55              # turnovers that are steals
     non_shooting_foul_rate: float = 0.10
     offensive_foul_share: float = 0.15     # dead-ball turnovers that are charges/illegal screens
     team_rebound_share: float = 0.11       # misses out of bounds etc.: no player credited
-    zone_mix: dict = field(default_factory=lambda: {RIM: 0.31, CLOSE: 0.15, MID: 0.13, THREE: 0.41})
-    make: dict = field(default_factory=lambda: {RIM: 0.665, CLOSE: 0.455, MID: 0.43, THREE: 0.356})
+    zone_mix: dict = field(default_factory=lambda: {RIM: 0.315, CLOSE: 0.15, MID: 0.135, THREE: 0.40})
+    make: dict = field(default_factory=lambda: {RIM: 0.672, CLOSE: 0.46, MID: 0.435, THREE: 0.36})
     shooting_foul: dict = field(default_factory=lambda: {RIM: 0.24, CLOSE: 0.13, MID: 0.042, THREE: 0.016})
     block: dict = field(default_factory=lambda: {RIM: 0.088, CLOSE: 0.068, MID: 0.016, THREE: 0.008})
     assist: dict = field(default_factory=lambda: {RIM: 0.62, CLOSE: 0.54, MID: 0.55, THREE: 0.90})
@@ -58,8 +58,16 @@ class Tuning:
     home_make_bonus: float = 0.016
     # Teams with a big lead ease off and trailing teams push harder. Per point
     # of lead, the leader's make chance drops (and the trailer's rises) by this.
-    score_effect: float = 0.0022
+    score_effect: float = 0.0017
     score_effect_cap: float = 0.04
+    # In the last 5 minutes of a single-digit game, leaders play "not to lose"
+    # and trailers take more risks: the score effect is multiplied by this.
+    crunch_score_effect_mult: float = 5.0
+    # Shots at the end of a held-for clock (last shots, milked shot clocks) face a
+    # set defence that knows who's getting the ball: make chance is multiplied by this.
+    late_clock_make_factor: float = 0.70
+    # A trailing team's set play with a few seconds to spare is a better look.
+    chase_make_factor: float = 0.92
     # How strongly ratings move outcomes. 1.0 = raw ratings; lower compresses
     # every rating toward 10 so talent gaps produce realistic point margins.
     skill_impact: float = 0.5
@@ -182,6 +190,9 @@ def _clamp(x: float, lo: float, hi: float) -> float:
 
 
 USAGE = 0.34   # how strongly better scorers dominate the shots
+# On a held-for last shot the defence is set and walls off the rim, so the
+# shot becomes an isolation pull-up far more often.
+ISOLATION_MIX = {RIM: 0.55, CLOSE: 0.9, MID: 1.9, THREE: 1.15}
 
 
 def _offense_skill(ig: _InGame) -> float:
@@ -448,7 +459,11 @@ class _GameSim:
         if offense.home:
             p += t.home_make_bonus
         lead = offense.score - defense.score
-        p -= _clamp(lead * t.score_effect, -t.score_effect_cap, t.score_effect_cap)
+        effect, cap = t.score_effect, t.score_effect_cap
+        if self.final_period() and self.clock <= 300 and abs(lead) <= 9:
+            effect *= t.crunch_score_effect_mult
+            cap *= t.crunch_score_effect_mult
+        p -= _clamp(lead * effect, -cap, cap)
         if self.clutch_time():
             p += 0.004 * (ig.p.hidden.clutch - 10)
         if scheme is DefensiveScheme.PRESS:
@@ -458,12 +473,15 @@ class _GameSim:
     # -- one shot attempt -----------------------------------------------------
     def attempt(self, offense: _Side, defense: _Side, fast_break: bool,
                 putback: Optional[_InGame] = None, bias: Optional[dict] = None,
-                heave: bool = False, time_left: float = 0.0) -> str:
+                heave: bool = False, time_left: float = 0.0, late_clock: str = "",
+                full_court: bool = False) -> str:
         """Returns 'score' (dead ball), 'miss' or 'miss_ft' (live rebound).
 
         ``putback`` is the offensive rebounder going straight back up. ``bias``
         multiplies zone weights (e.g. {THREE: 8} when a three is needed).
         ``heave`` is a hurried shot at the buzzer with ``time_left`` seconds to get it off.
+        ``late_clock`` is "hold" for a shot at the end of a held-for clock (tough look)
+        or "chase" for a trailing team's set play.
         """
         rng, t = self.rng, self.t
         need_three = bool(bias) and bias.get(THREE, 1) >= 4
@@ -478,8 +496,10 @@ class _GameSim:
         defender = self._defender(offense, defense, slot)
         if heave:
             # Catch-and-fire with the clock running out: worse the less time there is.
-            # ~3% from the backcourt with under a second, ~14% for a rushed 3-second look.
-            p = _clamp(0.02 + 0.04 * time_left + 0.01 * (shooter.r("three_point") - 10), 0.01, 0.18)
+            # Frontcourt: ~6% with a second left, ~14% for a rushed 3-second look.
+            # Full court: ~3% to ~7%.
+            per_second = 0.02 if full_court else 0.04
+            p = _clamp(0.01 + per_second * time_left + 0.01 * (shooter.r("three_point") - 10), 0.01, 0.18)
             shooter.line.fga += 1
             shooter.line.tpa += 1
             if rng.random() < p:
@@ -510,6 +530,8 @@ class _GameSim:
 
         make_p = self._make_prob(shooter, zone, offense, defense, defender, fast_break,
                                  putback is not None)
+        if late_clock:
+            make_p *= t.late_clock_make_factor if late_clock == "hold" else t.chase_make_factor
 
         # Shooting foul?
         p_foul = t.shooting_foul[zone] * math.exp(0.05 * (shooter.r("strength") - 10)
@@ -590,8 +612,12 @@ class _GameSim:
             # The shot goes up as the horn sounds: it uses all the remaining time.
             time_left = self.clock
             self.advance(self.clock)
+            # After a rebound or steal the ball has to go the length of the floor;
+            # after a dead ball (often a timeout) it's inbounded in the frontcourt.
+            full_court = transition in ("drb", "steal")
             return self._finish(offense, defense,
-                                self.attempt(offense, defense, False, heave=True, time_left=time_left))
+                                self.attempt(offense, defense, False, heave=True,
+                                             time_left=time_left, full_court=full_court))
 
         pace = 0.6 * offense.tactics.pace + 0.4 * defense.tactics.pace
         fb_base = {"steal": t.fast_break_after_steal, "drb": t.fast_break_after_rebound}.get(transition, 0)
@@ -624,7 +650,9 @@ class _GameSim:
             p_to -= 0.01
         if fast_break:
             p_to *= 0.6
-        if rng.random() < _clamp(p_to, 0.04, 0.3):
+        if mode in ("hold", "chase"):
+            p_to *= 0.65                   # a careful set play, often out of a timeout
+        if rng.random() < _clamp(p_to, 0.03, 0.3):
             handler.line.tov += 1
             if rng.random() < t.steal_share:
                 thief = _pick(rng, defense.lineup,
@@ -658,7 +686,10 @@ class _GameSim:
             if self.clock <= 0:
                 return "dead"
 
-        result = self.attempt(offense, defense, fast_break, bias=bias)
+        late = mode if mode in ("hold", "chase") else ""
+        if mode == "hold" and bias is None:
+            bias = ISOLATION_MIX
+        result = self.attempt(offense, defense, fast_break, bias=bias, late_clock=late)
         return self._finish(offense, defense, result)
 
     # -- end-of-game strategy -------------------------------------------------
@@ -676,8 +707,11 @@ class _GameSim:
         if deficit <= 3:
             # Otherwise the offence holds the ball and the game is over.
             return self.clock <= self.rules.shot_clock_seconds
-        # Down 4+: extend the game if it's still catchable (~3 points per 6s of fouling).
-        return deficit <= min(12, 3 + self.clock / 6)
+        # Down 4+: while the shot clock still forces the offence to shoot, defend.
+        # Once it can't, extend the game if it's still catchable.
+        if self.clock > self.rules.shot_clock_seconds + 4:
+            return False
+        return deficit <= min(12, 3 + self.clock / 5)
 
     def intentional_foul(self, offense: _Side, defense: _Side) -> str:
         rng = self.rng
@@ -705,7 +739,8 @@ class _GameSim:
                         transition: str) -> Optional[tuple[str, Optional[float], Optional[dict]]]:
         """Clock management. Returns (mode, seconds to use, zone bias) or None for normal play.
 
-        Modes: 'normal', 'hurry', 'hold' (no fast break), 'run_out' (no shot), 'heave'.
+        Modes: 'normal', 'hurry', 'hold' (no fast break; a tough late-clock look),
+        'chase' (trailing team's set play), 'run_out' (no shot), 'heave'.
         """
         rng, clock = self.rng, self.clock
         sc = self.rules.shot_clock_seconds
@@ -733,8 +768,8 @@ class _GameSim:
             if self.late_timeout(offense, transition, need):
                 clock = max(0.5, clock - 3)          # ball advanced to the frontcourt
             if need <= 3 and clock <= sc:
-                # Good look, but leave time for a putback.
-                return ("hold", max(0.5, clock - rng.uniform(3, 7)), bias)
+                # A set play, leaving a few seconds for a putback.
+                return ("chase", max(0.5, clock - rng.uniform(3, 7)), bias)
             return ("hurry", rng.uniform(3, 8), bias)
 
         if final and lead == 0 and clock <= sc + 2:

@@ -28,8 +28,12 @@ class FoulingTests(unittest.TestCase):
         sim = late_game(100, 102, clock=40)
         self.assertFalse(sim.should_foul(sim.home, sim.away))
 
-    def test_foul_when_down_four_plus_but_catchable(self):
+    def test_down_four_plus_defends_while_shot_clock_is_on(self):
         sim = late_game(100, 106, clock=40)
+        self.assertFalse(sim.should_foul(sim.home, sim.away))
+
+    def test_foul_when_down_four_plus_but_catchable(self):
+        sim = late_game(100, 106, clock=20)
         self.assertTrue(sim.should_foul(sim.home, sim.away))
 
     def test_give_up_when_out_of_reach(self):

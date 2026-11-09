@@ -89,10 +89,10 @@ class EngineBehaviourTests(unittest.TestCase):
         boost(league, g.away_team_id, 3)
         rng = random.Random(0)
         away_wins = 0
-        for _ in range(60):
+        for _ in range(300):               # true rate is ~0.77; 300 games keeps noise ~±2.5%
             r = simulate_game(league, g, rng).result
             away_wins += r.away_score > r.home_score
-        self.assertGreater(away_wins / 60, 0.75)
+        self.assertGreater(away_wins / 300, 0.70)
 
     def test_injured_players_sit(self):
         league = generate_league(seed=4)

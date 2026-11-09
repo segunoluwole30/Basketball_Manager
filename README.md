@@ -91,8 +91,9 @@ clock -> turnover? (handler security vs defenders' hands, press/zone)
     when down 2. A tied team holds for the last shot.
   - Crunch-time lineups bring on free-throw shooters to protect a lead and three-point
     shooters to chase one.
-- **End of quarters**: two-for-ones, holding for the last shot, and buzzer heaves
-  whose odds depend on the time left.
+- **End of quarters**: two-for-ones, holding for the last shot (a tougher,
+  isolation-heavy look), and buzzer heaves whose odds depend on the time left and
+  whether the ball has to go full court.
 - **Timeouts**: 7 per game and 2 per overtime. They're called to stop 8-0 runs and,
   late in close games, to advance the ball and set a play. They allow substitutions
   and a short rest.
@@ -105,12 +106,21 @@ clock -> turnover? (handler security vs defenders' hands, press/zone)
 
 `python -m hoopsim.calibrate` simulates whole seasons and compares them with
 2023-24 NBA per-team-game averages. All 17 tracked stats are currently within
-tolerance. The average winning margin is 11.5 points (NBA: about 12).
+tolerance. The average winning margin is 11.5 points (NBA: about 12), and
+5.7% of games go to overtime (NBA: 6.2–6.4%).
+
+What it took to get overtime right (it was 2.2%):
+- **Tough last shots.** Held-for last shots face a set defence: an isolation shot
+  mix and a 0.70 make factor. Trailing teams' set plays get a milder 0.92. Tied
+  teams win on the last possession about a third of the time; most games go to OT.
+- **Realistic heaves.** Full-court heaves after a rebound are much harder than
+  frontcourt heaves after a timeout.
+- **Fouling timing.** Teams down 4+ defend while the shot clock still forces a shot,
+  and only foul once it's off.
+- **Crunch-time compression.** In the last 5 minutes of a single-digit game the
+  score effect is 5x stronger: leaders play not to lose, trailers take risks.
 
 Known gaps:
-- **Overtime is still a little rare**: 3.8% of games against the NBA's ~6% (it was
-  2.2% before end-game strategy). Close finishes are common enough (20% of games are
-  within 3 with 30s left), but fewer of them end tied.
 - **Guards rebound a little too little.**
 - **No in-game injuries.**
 
