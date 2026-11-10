@@ -13,6 +13,7 @@ import time
 
 from ..generate import generate_league
 from .sim import DEFAULT_TUNING, HalfCourtGame, SpatialTuning
+from .values import HEURISTIC, DecisionModel, default_model
 
 ZONES = ("rim", "close", "mid", "three")
 
@@ -35,7 +36,8 @@ TARGETS = {
 }
 
 
-def collect(possessions: int, seed: int, tuning: SpatialTuning = DEFAULT_TUNING) -> dict:
+def collect(possessions: int, seed: int, tuning: SpatialTuning = DEFAULT_TUNING,
+            model: DecisionModel = None) -> dict:
     league = generate_league(seed=seed)
     rng = random.Random(seed)
     teams = sorted(league.teams)
@@ -44,7 +46,7 @@ def collect(possessions: int, seed: int, tuning: SpatialTuning = DEFAULT_TUNING)
     total = None
     start = time.time()
     for home, away in pairs:
-        game = HalfCourtGame(league, home, away, rng, tuning, record=False)
+        game = HalfCourtGame(league, home, away, rng, tuning, record=False, model=model)
         game.play(per_pair)
         total = game.stats if total is None else total + game.stats
     elapsed = time.time() - start
@@ -95,8 +97,12 @@ def main() -> None:
     ap = argparse.ArgumentParser(prog="hoopsim.spatial.measure")
     ap.add_argument("--possessions", type=int, default=4000)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--values", choices=["learned", "heuristic"], default="learned",
+                    help="decision values to use (learned falls back to heuristic if untrained)")
     args = ap.parse_args()
-    report(collect(args.possessions, args.seed))
+    model = HEURISTIC if args.values == "heuristic" else default_model()
+    print(f"Decision values: {model.meta.get('source', '?')}\n")
+    report(collect(args.possessions, args.seed, model=model))
 
 
 if __name__ == "__main__":

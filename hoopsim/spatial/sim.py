@@ -31,6 +31,7 @@ from ..lineup import plan_rotation
 from ..models import League, Player
 from . import court as C
 from .court import CLOSE_ZONE, MID_ZONE, RIM, RIM_ZONE, THREE_ZONE
+from .values import DecisionModel, default_model, hold_curve
 
 ZONES = (RIM_ZONE, CLOSE_ZONE, MID_ZONE, THREE_ZONE)
 
@@ -46,12 +47,15 @@ class SpatialTuning:
     shooting_foul: dict = field(default_factory=lambda: {RIM_ZONE: 0.42, CLOSE_ZONE: 0.20, MID_ZONE: 0.06, THREE_ZONE: 0.025})
     block_base: dict = field(default_factory=lambda: {RIM_ZONE: 0.14, CLOSE_ZONE: 0.09, MID_ZONE: 0.02, THREE_ZONE: 0.01})
     free_throw: float = 0.775
-    dribble_turnover_per_sec: float = 0.02    # with a defender in your face
+    dribble_turnover_per_sec: float = 0.045   # with a defender in your face
     pass_steal_scale: float = 0.30
     pass_speed: float = 40.0                  # ft/s
-    defensive_rebound_edge: float = 4.0
+    defensive_rebound_edge: float = 4.6
     help_trigger_distance: float = 22.0       # drive this close to the rim draws help
-    charge_chance: float = 0.10
+    charge_chance: float = 0.15
+    # Jump shots right off a pass beat jump shots off the dribble (NBA: ~37% vs ~34% from three).
+    catch_shoot_bonus: float = 0.02
+    off_dribble_penalty: float = 0.035
 
 
 DEFAULT_TUNING = SpatialTuning()
@@ -152,8 +156,16 @@ class HalfCourtGame:
     """Alternate half-court possessions between two teams' starting fives."""
 
     def __init__(self, league: League, home_id: int, away_id: int, rng: random.Random,
-                 tuning: SpatialTuning = DEFAULT_TUNING, record: bool = True):
+                 tuning: SpatialTuning = DEFAULT_TUNING, record: bool = True,
+                 model: Optional[DecisionModel] = None, explore: float = 0.0,
+                 recorder: Optional[dict] = None):
+        """``model`` values the ball handler's options (default: learned values if
+        trained, else hand-written). ``explore`` is the chance of a random option and
+        ``recorder`` collects (features, possession points) per option, for training."""
         self.league, self.rng, self.t, self.record = league, rng, tuning, record
+        self.model = model or default_model()
+        self.explore = explore
+        self.recorder = recorder
         self.teams = {"home": league.teams[home_id], "away": league.teams[away_id]}
         self.agents = {side: self._starters(side) for side in ("home", "away")}
         self.everyone = self.agents["home"] + self.agents["away"]
@@ -201,7 +213,9 @@ class HalfCourtGame:
 
     # ------------------------------------------------------------------ shot model
     def make_prob(self, shooter: Agent, p: tuple[float, float], contest_d: Optional[float] = None,
-                  defender: Optional[Agent] = None, moving: bool = False) -> tuple[float, str]:
+                  defender: Optional[Agent] = None, moving: bool = False,
+                  catch: Optional[bool] = None) -> tuple[float, str]:
+        """``catch``: True for a catch-and-shoot, False off the dribble, None if unknown."""
         t = self.t
         z = C.zone(p)
         skill = {RIM_ZONE: "finishing", CLOSE_ZONE: "close_range", MID_ZONE: "mid_range",
@@ -220,11 +234,14 @@ class HalfCourtGame:
             prob -= 0.015 * (d_rim - 25)                         # deep threes
         if moving:
             prob -= 0.03
+        if catch is not None and z in (MID_ZONE, THREE_ZONE):
+            prob += t.catch_shoot_bonus if catch else -t.off_dribble_penalty
         return max(0.02, min(0.95, prob)), z
 
-    def shot_value(self, shooter: Agent, p=None, contest_d=None, defender=None, moving=False) -> float:
+    def shot_value(self, shooter: Agent, p=None, contest_d=None, defender=None, moving=False,
+                   catch: Optional[bool] = None) -> float:
         p = p or shooter.pos
-        prob, z = self.make_prob(shooter, p, contest_d, defender, moving)
+        prob, z = self.make_prob(shooter, p, contest_d, defender, moving, catch)
         points = 3 if z == THREE_ZONE else 2
         return prob * points
 
@@ -250,6 +267,7 @@ class HalfCourtGame:
         self.orb_time = -9.0
         self.next_decision = rng.uniform(1.5, 3.0)
         self.passes = 0
+        self.decisions: list[tuple[str, list[float]]] = []
         self.result: Optional[str] = None
         self.points = 0
 
@@ -283,6 +301,9 @@ class HalfCourtGame:
             steps += 1
         if self.result is None:
             self.result = "stalled"
+        if self.recorder is not None:
+            for kind, feats in self.decisions:
+                self.recorder.setdefault(kind, []).append((feats, float(self.points)))
         self.stats["seconds"] += self.now
         self.stats[f"end_{self.result}"] += 1
         self.score[side] += self.points
@@ -417,6 +438,8 @@ class HalfCourtGame:
                 # (between ball and rim), then sink to protect the rim once he comes off it.
                 depth = 9.0 if self.pnr["set"] else 14.0
                 d.target(C.toward(RIM, self.holder.pos, min(depth, C.dist_to_rim(self.holder.pos) - 2)))
+            elif self.flight and self.flight.kind == "pass" and self.flight.data.get("to") is man:
+                d.target(C.toward(man.pos, RIM, 3.0))             # close out on the catch
             elif man is self.holder:
                 # Press up on shooters out to 30 ft; give non-shooters room out there.
                 deep = C.dist_to_rim(man.pos)
@@ -484,34 +507,43 @@ class HalfCourtGame:
         self.decide(h)
 
     def decide(self, h: Agent) -> None:
-        now, rng = self.now, self.rng
-        options: list[tuple[float, tuple]] = []
+        """Score every option with the decision model, then pick one (smarter players
+        pick the best more reliably). Decisions are recorded for training."""
+        now, rng, sc = self.now, self.rng, self.shot_clock
+        options: list[tuple[str, tuple, list[float]]] = []      # (kind, action, features)
         d_rim = C.dist_to_rim(h.pos)
         moving = self.mode == "drive"
         if d_rim < 30:
             # Judge the contest by where the nearest defender will be at release.
             closer, dd = self.nearest_defender(h.pos)
-            closing = self.closing_speed(closer, h)
-            predicted = max(0.0, dd - closing * 0.35)
-            options.append((self.shot_value(h, contest_d=predicted, defender=closer, moving=moving), ("shoot",)))
+            predicted = max(0.0, dd - self.closing_speed(closer, h) * 0.35)
+            ep = self.shot_value(h, contest_d=predicted, defender=closer, moving=moving,
+                                 catch=self.just_caught(moving))
+            options.append(("shoot", ("shoot",), [1.0, ep, float(C.is_three(h.pos)), float(moving),
+                                                   max(0.0, 6.0 - sc) / 6.0]))
         if self.mode == "probe":
-            options.append((self.drive_value(h), ("drive",)))
+            options.append(("drive", ("drive",), self.drive_features(h)))
             if self.pnr is None and self.pnr_used < 2 and d_rim > 17:
                 scr = self.offense[4] if self.offense[4] is not h else self.offense[3]
-                v = (self.hold_value(self.shot_clock - 4) + 0.06
-                     + 0.012 * (h.a("ball_handling") - 10) + 0.008 * (scr.a("strength") - 10))
-                options.append((v, ("pnr", scr)))
+                options.append(("pnr", ("pnr", scr), [1.0, hold_curve(sc - 4), h.a("ball_handling") - 10.0,
+                                                      scr.a("strength") - 10.0]))
+            options.append(("hold", ("hold",), [1.0, hold_curve(sc), sc / 24.0]))
         else:
-            options.append((self.drive_value(h, continuing=True), ("continue",)))
+            options.append(("continue", ("continue",), self.drive_features(h)))
         for mate in self.offense:
             if mate is not h:
-                options.append((self.pass_value(h, mate), ("pass", mate)))
-        hold = self.hold_value(self.shot_clock)
-        if self.mode == "probe":
-            options.append((hold, ("hold",)))
-        temperature = 0.03 + 0.006 * (20 - h.a("basketball_iq"))   # smarter = closer to the best option
-        choice = _softmax_choice(rng, options, temperature)
-        kind = choice[0]
+                feats = self.pass_features(h, mate)
+                if feats is not None:
+                    options.append(("pass", ("pass", mate), feats))
+
+        if self.explore and rng.random() < self.explore:
+            kind, action, feats = rng.choice(options)              # try something (training only)
+        else:
+            temperature = 0.03 + 0.006 * (20 - h.a("basketball_iq"))   # smarter = closer to the best option
+            scored = [(self.model.value(k, f), (k, a, f)) for k, a, f in options]
+            kind, action, feats = _softmax_choice(rng, scored, temperature)
+        self.decisions.append((kind, feats))
+        self.stats[f"choice_{kind}"] += 1
         self.next_decision = now + h.reaction * rng.uniform(1.2, 2.2)
         if kind == "shoot":
             self.take_shot(h, moving=moving)
@@ -520,9 +552,9 @@ class HalfCourtGame:
         elif kind == "continue":
             pass
         elif kind == "pnr":
-            self.call_pnr(h, choice[1])
+            self.call_pnr(h, action[1])
         elif kind == "pass":
-            self.throw_pass(h, choice[1])
+            self.throw_pass(h, action[1])
         else:
             self.next_decision = now + rng.uniform(0.6, 1.2)
 
@@ -533,33 +565,24 @@ class HalfCourtGame:
         d = math.hypot(dx, dy) or 1.0
         return max(0.0, (defender.vx * dx + defender.vy * dy) / d)
 
-    def hold_value(self, shot_clock: float) -> float:
-        """What it's worth to keep running the offence: early in the clock a team
-        can wait for a good shot; late it has to take what's there."""
-        return 1.04 * max(0.0, min(1.0, (shot_clock - 3) / 11))
+    def just_caught(self, moving: bool) -> bool:
+        """Shooting straight off a pass (no dribble move in between)?"""
+        return not moving and self.now - self.catch_time < 1.2
 
-    def drive_value(self, h: Agent, continuing: bool = False) -> float:
+    def drive_features(self, h: Agent) -> list[float]:
         on = self.guarded_by(h)
         gap = C.dist(h.pos, on.pos)
-        adv = ((h.a("speed") + h.a("ball_handling")) - (on.a("perimeter_defense") + on.a("speed"))) / 2
+        edge = ((h.a("speed") + h.a("ball_handling")) - (on.a("perimeter_defense") + on.a("speed"))) / 2
         crowd = sum(1 for d in self.defense if d is not on and C.dist_to_rim(d.pos) < 9)
-        beaten = C.dist_to_rim(on.pos) > C.dist_to_rim(h.pos) + 1          # he's behind you
+        beaten = C.dist_to_rim(on.pos) > C.dist_to_rim(h.pos) + 1 or self.now < on.stuck_until
         closeout = self.closing_speed(on, h) > 8 and gap < 8                 # flying at you: go past him
-        # Worth what's left of the possession plus the advantage the drive creates.
-        # The help defence itself is simulated, so only lightly pre-judge a crowded paint.
-        v = (self.hold_value(self.shot_clock - 2.5) + 0.01 + 0.025 * adv
-             + 0.05 * max(-1.0, min(3.0, gap - 3)) - 0.03 * crowd
-             + (0.12 if closeout else 0.0))
-        if beaten or self.now < on.stuck_until:
-            v += 0.15
-        if continuing:
-            v += 0.05 if beaten else -0.05
-        return v
+        return [1.0, hold_curve(self.shot_clock - 2.5), edge, max(-1.0, min(3.0, gap - 3)), float(crowd),
+                float(beaten), float(closeout), C.dist_to_rim(h.pos) / 30.0]
 
-    def pass_value(self, h: Agent, mate: Agent) -> float:
+    def pass_features(self, h: Agent, mate: Agent) -> Optional[list[float]]:
         d = C.dist(h.pos, mate.pos)
         if d > 40:
-            return -1.0
+            return None
         flight = d / self.t.pass_speed + 0.15
         risk = 0.0
         for de in self.defense:
@@ -568,16 +591,15 @@ class HalfCourtGame:
                 risk += 0.25 * (2.5 - lane) / 2.5
         guard = self.guarded_by(mate)
         contest_after = max(0.0, C.dist(guard.pos, mate.pos) - guard.max_speed * max(0.0, flight - guard.reaction))
-        catch_shoot = self.shot_value(mate, contest_d=contest_after, defender=guard)
+        catch_shoot = self.shot_value(mate, contest_d=contest_after, defender=guard, catch=True)
         if C.dist_to_rim(mate.pos) > 30:
             catch_shoot = 0.0
+        clock = hold_curve(self.shot_clock - flight)
         # Moving the ball keeps the offence alive and makes the defence rotate.
-        keep_going = self.hold_value(self.shot_clock - flight) + 0.04 + 0.01 * (mate.a("ball_handling") - 10)
-        value = max(catch_shoot, keep_going)
-        value = value * (1 - min(0.9, risk)) - 0.03
-        if mate is self.last_passer and self.now - self.catch_time < 1.5:
-            value -= 0.08                                  # don't just hand it straight back
-        return value
+        keep_going = clock + 0.04 + 0.01 * (mate.a("ball_handling") - 10)
+        best = max(catch_shoot, keep_going) * (1 - min(0.9, risk))
+        back = float(mate is self.last_passer and self.now - self.catch_time < 1.5)
+        return [1.0, catch_shoot, clock, risk, back, best]
 
     # ------------------------------------------------------------------ actions
     def dribble_turnover(self, h: Agent) -> bool:
@@ -671,6 +693,9 @@ class HalfCourtGame:
                     self.mode = "pass"
                     return
         self.flight = Flight("pass", h.pos, mate.pos, self.now, flight, data={"to": mate, "passer": h})
+        # The receiver's defender reads the pass and breaks on it (half his usual reaction).
+        guard = self.guarded_by(mate)
+        guard.next_think = min(guard.next_think, self.now + guard.reaction * 0.5)
         self.holder = None
         self.mode = "pass"
         self.passes += 1
@@ -679,7 +704,7 @@ class HalfCourtGame:
     def take_shot(self, h: Agent, moving: bool) -> None:
         rng, t = self.rng, self.t
         defender, dd = self.nearest_defender(h.pos)
-        prob, z = self.make_prob(h, h.pos, dd, defender, moving)
+        prob, z = self.make_prob(h, h.pos, dd, defender, moving, self.just_caught(moving))
         points = 3 if z == THREE_ZONE else 2
         level = max(0.0, min(1.0, (6.0 - dd) / 5.0))
         shot_d = C.dist_to_rim(h.pos)

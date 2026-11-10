@@ -71,18 +71,53 @@ pause/speed/skip controls.
 - **Speed**: about 1.5 ms per possession (a game in about 0.3 s), fast enough for
   whole seasons.
 
-Measured on three generated leagues (3,000 possessions each), these are in NBA range:
-FG% at the rim, in close and from three; the share of shots that are contested;
-blocks; assists per made shot; and mostly turnovers and offensive rebounds.
+### Learned decision values (`values.py`, `train.py`)
 
-Known gaps:
-- **Too many threes** (61–71% of shots against ~41%) and **almost no mid-range**.
-  Points per possession are about 1.1 (target ~0.98).
-- **Possessions are a bit short** (~12 s against ~14.5 s).
+Each option a ball handler has (shoot, drive, continue a drive, pass to each
+teammate, pick-and-roll, hold) is described by a few features: shot clock,
+expected points of the shot, how open a receiver will be after the pass flies,
+interception risk, defender gap, crowd in the paint, and so on. Its value is a
+weighted sum. The starting weights reproduce the original hand-written formulas,
+and training refits them so each value predicts the points the possession
+actually went on to score:
 
-Shot selection comes from hand-written estimates of each option's value, and small
-changes to them swing the shot mix a lot. The next step is to learn those values
-from the simulation's own outcomes instead.
+```bash
+python -m hoopsim.spatial.train                 # 5 rounds x 20,000 possessions, ~2.5 min
+python -m hoopsim.spatial.measure               # learned values (default)
+python -m hoopsim.spatial.measure --values heuristic
+```
+
+Each round plays possessions with the current values, tries a random option 10–25%
+of the time so every option gets tested, records every decision with the
+possession's eventual points, and refits by least squares (pulled toward the
+previous weights). It trains on leagues 100–102 and is tested on leagues 0–2. It's
+deterministic, and the results are stable across extra rounds.
+
+What it learned:
+- A shot is worth about 0.9–1.05 × its expected points + 0.2–0.4 (the
+  offensive-rebound and foul value of a miss).
+- Interception risk dominates the value of a pass.
+- Drives are worth more the closer they start and when the defender is beaten.
+- A crowded paint matters less than the hand-written formula assumed.
+
+It also exposed loopholes in the physics. The first trained players stopped
+passing (turnovers fell to 4%), because dribbling under pressure was nearly risk-free
+and pull-up jumpers were as good as catch-and-shoot ones. Both are now modelled:
+pressure turnovers, a catch-and-shoot bonus and an off-the-dribble penalty
+(NBA: ~37% vs ~34% from three). Receivers' defenders now break on passes.
+
+Current numbers on held-out leagues (3,000 possessions each, learned values):
+- **In range:** FG% at the rim, in close and from three; offensive rebounds; assists
+  (0.52–0.58 per make).
+- **Off:** 68–78% of shots are threes (NBA ~41%), almost no mid-range, 1.23–1.25
+  points per possession (target ~0.98), turnovers ~7% (target 13%).
+
+Why: decisions are now consistent with outcomes, so the shot mix reflects what
+this court offers. Here a three is worth ~1.08 points and the average two only
+~0.95, because the inside game is thin: there are no cuts, no lobs to the rolling
+big, no dump-offs to the dunker spot and no post-ups. In the NBA those plays make
+twos about as valuable as threes. Adding them is the next step; after any physics
+change, rerun `train`.
 
 ## Simulation commands
 
