@@ -262,6 +262,42 @@ possessions: digs ~1.2, charges ~0.7, travels and offensive fouls ~0.5).
     still ~57% of shots, because cuts, rolls and lobs make few rim shots. That gap
     is on the offensive side.
 
+### Measuring against the right yardstick
+
+`measure` now uses one consistent set of NBA **half-court possession** targets
+(see the docstring in `hoopsim/spatial/measure.py` for sources). The old 0.98
+points target was Cleaning the Glass's points per half-court *play*, which
+restarts after an offensive rebound. Per possession, the way this engine counts,
+the half court is worth about **1.10**. The old mid-range target (13%) also
+double-counted floaters: long mid-range is ~7% of shots, and short mid-range
+(4–14 ft) ~23%. The source tables couldn't be opened from the cloud environment,
+so the numbers come from cached snippets and are approximate.
+
+Two quick experiments ruled out suspected causes of the excess scoring:
+- **Starters only:** lineups mixed from each team's rotation by minutes scored the
+  same, within noise. The engine judges offence against defence, so bench units
+  play about as efficiently as starters.
+- **Player ratings:** generated players are, if anything, slightly worse three-point
+  shooters than real ones (expected ~31–32% against ~36%).
+
+Held-out leagues against the new targets (seeds 0 / 1 / 2):
+
+| | Sim | NBA half court |
+|---|---|---|
+| Points per possession | 1.16 / 1.20 / 1.18 | ~1.10 |
+| eFG% | .494 / .519 / .538 | ~.527 |
+| Threes with a defender within 2 ft | 52% / 35% / 53% | ~2% |
+| Wide-open threes (6+ ft) | 10% / 14% / 12% | ~44% |
+| Seconds per possession | 10.7–10.8 | ~15.5 |
+| Passes per possession | 0.7–0.9 | ~3.2 |
+| Turnovers | 8–10% | ~13% |
+| Rim share | 18–21% | ~28% |
+
+The scoring gap is small. What's wrong is the *structure*: defenders get far
+too close on threes (the make chance is generous on contested shots to
+compensate), and possessions are short and pass-light. Fixing realistic contest
+distances and ball movement comes before tuning the totals.
+
 ## Simulation commands
 
 ```bash

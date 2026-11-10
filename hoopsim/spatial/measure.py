@@ -2,8 +2,23 @@
 
     python -m hoopsim.spatial.measure [--possessions 4000] [--seed 0]
 
-Targets are approximate NBA half-court figures (no transition, no putback-heavy
-fast breaks): points per possession is lower than a full game's ~1.15.
+Targets are one consistent set of NBA *half-court possession* figures (2023-24
+and 2024-25), counted the way this engine counts: a possession includes its
+offensive rebounds, putbacks and free throws. Sources (via cached snippets; the
+live tables couldn't be opened from this environment, so treat these as
+approximate):
+* Cleaning the Glass league context: 98.4-98.7 points per 100 half-court
+  *plays* (a play restarts after an offensive rebound); 115.6 overall; about 15%
+  transition at ~127. Per half-court possession that is ~1.10.
+* Cleaning the Glass shot zones 2024-25: rim (0-4 ft) 30.9% at 66.6%, short
+  mid-range (4-14 ft) 23.3% at 44.9%, long mid-range 7.3% at 42.3%, threes ~42%
+  (league 3PA rate) at ~36%. Rim share and accuracy are trimmed slightly for
+  the half court (transition adds easy layups).
+* NBA.com tracking: 3P% by closest defender 27/30/35/39% for very tight (0-2 ft) /
+  tight (2-4) / open (4-6) / wide open (6+); most threes are open or wide open.
+  Catch-and-shoot 37.4% vs pull-up 32.9%.
+* Estimates: turnovers ~13%, FTA/FGA ~0.24, ~15.5 s per half-court possession,
+  ~3 passes per possession.
 """
 from __future__ import annotations
 
@@ -19,20 +34,25 @@ ZONES = ("rim", "close", "mid", "three")
 
 # stat: (target, tolerance)
 TARGETS = {
-    "points_per_possession": (0.98, 0.06),
-    "seconds_per_possession": (14.5, 2.0),
+    "points_per_possession": (1.10, 0.04),
+    "efg": (0.527, 0.02),
+    "seconds_per_possession": (15.5, 1.5),
+    "passes_per_possession": (3.2, 0.8),
     "turnover_pct": (0.13, 0.025),
-    "orb_pct": (0.25, 0.04),
-    "fta_per_fga": (0.24, 0.06),
-    "ast_per_fgm": (0.60, 0.10),
-    "share_rim": (0.30, 0.06),
-    "share_close": (0.16, 0.05),
-    "share_mid": (0.13, 0.05),
-    "share_three": (0.41, 0.06),
-    "fg_rim": (0.65, 0.05),
-    "fg_close": (0.44, 0.05),
-    "fg_mid": (0.42, 0.05),
-    "fg_three": (0.36, 0.03),
+    "orb_pct": (0.27, 0.03),
+    "fta_per_fga": (0.24, 0.05),
+    "ast_per_fgm": (0.60, 0.08),
+    "share_rim": (0.28, 0.05),
+    "share_close": (0.23, 0.05),
+    "share_mid": (0.07, 0.03),
+    "share_three": (0.42, 0.05),
+    "fg_rim": (0.64, 0.04),
+    "fg_close": (0.44, 0.04),
+    "fg_mid": (0.415, 0.04),
+    "fg_three": (0.362, 0.025),
+    # How contested threes are (closest defender at release): NBA.com tracking.
+    "three_very_tight_share": (0.02, 0.04),    # 0-2 ft
+    "three_wide_open_share": (0.44, 0.10),     # 6+ ft
 }
 
 
@@ -63,7 +83,12 @@ def collect(possessions: int, seed: int, tuning: SpatialTuning = DEFAULT_TUNING,
         "orb_pct": s["orb"] / max(1, s["orb"] + s["drb"]),
         "fta_per_fga": s["fta"] / max(1, fga),
         "ast_per_fgm": s["ast"] / max(1, fgm),
+        "efg": (fgm + 0.5 * s["fgm_three"]) / max(1, fga),
+        "passes_per_possession": s["passes"] / n,
     }
+    threes = sum(s[f"contest_three_{b}"] for b in ("tight", "close", "open", "wide")) or 1
+    out["three_very_tight_share"] = s["contest_three_tight"] / threes
+    out["three_wide_open_share"] = s["contest_three_wide"] / threes
     for z in ZONES:
         out[f"share_{z}"] = s[f"fga_{z}"] / max(1, fga)
         out[f"fg_{z}"] = s[f"fgm_{z}"] / max(1, s[f"fga_{z}"])
