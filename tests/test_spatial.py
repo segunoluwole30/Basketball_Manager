@@ -114,3 +114,49 @@ class ExportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InsideGameTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from hoopsim.spatial.values import HEURISTIC
+        cls.league = generate_league(seed=61)
+        cls.games = []
+        for home, away in ((1, 2), (3, 4), (5, 6)):
+            g = HalfCourtGame(cls.league, home, away, random.Random(home), record=True, model=HEURISTIC)
+            g.play(150)
+            cls.games.append(g)
+        cls.events = [e[1] for g in cls.games for p in g.possessions for e in p["events"]]
+
+    def total(self, key):
+        return sum(g.stats[key] for g in self.games)
+
+    def test_inside_actions_happen(self):
+        self.assertGreater(self.total("cuts"), 20)
+        self.assertGreater(self.total("post_ups"), 3)
+        rim_sources = {k for g in self.games for k in g.stats if k.startswith("src_rim_")}
+        self.assertTrue({"src_rim_drive", "src_rim_cut"} <= rim_sources, rim_sources)
+
+    def test_no_stalled_possessions(self):
+        self.assertEqual(self.total("end_stalled"), 0)
+
+    def test_lobs_go_to_athletic_bigs(self):
+        names = {a.p.name: a for g in self.games for a in g.everyone}
+        receivers = [e.split(" throws the lob to ")[1] for e in self.events if " throws the lob to " in e]
+        for name in receivers:
+            a = names[name]
+            self.assertGreaterEqual(a.height, 6.75)
+            self.assertGreaterEqual(a.a("vertical"), 12)
+
+    def test_alley_oops_finish_at_the_rim(self):
+        for g in self.games:
+            self.assertEqual(g.stats["src_close_lob"] + g.stats["src_mid_lob"] + g.stats["src_three_lob"], 0)
+
+    def test_only_capable_bigs_post_up(self):
+        names = {a.p.name: a for g in self.games for a in g.everyone}
+        posters = [e[:-len(" posts up")] for e in self.events if e.endswith(" posts up")]
+        self.assertTrue(posters)
+        for name in posters:
+            a = names[name]
+            self.assertGreaterEqual(a.slot, 3)
+            self.assertGreaterEqual((a.a("close_range") + a.a("strength")) / 2, 11)

@@ -72,6 +72,12 @@ def collect(possessions: int, seed: int, tuning: SpatialTuning = DEFAULT_TUNING,
     for k in ("passes", "drives", "pnr", "blocks", "steals"):
         out[f"_{k}_per_possession"] = s[k] / n
     out["_stalled"] = s["end_stalled"]
+    for k in ("cuts", "lobs", "post_ups", "doubles"):
+        out[f"_{k}_per_possession"] = s[k] / n
+    inside = {k[len("src_rim_"):]: v for k, v in s.items() if k.startswith("src_rim_")}
+    total_rim = sum(inside.values()) or 1
+    out["_rim_shots_from"] = ", ".join(f"{k} {v / total_rim:.0%}" for k, v in
+                                       sorted(inside.items(), key=lambda kv: -kv[1]))
     out["_misses"] = misses
     return out
 
@@ -88,7 +94,7 @@ def report(stats: dict) -> int:
     print()
     for k, v in stats.items():
         if k.startswith("_"):
-            print(f"{k[1:]:<24}{v:>8.2f}" if isinstance(v, float) else f"{k[1:]:<24}{v:>8}")
+            print(f"{k[1:]:<24}{v:>8.2f}" if isinstance(v, float) else f"{k[1:]:<24}  {v}")
     print(f"\n{len(TARGETS) - bad}/{len(TARGETS)} within tolerance")
     return bad
 

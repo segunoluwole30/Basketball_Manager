@@ -106,18 +106,32 @@ and pull-up jumpers were as good as catch-and-shoot ones. Both are now modelled:
 pressure turnovers, a catch-and-shoot bonus and an off-the-dribble penalty
 (NBA: ~37% vs ~34% from three). Receivers' defenders now break on passes.
 
-Current numbers on held-out leagues (3,000 possessions each, learned values):
-- **In range:** FG% at the rim, in close and from three; offensive rebounds; assists
-  (0.52–0.58 per make).
-- **Off:** 68–78% of shots are threes (NBA ~41%), almost no mid-range, 1.23–1.25
-  points per possession (target ~0.98), turnovers ~7% (target 13%).
+### Inside game
 
-Why: decisions are now consistent with outcomes, so the shot mix reflects what
-this court offers. Here a three is worth ~1.08 points and the average two only
-~0.95, because the inside game is thin: there are no cuts, no lobs to the rolling
-big, no dump-offs to the dunker spot and no post-ups. In the NBA those plays make
-twos about as valuable as threes. Adding them is the next step; after any physics
-change, rerun `train`.
+- **Cuts:** off-ball players cut when their defender loses them, most often for
+  smart players, poor shooters and players whose man is sagging. Passes lead a
+  moving receiver.
+- **Lobs:** thrown over the defence only to athletic cutters or rollers (6'9"+
+  with good leaping). They're contested at the catch rather than in the passing
+  lane, and finished as alley-oops.
+- **Dunker spot:** a centre who can't score in the post waits under the rim. Any
+  catch within 8 ft of the rim is finished with a gather step.
+- **Post-ups:** a big who can score inside sets up on the block, backs his man
+  down, and shoots hooks or turnarounds. The strength battle affects the make
+  chance, and strong post players draw double-teams that open kick-outs.
+- **Defence:** a "tagger" picks up open cutters and rollers in the paint.
+
+Held-out leagues (3,000 possessions each, learned values), with the numbers
+before the inside game in brackets:
+- **Shot mix:** threes 51–65% of shots (68–78%; NBA ~41%), rim 18–28% (7–13%;
+  NBA ~30%).
+- **Rim shots come from:** drives ~55%, cuts ~14%, putbacks ~13%, post-ups ~9%,
+  alley-oops ~5% and dunker-spot finishes ~4%.
+- **Also in range:** assists 0.60–0.63 per make, alley-oops 1–2 per 100
+  possessions, FG% by zone, offensive rebounds and free-throw rate. 7–8 of 14
+  stats are within tolerance (was 5–7).
+- **Still off:** 1.23–1.27 points per possession (target ~0.98), turnovers ~8%
+  (target 13%), almost no mid-range, and possessions a little short.
 
 ## Simulation commands
 

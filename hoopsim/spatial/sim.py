@@ -55,6 +55,9 @@ class SpatialTuning:
     charge_chance: float = 0.15
     # Jump shots right off a pass beat jump shots off the dribble (NBA: ~37% vs ~34% from three).
     catch_shoot_bonus: float = 0.02
+    lob_bonus: float = 0.08                   # alley-oops are close to dunks
+    cut_rate: float = 0.008                   # chance per tick an off-ball player cuts (scaled)
+    post_strength_effect: float = 0.01        # make chance per point of strength edge in the post
     off_dribble_penalty: float = 0.035
 
 
@@ -64,6 +67,8 @@ DEFAULT_TUNING = SpatialTuning()
 # Perimeter spots sit just outside the arc (23.75 ft; 22 ft in the corners).
 SPOTS_4OUT = [(0.0, 30.0), (19.0, 22.0), (-19.0, 22.0), (-22.6, 4.5), (6.0, 7.0)]
 FIVE_OUT_C = (22.6, 4.5)
+POST_BLOCK = (6.5, 8.0)        # a big who can score inside sets up on the low block
+DUNKER = (5.0, 4.0)            # one who can't waits under the rim for dump-offs
 LANE_SPOTS = [(-7.5, 7.5), (7.5, 7.5), (-7.5, 11.0), (7.5, 11.0), (-7.5, 14.0), (7.5, 14.0)]
 
 
@@ -87,6 +92,8 @@ class Agent:
         # How hard to brake approaching a target: offence eases into spots,
         # defenders stay on the gas to keep up with their man.
         self.ease = 3.0
+        self.cut_until = -1.0
+        self.last_cut = -9.0
 
     @property
     def pos(self) -> tuple[float, float]:
@@ -214,7 +221,7 @@ class HalfCourtGame:
     # ------------------------------------------------------------------ shot model
     def make_prob(self, shooter: Agent, p: tuple[float, float], contest_d: Optional[float] = None,
                   defender: Optional[Agent] = None, moving: bool = False,
-                  catch: Optional[bool] = None) -> tuple[float, str]:
+                  catch: Optional[bool] = None, post: bool = False, lob: bool = False) -> tuple[float, str]:
         """``catch``: True for a catch-and-shoot, False off the dribble, None if unknown."""
         t = self.t
         z = C.zone(p)
@@ -236,12 +243,16 @@ class HalfCourtGame:
             prob -= 0.03
         if catch is not None and z in (MID_ZONE, THREE_ZONE):
             prob += t.catch_shoot_bonus if catch else -t.off_dribble_penalty
+        if post:
+            prob += t.post_strength_effect * (shooter.a("strength") - defender.a("strength"))
+        if lob:
+            prob += t.lob_bonus + 0.01 * (shooter.a("vertical") - 10)
         return max(0.02, min(0.95, prob)), z
 
     def shot_value(self, shooter: Agent, p=None, contest_d=None, defender=None, moving=False,
-                   catch: Optional[bool] = None) -> float:
+                   catch: Optional[bool] = None, post: bool = False, lob: bool = False) -> float:
         p = p or shooter.pos
-        prob, z = self.make_prob(shooter, p, contest_d, defender, moving, catch)
+        prob, z = self.make_prob(shooter, p, contest_d, defender, moving, catch, post, lob)
         points = 3 if z == THREE_ZONE else 2
         return prob * points
 
@@ -276,6 +287,8 @@ class HalfCourtGame:
         spots = list(SPOTS_4OUT)
         if five_out:
             spots[4] = FIVE_OUT_C
+        else:
+            spots[4] = POST_BLOCK if self.can_post(self.offense[4]) else DUNKER
         for i, a in enumerate(self.offense):
             sx, sy = spots[i]
             a.spot = (-sx if mirror else sx, sy)
@@ -283,7 +296,11 @@ class HalfCourtGame:
             a.next_think = 0.0
             a.helping = False
             a.stuck_until = -1.0
+            a.cut_until, a.last_cut = -1.0, -9.0
         self.offense[0].place(rng.uniform(-4, 4), 38.0)
+        self.cutter: Optional[Agent] = None
+        self.post: Optional[dict] = None
+        self.catch_source: Optional[str] = None
         for i, d in enumerate(self.defense):
             man = self.offense[i]
             gx, gy = C.toward(man.pos, RIM, 4.0)
@@ -330,13 +347,13 @@ class HalfCourtGame:
         self.defense_targets()
         if self.flight:
             self.advance_flight()
-        elif self.holder is not None and self.mode in ("setup", "probe", "drive"):
+        elif self.holder is not None and self.mode in ("setup", "probe", "drive", "post"):
             self.handler_logic()
-        boost = 1.08 if self.mode == "drive" else 1.0
+        boost = 1.08 if self.mode == "drive" else 0.35 if self.mode == "post" else 1.0
         for a in self.everyone:
             a.move(dt, self.now, boost if a is self.holder else 1.0)
         self.separate()
-        if self.result is None and self.holder is not None and self.mode in ("probe", "drive", "setup") \
+        if self.result is None and self.holder is not None and self.mode in ("probe", "drive", "setup", "post") \
                 and self.shot_clock <= 0:
             self.credit(self.holder, "tov")
             self.stats["tov"] += 1
@@ -394,11 +411,19 @@ class HalfCourtGame:
                     side = 1 if self.pnr["point"][0] >= 0 else -1
                     a.target((side * 2.5, 6.5))                  # roll to the rim
                 continue
+            if self.cutter is a:
+                if self.now > a.cut_until:
+                    self.cutter = None                           # nothing came: clear back out
+                    a.target(a.spot)
+                else:
+                    a.target((math.copysign(2.5, a.spot[0] or 1), 5.0))
+                continue
             d = self.guarded_by(a)
             if d.helping and a.a("three_point") < 12 and a.spot[1] < 22:
                 a.target((math.copysign(3.5, a.x or 1), 5.5))    # cut behind the help
             else:
                 a.target(a.spot)
+                self.maybe_cut(a, d)
         if h is not None and self.mode == "setup":
             h.target(h.spot)
         elif h is not None and self.mode == "probe" and self.now - self.mode_since > 1.0:
@@ -411,6 +436,58 @@ class HalfCourtGame:
                 else:
                     h.target((h.spot[0] + self.rng.uniform(-4, 4), h.spot[1] + self.rng.uniform(-3, 3)))
 
+    def can_post(self, a: Agent) -> bool:
+        return a.slot >= 3 and (a.a("close_range") + a.a("strength")) / 2 >= 11
+
+    def maybe_cut(self, a: Agent, d: Agent) -> None:
+        """Off-ball players cut to the rim when their man loses them. Smart players,
+        poor shooters and players whose defender is sagging cut most."""
+        if self.cutter is not None or self.mode not in ("probe", "drive") or self.now - a.last_cut < 4.0:
+            return
+        if C.dist_to_rim(a.pos) < 10 or (self.pnr and a is self.pnr["screener"]):
+            return
+        gap = C.dist(a.pos, d.pos)
+        rate = (self.t.cut_rate * (1 + 0.06 * (a.a("basketball_iq") - 10)) * (2.0 if gap > 6 else 1.0)
+                * (1.6 if a.a("three_point") < 11 else 0.7))
+        if self.rng.random() < rate:
+            self.cutter = a
+            a.cut_until, a.last_cut = self.now + 2.0, self.now
+            self.stats["cuts"] += 1
+            self.say(f"{a.p.name} cuts to the basket")
+
+    def paint_threat(self) -> Optional[Agent]:
+        """An offensive player near the rim whose defender has lost him (cutter, roller)."""
+        best = None
+        for a in self.offense:
+            if a is self.holder:
+                continue
+            dr = C.dist_to_rim(a.pos)
+            if dr > 9 or C.dist(self.guarded_by(a).pos, a.pos) < 4:
+                continue
+            if best is None or dr < C.dist_to_rim(best.pos):
+                best = a
+        return best
+
+    def choose_tagger(self, threat: Agent, exclude: Optional[Agent]) -> Optional[Agent]:
+        on_ball = self.guarded_by(self.holder) if self.holder is not None else None
+        own = self.guarded_by(threat)
+        cands = [d for d in self.defense if d not in (on_ball, own, exclude)]
+        if not cands:
+            return None
+        def cost(d):
+            return (C.dist(d.pos, threat.pos) - (2 if d.slot >= 3 else 0)
+                    + (8 if self.man_of(d).a("three_point") >= 14 else 0))
+        best = min(cands, key=cost)
+        return best if C.dist(best.pos, threat.pos) < 15 else None
+
+    def choose_doubler(self, h: Agent) -> Optional[Agent]:
+        on = self.guarded_by(h)
+        cands = [d for d in self.defense if d is not on]
+        if not cands:
+            return None
+        # Come from the man who hurts you least if left open.
+        return min(cands, key=lambda d: C.dist(d.pos, h.pos) + 0.8 * self.man_of(d).a("three_point"))
+
     def defense_targets(self) -> None:
         now = self.now
         if self.mode == "ft":
@@ -420,8 +497,14 @@ class HalfCourtGame:
         helper = None
         if driving and C.dist_to_rim(self.holder.pos) < self.t.help_trigger_distance:
             helper = self.choose_helper()
+        tagger = threat = None
+        if self.mode in ("probe", "drive", "pass", "post"):
+            threat = self.paint_threat()
+            if threat is not None:
+                tagger = self.choose_tagger(threat, exclude=helper)
+        doubler = self.post["double"] if self.mode == "post" and self.post else None
         for d in self.defense:
-            d.helping = d is helper
+            d.helping = d is helper or d is tagger or d is doubler
             if now < d.next_think:
                 continue
             d.next_think = now + d.reaction
@@ -432,6 +515,10 @@ class HalfCourtGame:
                 # Meet the driver between him and the rim.
                 d_rim = C.dist_to_rim(self.holder.pos)
                 d.target(C.toward(RIM, self.holder.pos, max(3.0, min(6.0, d_rim - 2.5))))
+            elif d is doubler and self.holder is not None:
+                d.target(C.toward(self.holder.pos, (0.0, 22.0), 2.0))   # double from the top side
+            elif d is tagger and threat is not None:
+                d.target(C.toward(RIM, threat.pos, min(3.0, C.dist_to_rim(threat.pos))))   # tag the cutter
             elif self.pnr and d is self.guarded_by(self.pnr["screener"]) \
                     and self.holder is not None and not self.pnr.get("switch"):
                 # Drop coverage: don't follow the screener out. Wait at the nail
@@ -483,6 +570,19 @@ class HalfCourtGame:
             return
         if self.dribble_turnover(h):
             return
+        if self.mode == "post":
+            d_rim = C.dist_to_rim(h.pos)
+            h.target(C.toward(RIM, h.pos, max(4.0, d_rim - 3.0)))        # back him down
+            if (self.post["double"] is None and now - self.post["since"] > 0.6
+                    and self.post_threat(h) >= 2.0):
+                doubler = self.choose_doubler(h)
+                if doubler is not None:
+                    self.post["double"] = doubler
+                    self.stats["doubles"] += 1
+                    self.say(f"Double team! {doubler.p.name} comes to help")
+            if now - self.post["since"] > 4.5:
+                self.mode, self.mode_since, self.post = "probe", now, None   # nothing there: reset
+                h.spot = h.pos
         if self.mode == "drive":
             d_rim = C.dist_to_rim(h.pos)
             if d_rim < 4.5:
@@ -515,13 +615,16 @@ class HalfCourtGame:
         moving = self.mode == "drive"
         if d_rim < 30:
             # Judge the contest by where the nearest defender will be at release.
-            closer, dd = self.nearest_defender(h.pos)
+            spot = self.finish_point(h)
+            closer, dd = self.nearest_defender(spot)
             predicted = max(0.0, dd - self.closing_speed(closer, h) * 0.35)
-            ep = self.shot_value(h, contest_d=predicted, defender=closer, moving=moving,
-                                 catch=self.just_caught(moving))
-            options.append(("shoot", ("shoot",), [1.0, ep, float(C.is_three(h.pos)), float(moving),
+            ep = self.shot_value(h, p=spot, contest_d=predicted, defender=closer, moving=moving,
+                                 catch=self.just_caught(moving), post=self.mode == "post")
+            options.append(("shoot", ("shoot",), [1.0, ep, float(C.is_three(spot)), float(moving),
                                                    max(0.0, 6.0 - sc) / 6.0]))
-        if self.mode == "probe":
+        if self.mode == "post":
+            options.append(("post", ("post",), self.post_features(h)))
+        elif self.mode == "probe":
             options.append(("drive", ("drive",), self.drive_features(h)))
             if self.pnr is None and self.pnr_used < 2 and d_rim > 17:
                 scr = self.offense[4] if self.offense[4] is not h else self.offense[3]
@@ -549,8 +652,9 @@ class HalfCourtGame:
             self.take_shot(h, moving=moving)
         elif kind == "drive":
             self.start_drive(h)
-        elif kind == "continue":
-            pass
+        elif kind in ("continue", "post"):
+            if kind == "post":
+                self.next_decision = now + rng.uniform(0.4, 0.7)
         elif kind == "pnr":
             self.call_pnr(h, action[1])
         elif kind == "pass":
@@ -579,27 +683,69 @@ class HalfCourtGame:
         return [1.0, hold_curve(self.shot_clock - 2.5), edge, max(-1.0, min(3.0, gap - 3)), float(crowd),
                 float(beaten), float(closeout), C.dist_to_rim(h.pos) / 30.0]
 
+    def pass_target(self, h: Agent, mate: Agent) -> tuple[tuple[float, float], float, bool]:
+        """Where to throw it (leading a moving receiver), how long it flies, and whether it's a lob."""
+        flight = C.dist(h.pos, mate.pos) / self.t.pass_speed + 0.15
+        moving = math.hypot(mate.vx, mate.vy) > 4
+        target = C.clamp((mate.x + mate.vx * flight, mate.y + mate.vy * flight)) if moving else mate.pos
+        # Lobs go to an athletic cutter or roller heading to the rim.
+        rolling = self.pnr is not None and self.pnr["set"] and mate is self.pnr["screener"]
+        lob = ((mate is self.cutter or rolling) and moving and C.dist_to_rim(target) < 7
+               and C.dist(h.pos, target) >= 12 and mate.height >= 6.75 and mate.a("vertical") >= 12)
+        if lob:
+            flight = C.dist(h.pos, target) / (self.t.pass_speed * 0.6) + 0.35
+        return target, flight, lob
+
+    def finish_point(self, h: Agent) -> tuple[float, float]:
+        """A catch near the rim is finished with a gather step toward it."""
+        d = C.dist_to_rim(h.pos)
+        if self.mode != "post" and self.just_caught(False) and d < 8:
+            return C.toward(RIM, h.pos, max(1.5, d - 3.0))
+        return h.pos
+
+    def post_threat(self, h: Agent) -> float:
+        on = self.guarded_by(h)
+        return ((h.a("strength") + h.a("close_range")) - (on.a("strength") + on.a("interior_defense"))) / 2
+
+    def post_features(self, h: Agent) -> list[float]:
+        on = self.guarded_by(h)
+        return [1.0, hold_curve(self.shot_clock - 1.5), h.a("strength") - on.a("strength"),
+                h.a("close_range") - on.a("interior_defense"), C.dist_to_rim(h.pos) / 10.0,
+                float(bool(self.post and self.post["double"]))]
+
     def pass_features(self, h: Agent, mate: Agent) -> Optional[list[float]]:
         d = C.dist(h.pos, mate.pos)
         if d > 40:
             return None
-        flight = d / self.t.pass_speed + 0.15
+        target, flight, lob = self.pass_target(h, mate)
         risk = 0.0
         for de in self.defense:
-            lane = C.point_segment_distance(de.pos, h.pos, mate.pos)
-            if lane < 2.5 and C.dist(de.pos, h.pos) > 1.5:
-                risk += 0.25 * (2.5 - lane) / 2.5
+            if lob:     # over the top: only someone at the landing spot can get it
+                land = C.dist(de.pos, target)
+                if land < 2.5:
+                    risk += 0.3 * (2.5 - land) / 2.5 * (1 + 0.1 * (de.height - mate.height) * 10 / 3)
+            else:
+                lane = C.point_segment_distance(de.pos, h.pos, target)
+                if lane < 2.5 and C.dist(de.pos, h.pos) > 1.5:
+                    risk += 0.25 * (2.5 - lane) / 2.5
         guard = self.guarded_by(mate)
-        contest_after = max(0.0, C.dist(guard.pos, mate.pos) - guard.max_speed * max(0.0, flight - guard.reaction))
-        catch_shoot = self.shot_value(mate, contest_d=contest_after, defender=guard, catch=True)
-        if C.dist_to_rim(mate.pos) > 30:
+        contest_after = max(0.0, C.dist(guard.pos, target) - guard.max_speed * max(0.0, flight - guard.reaction))
+        d_target = C.dist_to_rim(target)
+        if lob:
+            catch_shoot = self.shot_value(mate, p=target, contest_d=contest_after, defender=guard, lob=True)
+        elif d_target < 8:
+            finish = C.toward(RIM, target, max(1.5, d_target - 3.0))
+            catch_shoot = self.shot_value(mate, p=finish, contest_d=contest_after, defender=guard)
+        else:
+            catch_shoot = self.shot_value(mate, p=target, contest_d=contest_after, defender=guard, catch=True)
+        if d_target > 30:
             catch_shoot = 0.0
         clock = hold_curve(self.shot_clock - flight)
         # Moving the ball keeps the offence alive and makes the defence rotate.
         keep_going = clock + 0.04 + 0.01 * (mate.a("ball_handling") - 10)
         best = max(catch_shoot, keep_going) * (1 - min(0.9, risk))
         back = float(mate is self.last_passer and self.now - self.catch_time < 1.5)
-        return [1.0, catch_shoot, clock, risk, back, best]
+        return [1.0, catch_shoot, clock, risk, back, best, float(d_target < 8), float(lob)]
 
     # ------------------------------------------------------------------ actions
     def dribble_turnover(self, h: Agent) -> bool:
@@ -678,11 +824,13 @@ class HalfCourtGame:
 
     def throw_pass(self, h: Agent, mate: Agent) -> None:
         d = C.dist(h.pos, mate.pos)
-        flight = d / self.t.pass_speed + 0.15
-        mate.target(mate.pos)                          # stop and show a target
-        # Interception?
-        for de in self.defense:
-            lane = C.point_segment_distance(de.pos, h.pos, mate.pos)
+        target, flight, lob = self.pass_target(h, mate)
+        mate.target(target)                            # stop and show a target, or keep cutting
+        source = ("cut" if self.cutter is mate else
+                  "roll" if self.pnr and self.pnr["set"] and mate is self.pnr["screener"] else None)
+        # Interception? (Lobs go over the top; they're contested at the catch instead.)
+        for de in ([] if lob else self.defense):
+            lane = C.point_segment_distance(de.pos, h.pos, target)
             if lane < 2.0 and C.dist(de.pos, h.pos) > 1.5:
                 p = (self.t.pass_steal_scale * math.exp(0.12 * (de.a("stealing") - 10))
                      * (2.0 - lane) / 2.0 * (1.3 if d > 25 else 1.0))
@@ -692,7 +840,12 @@ class HalfCourtGame:
                     self.holder = None
                     self.mode = "pass"
                     return
-        self.flight = Flight("pass", h.pos, mate.pos, self.now, flight, data={"to": mate, "passer": h})
+        self.flight = Flight("pass", h.pos, target, self.now, flight, apex=6.0 if lob else 0.0,
+                             z0=6.0 if lob else 4.0, z1=9.0 if lob else 4.0,
+                             data={"to": mate, "passer": h, "lob": lob, "source": source})
+        if lob:
+            self.stats["lobs"] += 1
+            self.say(f"{h.p.name} throws the lob to {mate.p.name}")
         # The receiver's defender reads the pass and breaks on it (half his usual reaction).
         guard = self.guarded_by(mate)
         guard.next_think = min(guard.next_think, self.now + guard.reaction * 0.5)
@@ -701,15 +854,46 @@ class HalfCourtGame:
         self.passes += 1
         self.stats["passes"] += 1
 
-    def take_shot(self, h: Agent, moving: bool) -> None:
+    def finish_lob(self, mate: Agent, passer: Agent) -> None:
+        """A lob is contested at the catch: a defender there can break it up."""
+        for de in self.defense:
+            land = C.dist(de.pos, mate.pos)
+            if land < 2.5:
+                p = (0.3 * (2.5 - land) / 2.5 * math.exp(0.1 * (de.a("blocking") - 10))
+                     * (1 + 0.1 * (de.height - mate.height) * 10 / 3))
+                if self.rng.random() < p:
+                    self.credit(passer, "tov")
+                    self.credit(de, "stl")
+                    self.stats["tov"] += 1
+                    self.stats["steals"] += 1
+                    self.say(f"{de.p.name} breaks up the lob!")
+                    self.end("tov")
+                    return
+        self.take_shot(mate, moving=False, finish="lob")
+
+    def take_shot(self, h: Agent, moving: bool, finish: Optional[str] = None) -> None:
         rng, t = self.rng, self.t
-        defender, dd = self.nearest_defender(h.pos)
-        prob, z = self.make_prob(h, h.pos, dd, defender, moving, self.just_caught(moving))
+        lob = finish == "lob"
+        post = self.mode == "post"
+        spot = C.toward(RIM, h.pos, min(1.5, C.dist_to_rim(h.pos))) if lob else self.finish_point(h)
+        defender, dd = self.nearest_defender(spot)
+        prob, z = self.make_prob(h, spot, dd, defender, moving,
+                                 None if lob else self.just_caught(moving), post=post, lob=lob)
         points = 3 if z == THREE_ZONE else 2
         level = max(0.0, min(1.0, (6.0 - dd) / 5.0))
-        shot_d = C.dist_to_rim(h.pos)
+        shot_d = C.dist_to_rim(spot)
         verb = {RIM_ZONE: "goes up at the rim", CLOSE_ZONE: "floater", MID_ZONE: "pull-up jumper",
                 THREE_ZONE: "fires a three"}[z]
+        if lob:
+            verb = "rises for the alley-oop"
+        elif post:
+            verb = "hook shot" if z in (RIM_ZONE, CLOSE_ZONE) else "turnaround jumper"
+        elif spot != h.pos:
+            verb = "gathers and goes up"
+        source = ("lob" if lob else "post" if post else "putback" if self.now - self.orb_time < 2.0
+                  else "drive" if self.mode == "drive"
+                  else (self.catch_source or ("dunker" if C.dist_to_rim(h.pos) < 8 else "catch"))
+                  if self.just_caught(moving) else "other")
         # Block?
         if dd < 4.0:
             closeness = max(0.0, min(1.0, (4.0 - dd) / 2.5))
@@ -736,15 +920,17 @@ class HalfCourtGame:
             self.stats[f"ctx_{z}_{ctx}"] += 1
             self.stats[f"ctxwide_{z}_{ctx}"] += bucket == "wide"
             self.stats[f"shot_clock_{z}"] += self.shot_clock
+            self.stats[f"src_{z}_{source}"] += 1
         assisted = (self.last_passer is not None and self.now - self.catch_time < 2.5)
         duration = 0.55 + shot_d / 45.0
-        self.flight = Flight("shot", h.pos, RIM, self.now, duration, apex=6 + shot_d * 0.25, z0=7.5, z1=10.0,
+        self.flight = Flight("shot", spot, RIM, self.now, duration, apex=6 + shot_d * 0.25, z0=7.5, z1=10.0,
                              data={"shooter": h, "made": made, "points": points, "zone": z, "fouled": fouled,
                                    "defender": defender, "assisted": assisted, "passer": self.last_passer,
                                    "shot_d": shot_d})
         self.holder = None
         self.mode = "shot"
         self.pnr = None
+        self.post = None
         self.say(f"{h.p.name} {verb}" + (f" over {defender.p.name}" if level > 0.6 else "")
                  + (" (fouled)" if fouled else ""))
 
@@ -775,11 +961,25 @@ class HalfCourtGame:
             mate = f.data["to"]
             self.holder = mate
             self.pnr = None
+            self.post = None
             self.last_passer = f.data["passer"]
             self.catch_time = self.now
+            self.catch_source = f.data.get("source")
+            if self.cutter is mate:
+                self.cutter = None
             self.mode, self.mode_since = "probe", self.now
-            mate.spot = mate.pos if C.dist_to_rim(mate.pos) > 8 else mate.spot
-            self.next_decision = self.now + 0.1      # catch and shoot if it's there
+            if f.data.get("lob"):
+                self.finish_lob(mate, f.data["passer"])
+                return
+            d_rim = C.dist_to_rim(mate.pos)
+            if self.can_post(mate) and d_rim < 11 and self.catch_source is None:
+                self.mode, self.post = "post", {"since": self.now, "double": None}
+                self.stats["post_ups"] += 1
+                self.say(f"{mate.p.name} posts up")
+                self.next_decision = self.now + 0.6
+            else:
+                mate.spot = mate.pos if d_rim > 8 else mate.spot
+                self.next_decision = self.now + 0.1  # catch and shoot (or finish) if it's there
         elif f.kind == "shot":
             self.resolve_shot(f)
         elif f.kind == "rebound":
