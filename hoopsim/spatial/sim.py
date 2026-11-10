@@ -30,6 +30,7 @@ from typing import Optional
 from ..lineup import plan_rotation
 from ..models import League, Player
 from . import court as C
+from . import plays
 from .court import CLOSE_ZONE, MID_ZONE, RIM, RIM_ZONE, THREE_ZONE
 from .params import DEFAULT_PARAMS, SpatialParams
 from .values import DecisionModel, default_model, hold_curve
@@ -302,6 +303,7 @@ class HalfCourtGame:
         self.next_decision = rng.uniform(1.5, 3.0) * max(0.5, 1 - 0.03 * (pace - 10))
         self.passes = 0
         self.scramble = 0.0                    # how far behind the defence's rotations are
+        self.play: Optional[dict] = None        # the entry action being run (plays.py)
         self.decisions: list[tuple[str, list[float]]] = []
         self.result: Optional[str] = None
         self.points = 0
@@ -455,6 +457,11 @@ class HalfCourtGame:
                 continue                                         # handled in advance_flight
             if self.mode == "ft":
                 continue
+            if self.play is not None:
+                tgt = plays.offense_target(self, a)
+                if tgt is not None:
+                    a.target(tgt)
+                    continue
             if self.pnr and a is self.pnr["screener"]:
                 if not self.pnr["set"]:
                     a.target(self.pnr["point"])
@@ -477,7 +484,7 @@ class HalfCourtGame:
                 self.maybe_cut(a, d)
         if h is not None and self.mode == "setup":
             h.target(h.spot)
-        elif h is not None and self.mode == "probe" and self.now - self.mode_since > 1.0:
+        elif h is not None and self.mode == "probe" and self.play is None and self.now - self.mode_since > 1.0:
             # Probe: work around your spot, sometimes attacking the elbow or short wing.
             if self.rng.random() < 0.06:
                 elbow = max(0.15, min(0.8, 0.25 + 0.04 * (h.p.tendencies.mid_range - 10)))
@@ -529,7 +536,8 @@ class HalfCourtGame:
     def maybe_cut(self, a: Agent, d: Agent) -> None:
         """Off-ball players cut to the rim when their man loses them. Smart players,
         poor shooters and players whose defender is sagging cut most."""
-        if self.cutter is not None or self.mode not in ("probe", "drive") or self.now - a.last_cut < 4.0:
+        if (self.cutter is not None or self.play is not None or self.mode not in ("probe", "drive")
+                or self.now - a.last_cut < 4.0):
             return
         if C.dist_to_rim(a.pos) < 10 or (self.pnr and a is self.pnr["screener"]):
             return
@@ -697,8 +705,12 @@ class HalfCourtGame:
             if now >= self.next_decision:
                 self.mode, self.mode_since = "probe", now
                 self.next_decision = now
+                self.play = plays.plan(self)
             return
         if self.dribble_turnover(h):
+            return
+        if self.play is not None and self.mode == "probe":
+            plays.handler_step(self)                 # running the entry
             return
         if self.mode in ("drive", "post") and self.travel_check(h):
             return
@@ -1289,6 +1301,9 @@ class HalfCourtGame:
             if self.cutter is mate:
                 self.cutter = None
             self.mode, self.mode_since = "probe", self.now
+            if self.play is not None:
+                plays.on_catch(self, mate)
+                return
             if f.data.get("lob"):
                 self.finish_lob(mate, f.data["passer"])
                 return

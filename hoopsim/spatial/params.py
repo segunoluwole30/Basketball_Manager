@@ -61,6 +61,9 @@ class SpatialParams:
     scramble_bend: float = 4.0            # receiver's man this far beyond his closeout spot = defence bent (ft)
     scramble_decay: float = 0.2           # scramble levels recovered per second
     scramble_max: float = 3.0
+    # --- set plays (plays.py) ---------------------------------------------------
+    entry_actions: float = 3.0            # entry actions before attacking, at pace 10
+    entry_read: float = 1.12              # a catch worth this many points (wide open) is shot in the entry
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -118,6 +121,7 @@ LEGACY_PARAMS = SpatialParams(
     errant_pass=0.006,
     defensive_rebound_edge=4.6,
     rotation_lag=0.0,
+    entry_actions=0.0,
 )
 
 # Searched fields: (low, high). Everything else stays at its default.
@@ -150,4 +154,8 @@ SEARCH_SPACE = {
     "pass_steal_scale": (0.1, 0.5),
     "errant_pass": (0.003, 0.03),
     "defensive_rebound_edge": (3.0, 7.0),
+    "rotation_lag": (0.0, 1.2),
+    "scramble_decay": (0.1, 0.8),
+    "entry_actions": (0.0, 3.0),
+    "entry_read": (1.0, 1.35),
 }

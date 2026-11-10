@@ -180,26 +180,25 @@ games could later be stored like season games. It isn't wired into the season lo
   down three. These are passed to the half-court decisions as small value biases.
 
 Measured over 60 games (seed 0; per team-game), with the calibrated half-court
-defence, against 2025-26 Basketball-Reference league averages (transition and
-minutes are estimates; sources in `measure.py`):
+defence, rotation lag and set plays, against 2025-26 Basketball-Reference league
+averages (transition and minutes are estimates; sources in `measure.py`):
 
 | | Sim | NBA |
 |---|---|---|
-| Transition share of possessions | 14.9% | ~15% (est.) |
-| Transition points per possession | 1.23 | ~1.26 (est.) |
-| FTA per 100 possessions | 27.1 | 23.6 |
-| Personal fouls per 100 possessions | 19.3 | 20.0 |
-| Starters' minutes (by rank) | 34.4, 32.6, 30.5, 28.2, 23.4 | ~30–36 (est.) |
-| Pace | 135 | 99.4 |
-| Points per team | 152 (113 per 100) | 115.6 (115.8 per 100) |
-| Turnovers per 100 possessions | 10.2 | 14.6 |
+| Pace | 111 (was 135 before set plays) | 99.4 |
+| Points per team | 122 (110 per 100) | 115.6 (115.8 per 100) |
+| Transition share of possessions | 16.1% | ~15% (est.) |
+| Transition points per possession | 1.28 | ~1.26 (est.) |
+| FTA per 100 possessions | 29.2 | 23.6 |
+| Personal fouls per 100 possessions | 23.2 | 20.0 |
+| Turnovers per 100 possessions | 16.0 | 14.6 |
+| Starters' minutes (by rank) | 34.3, 32.4, 30.9, 28.6, 24.2 | ~30–36 (est.) |
 
-Points per 100 possessions, transition, fouls and minutes are about right. Pace is
-far too high: half-court possessions use about 5.3 s of game clock after the
-bring-up, against about 11 s in the NBA, so teams get ~135 possessions a game and
-the scoring leader averages ~40 points. Teams use about 11 players a game because
-high totals make blowouts (garbage time) common.
-Full games take about 0.65 s each.
+Set plays took about 25 possessions a game off the pace. Half-court possessions
+now use about 7.7 s of game clock after the bring-up (5.3 s before), and the
+scoring leader averages ~32 points (was ~41). Pace is still ~11 possessions high
+and fouls run high. Teams use about 11 players a game. Full games take about
+0.7 s each.
 
 ### Learned decision values (`values.py`, `train.py`)
 
@@ -564,7 +563,52 @@ scramble feature stays near zero: the offence takes the open look the first skip
 pass creates rather than passing again. Possessions have ~4.5 s of action after
 the bring-up at ~2.5 s per touch (realistic), so what's missing is the number of
 touches: NBA offences run entries and actions (reversals, hand-offs, off-ball
-screens) before attacking, which this engine doesn't model.
+screens) before attacking, which the next section adds.
+
+### Set plays (`plays.py`)
+
+After the bring-up, the offence runs entry actions before the learned decisions
+take over:
+- **swing:** a reversal pass to the next perimeter man;
+- **handoff:** the handler dribbles at a wing and hands it off; the wing's defender
+  is caught on the handler's body for a moment;
+- **downscreen:** a big screens down for the corner man, who pops to the wing
+  while the wing replaces him in the corner.
+
+Each entry pass is a real pass: it can be picked off and it feeds the rotation lag.
+At each catch the receiver reads the defence. Wide open (a catch worth
+`entry_read` = 1.12 points), he shoots; his man caught on the screen or well
+behind, he drives; otherwise the play goes on. Patience comes from the pace
+tactic: `entry_actions` = 3 at pace 10, fewer for fast teams and more for slow
+ones. No new action starts with under 10 s on the shot clock, and entries are
+skipped in end-of-game situations and in flows out of transition.
+`LEGACY_PARAMS` turns them off.
+
+Quick retrains on the training leagues (score / within tolerance): no entries
+1.41 / 11; 2 actions 1.11 / 11; 3 actions 0.87 / 14; 3 actions with the 10 s
+cutoff 0.81 / 14.
+
+Held-out leagues 0 / 1 / 2 after a full retrain:
+
+| | lag only | lag + set plays | target |
+|---|---|---|---|
+| points per possession | 1.13 / 1.17 / 1.13 | 1.08 / 1.06 / 1.08 | 1.10 ± .04 |
+| eFG | .495 / .529 / .525 | .527 / .508 / .549 | .527 |
+| three share | .45 / .46 / .45 | .37 / .33 / .38 | .42 |
+| 3P% | .324 / .365 / .354 | .349 / .355 / .396 | .362 |
+| wide-open threes | .31 / .44 / .35 | .49 / .59 / .59 | .44 |
+| turnovers | .079 / .083 / .090 | .156 / .159 / .159 | .13 |
+| assists per make | .40 / .57 / .56 | .67 / .68 / .72 | .60 |
+| passes per possession | 1.0 / 1.1 / 1.2 | 1.8 / 1.8 / 1.8 | 3.2 |
+| seconds per possession | 11.2 / 11.3 / 11.4 | 14.2 / 14.2 / 13.9 | 15.5 |
+| within tolerance (of 18) | 8 / 11 / 13 | 12 / 12 / 9 | |
+
+Set plays bring possession length, passes and assists close to the NBA and
+points per possession onto the target. They overshoot on turnovers (the
+calibrated bad-pass rate was set when teams barely passed) and wide-open threes,
+and the three share is now a little low. Those are interactions for the next
+calibration run: `rotation_lag`, `scramble_decay`, `entry_actions` and
+`entry_read` are now in `SEARCH_SPACE`.
 
 ## Simulation commands
 
