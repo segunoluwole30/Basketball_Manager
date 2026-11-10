@@ -41,6 +41,49 @@ The AI never makes your team's decisions. Everything goes through a `Manager`
 The only exception is a roster below the league minimum, which gets
 minimum-salary fills. Tests use a manager that refuses everything to prove it.
 
+## Watch: spatial prototype (`hoopsim/spatial/`)
+
+```bash
+python -m hoopsim watch                          # 40 half-court possessions, opens in your browser
+python -m hoopsim watch --home HCM --away IFF    # pick the teams
+python -m hoopsim watch --load my.db             # your team vs its next opponent
+python -m hoopsim.spatial.measure                # compare with NBA half-court numbers
+```
+
+A second, experimental engine in which every player has a position and moves ten
+times a second. It's half-court only for now: no transition and no substitutions.
+`watch` writes a self-contained page (`hoopsim_watch.html`): a to-scale court,
+players and ball, scoreboard and shot clock, commentary, play-by-play, and
+pause/speed/skip controls.
+
+- **Offence**: four-out spacing (five-out when the centre can shoot). The ball
+  handler re-evaluates every few tenths of a second: shoot, drive, pass, call a
+  pick-and-roll, or hold. Each option is scored by expected points from the current
+  positions, and smarter players pick the best option more reliably.
+- **Defence**: man-to-man with reaction delays set by basketball IQ. On-ball
+  defenders anticipate drives. Off-ball defenders stay close one pass away and sink
+  from the weak side. A rim protector meets drivers, bigs play drop coverage on
+  pick-and-rolls (or switch, per tactics), and screens physically hold defenders.
+- **Outcomes**: make chance comes from distance, the shooter's rating and the
+  nearest defender's distance, height and quality. The same positions drive blocks,
+  shooting fouls, steals in passing lanes, dribble turnovers, charges and
+  rebounds with box-outs.
+- **Speed**: about 1.5 ms per possession (a game in about 0.3 s), fast enough for
+  whole seasons.
+
+Measured on three generated leagues (3,000 possessions each), these are in NBA range:
+FG% at the rim, in close and from three; the share of shots that are contested;
+blocks; assists per made shot; and mostly turnovers and offensive rebounds.
+
+Known gaps:
+- **Too many threes** (61–71% of shots against ~41%) and **almost no mid-range**.
+  Points per possession are about 1.1 (target ~0.98).
+- **Possessions are a bit short** (~12 s against ~14.5 s).
+
+Shot selection comes from hand-written estimates of each option's value, and small
+changes to them swing the shot mix a lot. The next step is to learn those values
+from the simulation's own outcomes instead.
+
 ## Simulation commands
 
 ```bash

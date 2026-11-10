@@ -5,6 +5,7 @@
     python -m hoopsim season [--seed N] [--out league.db] # season + playoffs, awards, leaders
     python -m hoopsim career [--seasons 10] [--seed N] [--load league.db] [--out league.db]
     python -m hoopsim play   [--team ABBR] [--load save.db]   # manage a team yourself
+    python -m hoopsim watch  [--home ABBR --away ABBR] [--possessions 40]   # spatial prototype in a browser
 """
 from __future__ import annotations
 
@@ -216,6 +217,42 @@ def cmd_career(args) -> None:
                   f"{pg['mpg']:4.1f} mpg {pg['ppg']:4.1f} ppg {pg['rpg']:4.1f} rpg {pg['apg']:4.1f} apg")
 
 
+def cmd_watch(args) -> None:
+    import webbrowser
+    from pathlib import Path
+
+    from .spatial import HalfCourtGame
+    from .spatial.export import write_html
+
+    league = load_league(args.load) if args.load else generate_league(seed=args.seed)
+    by_abbr = {t.abbreviation.lower(): t.id for t in league.teams.values()}
+    ids = sorted(league.teams)
+    home, away = ids[0], ids[1]
+    if args.load and league.user_team_id is not None:
+        home = league.user_team_id
+        upcoming = sorted((g for g in league.games.values() if not g.played
+                           and home in (g.home_team_id, g.away_team_id)), key=lambda g: g.day)
+        if upcoming:
+            g = upcoming[0]
+            away = g.away_team_id if g.home_team_id == home else g.home_team_id
+        else:
+            away = next(t for t in ids if t != home)
+    if args.home:
+        home = by_abbr[args.home.lower()]
+    if args.away:
+        away = by_abbr[args.away.lower()]
+    if home == away:
+        raise SystemExit("pick two different teams")
+    game = HalfCourtGame(league, home, away, random.Random(args.seed))
+    game.play(args.possessions)
+    path = write_html(game.to_dict(), args.out)
+    h, a = league.teams[home], league.teams[away]
+    print(f"{a.abbreviation} {game.score['away']} @ {h.abbreviation} {game.score['home']} "
+          f"after {args.possessions} half-court possessions -> {path.resolve()}")
+    if not args.no_open:
+        webbrowser.open(Path(path).resolve().as_uri())
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="hoopsim")
     sub = ap.add_subparsers(dest="cmd")
@@ -249,7 +286,19 @@ def main() -> None:
     play.add_argument("--load", help="continue a saved game")
     play.add_argument("--out", help="file to save to (default hoopsim_save.db)")
 
+    watch = sub.add_parser("watch", help="watch the spatial prototype in your browser")
+    watch.add_argument("--seed", type=int, default=0)
+    watch.add_argument("--possessions", type=int, default=40)
+    watch.add_argument("--home", help="home team abbreviation (default: first team)")
+    watch.add_argument("--away", help="away team abbreviation (default: second team)")
+    watch.add_argument("--load", help="use a saved league (your team at home vs its next opponent)")
+    watch.add_argument("--out", default="hoopsim_watch.html")
+    watch.add_argument("--no-open", action="store_true", help="don't open the browser")
+
     args = ap.parse_args()
+    if args.cmd == "watch":
+        cmd_watch(args)
+        return
     if args.cmd == "play":
         from .play import start
         start(args)
