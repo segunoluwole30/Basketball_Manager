@@ -52,7 +52,9 @@ class SpatialTuning:
     pass_speed: float = 40.0                  # ft/s
     defensive_rebound_edge: float = 4.6
     help_trigger_distance: float = 22.0       # drive this close to the rim draws help
-    charge_chance: float = 0.15
+    charge_chance: float = 0.25               # a help defender set in the driver's path
+    charge_on_ball: float = 0.015             # the man guarding him, beaten to the spot and set
+    travel_per_sec: float = 0.012             # driving or backing down: travels, carries, push-offs
     # Jump shots right off a pass beat jump shots off the dribble (NBA: ~37% vs ~34% from three).
     catch_shoot_bonus: float = 0.02
     lob_bonus: float = 0.08                   # alley-oops are close to dunks
@@ -643,6 +645,8 @@ class HalfCourtGame:
             return
         if self.dribble_turnover(h):
             return
+        if self.mode in ("drive", "post") and self.travel_check(h):
+            return
         if self.mode == "pullup":
             if C.dist(h.pos, self.pull_point) < 1.5 or now - self.mode_since > 1.0:
                 self.take_shot(h, moving=False)
@@ -901,16 +905,46 @@ class HalfCourtGame:
         return False
 
     def charge_check(self, h: Agent) -> bool:
+        """A defender with his feet set in the driver's path can take a charge: a help
+        defender who rotated over, or the on-ball defender who beat him to the spot.
+        One chance per defender per drive."""
+        on = self.guarded_by(h)
         for d in self.defense:
-            if d.helping and C.dist(d.pos, h.pos) < 2.0 and math.hypot(d.vx, d.vy) < 2.5:
-                d.helping = False
-                if self.rng.random() < self.t.charge_chance:
-                    self.credit(h, "tov")
-                    self.credit(h, "pf")
-                    self.stats["tov"] += 1
-                    self.say(f"Charge! {d.p.name} takes it from {h.p.name}")
-                    self.end("tov")
-                    return True
+            if d in self.charge_tried or C.dist(d.pos, h.pos) >= 2.0 or math.hypot(d.vx, d.vy) >= 2.5:
+                continue
+            if d is on:
+                if C.dist_to_rim(d.pos) > C.dist_to_rim(h.pos) - 0.5:
+                    continue                                      # not in front of him
+                chance = self.t.charge_on_ball
+            elif d.helping:
+                chance = self.t.charge_chance
+            else:
+                continue
+            self.charge_tried.append(d)
+            if self.rng.random() < chance:
+                self.credit(h, "tov")
+                self.credit(h, "pf")
+                self.stats["tov"] += 1
+                self.stats["charges"] += 1
+                self.stats["charges_on_ball" if d is on else "charges_help"] += 1
+                self.say(f"Charge! {d.p.name} takes it from {h.p.name}")
+                self.end("tov")
+                return True
+        return False
+
+    def travel_check(self, h: Agent) -> bool:
+        """Driving or backing down under pressure: travels, carries and offensive fouls."""
+        rate = self.t.travel_per_sec * math.exp(-0.15 * (h.a("ball_handling") - 10))
+        if self.mode == "post":
+            on = self.guarded_by(h)
+            rate *= math.exp(0.1 * (on.a("strength") - h.a("strength")))
+        if self.rng.random() < rate * self.t.dt:
+            self.credit(h, "tov")
+            self.stats["tov"] += 1
+            self.stats["travels"] += 1
+            self.say(f"{h.p.name} travels" if self.mode == "drive" else f"Offensive foul on {h.p.name}")
+            self.end("tov")
+            return True
         return False
 
     def start_drive(self, h: Agent) -> None:
@@ -919,6 +953,7 @@ class HalfCourtGame:
         side = 1 if on.x < h.x else -1
         h.target((side * 2.5, 6.0))
         self.mode, self.mode_since = "drive", self.now
+        self.charge_tried: list[Agent] = []
         self.stats["drives"] += 1
         self.say(f"{h.p.name} drives {'right' if side > 0 else 'left'}")
         if self.scheme == "press" and self.now >= on.stuck_until and self.rng.random() < 0.35:

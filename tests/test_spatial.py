@@ -230,3 +230,29 @@ class DefenceTests(unittest.TestCase):
         self.assertGreater(pressured, free)
         self.assertGreater(g.errant_chance(h, 35.0, lob=False), free)    # long passes are riskier
         self.assertLess(free, 0.05)
+
+    def test_charges_need_a_defender_set_in_front(self):
+        g, h = frozen_scene()
+        on = g.guarded_by(h)
+        g.mode = "drive"
+        def charges(in_front: bool, trials: int = 1500) -> int:
+            n = 0
+            for _ in range(trials):
+                g.result, g.charge_tried = None, []
+                spot = C.toward(h.pos, C.RIM, 1.5) if in_front else C.toward(h.pos, C.RIM, -1.5)
+                on.place(*spot)
+                n += g.charge_check(h)
+            return n
+        self.assertEqual(charges(in_front=False), 0)
+        self.assertGreater(charges(in_front=True), 5)
+
+    def test_travels_on_drives_happen_rarely(self):
+        g, _ = frozen_scene()
+        g.mode = "drive"
+        h = min(g.offense, key=lambda a: a.a("ball_handling"))
+        n = 0
+        for _ in range(10000):                       # 1,000 seconds of driving
+            g.result = None
+            n += g.travel_check(h)
+        self.assertGreater(n, 3)
+        self.assertLess(n, 200)
