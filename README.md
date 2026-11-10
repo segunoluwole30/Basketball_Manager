@@ -526,6 +526,46 @@ not by making the rim *available*.
   - Model fouls on drives separately from the shot.
   - Hold `foul_scale` at 1 in a follow-up search.
 
+### Rotation lag (`scramble`)
+
+The defence now carries a *scramble* level. A pass to a man whose defender is
+out of position (helping, stunting, or more than `scramble_bend` = 4 ft beyond
+his closeout spot) raises it by one, up to 3. A pass against a set defence
+lowers it by one, and it recovers by itself at `scramble_decay` = 0.2 levels a
+second. While scrambled, the receiver's defender reads the pass later (his
+reaction × (pass_read + `rotation_lag` × scramble), with `rotation_lag` = 0.6),
+and the others hold their old spots a beat longer (ball-watching). Passers see
+the lag when they judge how open a teammate will be, and pass options carry the
+scramble level as a feature for the learned values. `LEGACY_PARAMS` turns it off.
+
+Recovery speed matters most. At 0.6 levels a second the scramble faded before
+the next pass (a touch lasts ~2.5 s), so it never compounded. Quick retrains on
+the training leagues (score / metrics within tolerance):
+no lag 1.35 / 9; lag 0.6 recovering 0.6/s 1.47 / 11; lag 0.6 recovering 0.2/s
+0.90 / 14; lag 1.0 recovering 0.2/s 2.38 / 11 (too many open threes, .50).
+
+Held-out leagues 0 / 1 / 2 after a full retrain, against the calibrated engine
+without lag:
+
+| | without lag | with lag | target |
+|---|---|---|---|
+| points per possession | 1.17 / 1.19 / 1.16 | 1.13 / 1.17 / 1.13 | 1.10 ± .04 |
+| eFG | .515 / .536 / .521 | .495 / .529 / .525 | .527 |
+| three share | .46 / .42 / .40 | .45 / .46 / .45 | .42 |
+| 3P% | .360 / .380 / .342 | .324 / .365 / .354 | .362 |
+| wide-open threes | .21 / .26 / .24 | .31 / .44 / .35 | .44 |
+| passes per possession | 0.9 / 1.1 / 1.1 | 1.0 / 1.1 / 1.2 | 3.2 |
+| seconds per possession | 11.2 / 11.3 / 11.3 | 11.2 / 11.3 / 11.4 | 15.5 |
+| within tolerance (of 18) | 9 / 11 / 10 | 8 / 11 / 13 | |
+
+Lag fixes most of the wide-open-three gap and trims points per possession, but it
+does **not** lengthen possessions or add passes. The learned weight on the
+scramble feature stays near zero: the offence takes the open look the first skip
+pass creates rather than passing again. Possessions have ~4.5 s of action after
+the bring-up at ~2.5 s per touch (realistic), so what's missing is the number of
+touches: NBA offences run entries and actions (reversals, hand-offs, off-ball
+screens) before attacking, which this engine doesn't model.
+
 ## Simulation commands
 
 ```bash

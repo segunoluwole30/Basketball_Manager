@@ -301,6 +301,7 @@ class HalfCourtGame:
         pace = self.teams[side].tactics.pace
         self.next_decision = rng.uniform(1.5, 3.0) * max(0.5, 1 - 0.03 * (pace - 10))
         self.passes = 0
+        self.scramble = 0.0                    # how far behind the defence's rotations are
         self.decisions: list[tuple[str, list[float]]] = []
         self.result: Optional[str] = None
         self.points = 0
@@ -377,6 +378,8 @@ class HalfCourtGame:
     def step(self) -> None:
         dt = self.t.dt
         self.now += dt
+        if self.scramble > 0:
+            self.scramble = max(0.0, self.scramble - self.p.scramble_decay * dt)   # the defence re-sets
         if self.mode != "ft":
             self.shot_clock -= dt
             if self.game_clock is not None:
@@ -908,8 +911,14 @@ class HalfCourtGame:
                     risk += 0.25 * (2.5 - lane) / 2.5
         risk += self.errant_chance(h, d, lob)
         guard = self.guarded_by(mate)
+        scramble = 0.0
+        if self.p.rotation_lag > 0:      # he reads the pass, late if the defence is scrambled
+            scramble = self.scramble_after(mate)
+            delay = guard.reaction * self.p.reaction_scale * (self.p.pass_read + self.p.rotation_lag * scramble)
+        else:
+            delay = guard.reaction * self.p.reaction_scale
         contest_after = max(0.0, C.dist(guard.pos, target) - guard.max_speed * self.p.closeout_speed
-                            * max(0.0, flight - guard.reaction * self.p.reaction_scale))
+                            * max(0.0, flight - delay))
         d_target = C.dist_to_rim(target)
         if lob:
             catch_shoot = self.shot_value(mate, p=target, contest_d=contest_after, defender=guard, lob=True)
@@ -925,7 +934,8 @@ class HalfCourtGame:
         keep_going = clock + 0.04 + 0.01 * (mate.a("ball_handling") - 10)
         best = max(catch_shoot, keep_going) * (1 - min(0.9, risk))
         back = float(mate is self.last_passer and self.now - self.catch_time < 1.5)
-        return [1.0, catch_shoot, clock, risk, back, best, float(d_target < 8), float(lob)]
+        return [1.0, catch_shoot, clock, risk, back, best, float(d_target < 8), float(lob),
+                scramble / self.p.scramble_max]
 
     # ------------------------------------------------------------------ actions
     def dribble_turnover(self, h: Agent) -> bool:
@@ -1109,11 +1119,30 @@ class HalfCourtGame:
             self.say(f"{h.p.name} throws the lob to {mate.p.name}")
         # The receiver's defender reads the pass and breaks on it (half his usual reaction).
         guard = self.guarded_by(mate)
-        guard.next_think = min(guard.next_think, self.now + guard.reaction * self.p.reaction_scale * self.p.pass_read)
+        rs = self.p.reaction_scale
+        if self.p.rotation_lag > 0:
+            # A defence that was bent (helping, stunting, sagged far off) falls a step
+            # further behind with every pass; one that was set re-sets a little.
+            self.scramble = self.scramble_after(mate)
+            lag = self.p.rotation_lag * self.scramble
+            guard.next_think = self.now + guard.reaction * rs * (self.p.pass_read + lag)
+            for de in self.defense:            # the rest watch the ball before they rotate
+                if de is not guard:
+                    de.next_think = max(de.next_think, self.now + de.reaction * rs * 0.5 * lag)
+        else:
+            guard.next_think = min(guard.next_think, self.now + guard.reaction * rs * self.p.pass_read)
         self.holder = None
         self.mode = "pass"
         self.passes += 1
         self.stats["passes"] += 1
+
+    def scramble_after(self, mate: Agent) -> float:
+        """The defence's scramble level once the ball goes to ``mate``."""
+        guard = self.guarded_by(mate)
+        out = C.dist(guard.pos, mate.pos) - self.closeout_gap(mate)
+        if guard.helping or out > self.p.scramble_bend:
+            return min(self.p.scramble_max, self.scramble + 1.0)
+        return max(0.0, self.scramble - 1.0)
 
     def finish_lob(self, mate: Agent, passer: Agent) -> None:
         """A lob is contested at the catch: a defender there can break it up."""

@@ -56,6 +56,11 @@ class SpatialParams:
     pass_steal_scale: float = 0.213
     errant_pass: float = 0.0184          # passes thrown away or fumbled (not picked off)
     defensive_rebound_edge: float = 4.576
+    # --- rotation lag (the defence falls behind as the ball moves) -------------
+    rotation_lag: float = 0.6             # extra reaction (in reactions) per level of scramble
+    scramble_bend: float = 4.0            # receiver's man this far beyond his closeout spot = defence bent (ft)
+    scramble_decay: float = 0.2           # scramble levels recovered per second
+    scramble_max: float = 3.0
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -112,6 +117,7 @@ LEGACY_PARAMS = SpatialParams(
     pass_steal_scale=0.2,
     errant_pass=0.006,
     defensive_rebound_edge=4.6,
+    rotation_lag=0.0,
 )
 
 # Searched fields: (low, high). Everything else stays at its default.

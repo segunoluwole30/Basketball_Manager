@@ -22,7 +22,8 @@ FEATURES = {
     "continue": ["bias", "clock", "skill_edge", "gap", "crowd", "beaten", "closeout", "dist_rim"],
     # best: max(catch-and-shoot ep, keep-going value) discounted by interception risk
     # near_rim: receiver will catch within 8 ft of the rim; lob: thrown over the top
-    "pass": ["bias", "catch_shoot", "clock", "risk", "back_pass", "best", "near_rim", "lob"],
+    # scramble: how far behind the defence's rotations will be after the pass (0-1)
+    "pass": ["bias", "catch_shoot", "clock", "risk", "back_pass", "best", "near_rim", "lob", "scramble"],
     # backing down in the post
     "post": ["bias", "clock", "strength_edge", "skill_edge", "dist_rim", "doubled"],
     "pnr": ["bias", "clock", "handling", "screener_strength"],
@@ -34,7 +35,7 @@ HEURISTIC_WEIGHTS = {
     "shoot": [0.0, 1.0, 0.0, 0.0, 0.0],
     "drive": [0.01, 1.0, 0.025, 0.05, -0.03, 0.15, 0.12, 0.0],
     "continue": [-0.04, 1.0, 0.025, 0.05, -0.03, 0.25, 0.12, 0.0],
-    "pass": [-0.03, 0.0, 0.0, 0.0, -0.08, 1.0, 0.0, 0.0],
+    "pass": [-0.03, 0.0, 0.0, 0.0, -0.08, 1.0, 0.0, 0.0, 0.0],
     "post": [0.0, 1.0, 0.02, 0.02, -0.05, -0.10],
     "pnr": [0.06, 1.0, 0.012, 0.008],
     "hold": [0.0, 1.0, 0.0],
