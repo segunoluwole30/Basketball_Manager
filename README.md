@@ -180,25 +180,25 @@ games could later be stored like season games. It isn't wired into the season lo
   down three. These are passed to the half-court decisions as small value biases.
 
 Measured over 60 games (seed 0; per team-game), with the calibrated half-court
-defence, rotation lag and set plays, against 2025-26 Basketball-Reference league
-averages (transition and minutes are estimates; sources in `measure.py`):
+defence, rotation lag, set plays, safe routine passes and resets, against
+2025-26 Basketball-Reference league averages (transition and minutes are
+estimates; sources in `measure.py`):
 
 | | Sim | NBA |
 |---|---|---|
-| Pace | 111 (was 135 before set plays) | 99.4 |
-| Points per team | 122 (110 per 100) | 115.6 (115.8 per 100) |
-| Transition share of possessions | 16.1% | ~15% (est.) |
-| Transition points per possession | 1.28 | ~1.26 (est.) |
-| FTA per 100 possessions | 29.2 | 23.6 |
-| Personal fouls per 100 possessions | 23.2 | 20.0 |
-| Turnovers per 100 possessions | 16.0 | 14.6 |
-| Starters' minutes (by rank) | 34.3, 32.4, 30.9, 28.6, 24.2 | ~30–36 (est.) |
+| Pace | 107.5 (135 before set plays) | 99.4 |
+| Points per team | 120 (112 per 100) | 115.6 (115.8 per 100) |
+| Transition share of possessions | 14.8% | ~15% (est.) |
+| Transition points per possession | 1.23 | ~1.26 (est.) |
+| FTA per 100 possessions | 28.1 | 23.6 |
+| Personal fouls per 100 possessions | 23.5 | 20.0 |
+| Turnovers per 100 possessions | 14.8 | 14.6 |
+| Starters' minutes (by rank) | 34.6, 32.9, 31.2, 29.2, 25.0 | ~30–36 (est.) |
 
-Set plays took about 25 possessions a game off the pace. Half-court possessions
-now use about 7.7 s of game clock after the bring-up (5.3 s before), and the
-scoring leader averages ~32 points (was ~41). Pace is still ~11 possessions high
-and fouls run high. Teams use about 11 players a game. Full games take about
-0.7 s each.
+Half-court possessions use about 8 s of game clock after the bring-up (5.3 s
+before set plays), and the scoring leader averages ~30 points. Pace is still ~8
+possessions high, and fouls and free throws run high. Teams use about 11 players a
+game. Full games take about 0.7 s each.
 
 ### Learned decision values (`values.py`, `train.py`)
 
@@ -621,6 +621,42 @@ The remaining gaps (turnovers ~16%, wide-open threes ~50–58%, ~1.8 passes and
 ~14 s per possession) don't respond to these settings. They are structural:
 entry passes are lost as often as any other pass, and the search wants more
 patience than three entry actions allow.
+
+### Safe routine passes and second actions
+
+**Routine passes.** A pass between perimeter players (both 19+ ft from the rim),
+25 ft or shorter, from a passer under no pressure to a man who isn't being
+denied, is routine. Its steal and errant-pass chances are scaled by
+`routine_pass_risk` = 0.4, and passers see the lower risk. Before this, 3.8% of
+passes were lost (NBA ~2%), so set plays pushed turnovers to ~16%.
+
+**Second actions.** "Reset" is now an option for the learned decisions: with 11+ s
+on the shot clock, the handler on the perimeter and no action running, he can
+run another entry action instead of attacking (up to `second_actions` = 2 per
+possession; slow-pace teams lean toward it). Stalled attacks (a drive that dies,
+a screen that never comes, a post-up with nothing) also reset when the clock
+allows. In practice resets are rare (~3% of possessions): after three entry
+actions there is seldom 11 s left, and attacks rarely stall in this engine.
+
+Held-out leagues 0 / 1 / 2 after a full retrain:
+
+| | set plays | + safe passes + resets | target |
+|---|---|---|---|
+| points per possession | 1.08 / 1.06 / 1.08 | 1.10 / 1.13 / 1.13 | 1.10 ± .04 |
+| eFG | .527 / .508 / .549 | .516 / .538 / .552 | .527 |
+| three share | .37 / .33 / .38 | .40 / .36 / .41 | .42 |
+| 3P% | .349 / .355 / .396 | .336 / .372 / .391 | .362 |
+| wide-open threes | .49 / .59 / .59 | .48 / .56 / .55 | .44 |
+| turnovers | .156 / .159 / .159 | .124 / .127 / .122 | .13 |
+| passes per possession | 1.8 / 1.8 / 1.8 | 2.0 / 1.9 / 1.9 | 3.2 |
+| seconds per possession | 14.2 / 14.2 / 13.9 | 14.6 / 14.5 / 14.2 | 15.5 |
+| within tolerance (of 18) | 12 / 12 / 9 | 14 / 13 / 10 | |
+| weighted score | 1.05 / 1.81 / 1.51 | 1.15 / 1.73 / 1.62 | 0 |
+
+Turnovers are fixed and more metrics are in range. The weighted score is
+unchanged within noise, because points per possession rose a little once fewer
+possessions ended in turnovers. In full games pace fell from 111 to 107.5 and
+turnovers per 100 match the NBA (14.8 vs 14.6).
 
 ## Simulation commands
 

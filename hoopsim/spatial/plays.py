@@ -57,6 +57,31 @@ def plan(g: "HalfCourtGame") -> Optional[dict]:
     return play
 
 
+def can_reset(g: "HalfCourtGame") -> bool:
+    """Is another set action on the table (for the handler's decision)?"""
+    return (g.play is None and g.p.second_actions > 0 and g.holder is not None
+            and g.second_actions < g.p.second_actions and g.situation is None
+            and g.shot_clock >= MIN_CLOCK + 1.0 and C.dist_to_rim(g.holder.pos) >= 19
+            and (g.game_clock is None or g.game_clock >= 35))
+
+
+def reset(g: "HalfCourtGame", why: str) -> None:
+    """A stalled attack (drive cut off, screen that never came, nothing in the post):
+    reset and run another action instead of forcing something, clock permitting."""
+    if (g.play is not None or g.p.second_actions <= 0 or g.holder is None
+            or g.second_actions >= g.p.second_actions or g.situation is not None
+            or (g.game_clock is not None and g.game_clock < 35)):
+        return
+    play = {"left": 1, "action": None, "done": 0, "second": True}
+    if start_next(g, play):
+        g.second_actions += 1
+        g.stats["second_actions"] += 1
+        g.stats[f"reset_{why}"] += 1
+        g.play = play
+        g.mode, g.mode_since = "probe", g.now
+        g.say(f"{g.teams[g.side].abbreviation} reset and run something else")
+
+
 def _perimeter(g: "HalfCourtGame", exclude=()) -> list["Agent"]:
     return [a for a in g.offense if a is not g.holder and a not in exclude
             and C.dist_to_rim(a.pos) >= 19 and a.y >= 12]

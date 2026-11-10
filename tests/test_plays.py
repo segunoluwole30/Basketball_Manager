@@ -58,3 +58,55 @@ class SetPlayTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SafePassAndResetTests(unittest.TestCase):
+    def setUp(self):
+        self.g = game()
+        self.g.play_possession("home")
+        g = self.g
+        self.h, self.mate = g.offense[0], g.offense[1]
+        self.h.place(0.0, 28.0)
+        self.mate.place(19.0, 22.0)
+        g.guarded_by(self.h).place(0.0, 22.0)          # giving the handler room
+        g.guarded_by(self.mate).place(15.0, 19.0)      # sagging, not denying
+
+    def test_swing_against_no_pressure_is_routine(self):
+        self.assertTrue(self.g.routine(self.h, self.mate, self.mate.pos))
+
+    def test_denied_receiver_or_pressured_passer_is_not_routine(self):
+        g = self.g
+        g.guarded_by(self.mate).place(10.0, 24.5)      # in the passing lane
+        self.assertFalse(g.routine(self.h, self.mate, self.mate.pos))
+        g.guarded_by(self.mate).place(15.0, 19.0)
+        g.guarded_by(self.h).place(0.0, 26.0)          # up on the ball
+        self.assertFalse(g.routine(self.h, self.mate, self.mate.pos))
+
+    def test_pass_into_the_paint_is_not_routine(self):
+        big = self.g.offense[4]
+        big.place(3.0, 8.0)
+        self.assertFalse(self.g.routine(self.h, big, big.pos))
+
+    def test_routine_passes_carry_less_predicted_risk(self):
+        safe = self.g.pass_features(self.h, self.mate)[3]
+        risky = game(DEFAULT_PARAMS.with_values(routine_pass_risk=1.0))
+        risky.play_possession("home")
+        for a, b in zip(risky.everyone, self.g.everyone):
+            a.place(b.x, b.y)
+        self.assertLess(safe, risky.pass_features(risky.offense[0], risky.offense[1])[3])
+
+    def test_reset_is_offered_with_time_and_runs_an_action(self):
+        g = self.g
+        g.result, g.play, g.situation, g.game_clock = None, None, None, None
+        g.holder, g.mode, g.shot_clock, g.second_actions = self.h, "probe", 16.0, 0
+        self.assertTrue(plays.can_reset(g))
+        plays.reset(g, "test")
+        self.assertIsNotNone(g.play)
+        self.assertEqual(g.second_actions, 1)
+        g.play, g.shot_clock = None, 9.0
+        self.assertFalse(plays.can_reset(g))
+
+    def test_legacy_params_never_reset(self):
+        g = game(LEGACY_PARAMS)
+        g.play(50)
+        self.assertEqual(g.stats["second_actions"], 0)

@@ -64,6 +64,8 @@ class SpatialParams:
     # --- set plays (plays.py) ---------------------------------------------------
     entry_actions: float = 3.0            # entry actions before attacking, at pace 10
     entry_read: float = 1.12              # a catch worth this many points (wide open) is shot in the entry
+    routine_pass_risk: float = 0.4        # steal and errant chances on routine perimeter passes
+    second_actions: float = 2.0           # resets into a new action after a stalled attack (per possession)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -122,6 +124,8 @@ LEGACY_PARAMS = SpatialParams(
     defensive_rebound_edge=4.6,
     rotation_lag=0.0,
     entry_actions=0.0,
+    routine_pass_risk=1.0,
+    second_actions=0.0,
 )
 
 # Searched fields: (low, high). Everything else stays at its default.
@@ -158,4 +162,6 @@ SEARCH_SPACE = {
     "scramble_decay": (0.1, 0.8),
     "entry_actions": (0.0, 3.0),
     "entry_read": (1.0, 1.35),
+    "routine_pass_risk": (0.2, 1.0),
+    "second_actions": (0.0, 3.0),
 }

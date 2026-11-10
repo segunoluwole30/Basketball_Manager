@@ -28,6 +28,8 @@ FEATURES = {
     "post": ["bias", "clock", "strength_edge", "skill_edge", "dist_rim", "doubled"],
     "pnr": ["bias", "clock", "handling", "screener_strength"],
     "hold": ["bias", "clock", "clock_raw"],
+    # run another set action (plays.py) instead of attacking now
+    "reset": ["bias", "clock", "scramble"],
 }
 
 # Weights matching the original hand-written formulas.
@@ -39,6 +41,7 @@ HEURISTIC_WEIGHTS = {
     "post": [0.0, 1.0, 0.02, 0.02, -0.05, -0.10],
     "pnr": [0.06, 1.0, 0.012, 0.008],
     "hold": [0.0, 1.0, 0.0],
+    "reset": [-0.02, 1.0, 0.0],
 }
 
 DEFAULT_PATH = Path(__file__).with_name("decision_values.json")

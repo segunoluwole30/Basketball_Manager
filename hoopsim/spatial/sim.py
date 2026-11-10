@@ -304,6 +304,7 @@ class HalfCourtGame:
         self.passes = 0
         self.scramble = 0.0                    # how far behind the defence's rotations are
         self.play: Optional[dict] = None        # the entry action being run (plays.py)
+        self.second_actions = 0
         self.decisions: list[tuple[str, list[float]]] = []
         self.result: Optional[str] = None
         self.points = 0
@@ -529,7 +530,7 @@ class HalfCourtGame:
             mate = action[1]
             feed_post = 0.03 if focus == "inside" and self.can_post(mate) and C.dist_to_rim(mate.pos) < 11 else 0.0
             return 0.8 * k * (tend.passing - 10) + feed_post
-        if kind == "hold":
+        if kind in ("hold", "reset"):
             return -0.012 * (tac.pace - 10)                     # fast teams take earlier shots
         return 0.0
 
@@ -731,6 +732,7 @@ class HalfCourtGame:
             if now - self.post["since"] > 4.5:
                 self.mode, self.mode_since, self.post = "probe", now, None   # nothing there: reset
                 h.spot = h.pos
+                plays.reset(self, "post")
         if self.mode == "drive":
             if self.dig(h):
                 return
@@ -749,6 +751,7 @@ class HalfCourtGame:
                 h.target(h.spot)
                 self.mode, self.mode_since = "probe", now
                 self.next_decision = now + 0.3
+                plays.reset(self, "drive")
                 return
         if self.pnr and not self.pnr["set"]:
             scr = self.pnr["screener"]
@@ -756,6 +759,7 @@ class HalfCourtGame:
                 self.set_screen()
             elif now - self.pnr["called"] > 4.0:
                 self.pnr = None                      # screen never came
+                plays.reset(self, "pnr")
         if now < self.next_decision:
             return
         self.decide(h)
@@ -791,6 +795,9 @@ class HalfCourtGame:
                 options.append(("pnr", ("pnr", scr), [1.0, hold_curve(sc - 4), h.a("ball_handling") - 10.0,
                                                       scr.a("strength") - 10.0]))
             options.append(("hold", ("hold",), [1.0, hold_curve(sc), sc / 24.0]))
+            if plays.can_reset(self):
+                options.append(("reset", ("reset",), [1.0, hold_curve(sc - 2.5),
+                                                      self.scramble / self.p.scramble_max]))
         else:
             options.append(("continue", ("continue",), self.drive_features(h)))
         for mate in self.offense:
@@ -828,6 +835,10 @@ class HalfCourtGame:
             self.call_pnr(h, action[1])
         elif kind == "pass":
             self.throw_pass(h, action[1])
+        elif kind == "reset":
+            plays.reset(self, "choice")
+            if self.play is None:
+                self.next_decision = now + rng.uniform(0.6, 1.2)
         else:
             self.next_decision = now + rng.uniform(0.6, 1.2)
 
@@ -910,6 +921,7 @@ class HalfCourtGame:
         if d > 40:
             return None
         target, flight, lob = self.pass_target(h, mate)
+        safe = self.p.routine_pass_risk if not lob and self.routine(h, mate, target) else 1.0
         diving = mate is self.cutter or (self.pnr is not None and self.pnr["set"] and mate is self.pnr["screener"])
         risk = 0.0
         for de in self.defense:
@@ -921,7 +933,7 @@ class HalfCourtGame:
                 lane = C.point_segment_distance(de.pos, h.pos, target)
                 if lane < 2.5 and C.dist(de.pos, h.pos) > 1.5:
                     risk += 0.25 * (2.5 - lane) / 2.5
-        risk += self.errant_chance(h, d, lob)
+        risk = safe * (risk + self.errant_chance(h, d, lob))
         guard = self.guarded_by(mate)
         scramble = 0.0
         if self.p.rotation_lag > 0:      # he reads the pass, late if the defence is scrambled
@@ -1088,6 +1100,18 @@ class HalfCourtGame:
         self.pnr["attack"] = True
         self.next_decision = self.now + 0.25
 
+    def routine(self, h: Agent, mate: Agent, target: tuple[float, float]) -> bool:
+        """A routine perimeter pass: short, from a passer under no pressure, to a man
+        who isn't being denied. These are rarely lost; turnovers come from passes
+        into traffic."""
+        if C.dist_to_rim(h.pos) < 19 or C.dist_to_rim(target) < 19 or C.dist(h.pos, target) > 25:
+            return False
+        on = self.guarded_by(h)
+        if C.dist(on.pos, h.pos) < 3.0 and self.now >= on.stuck_until:
+            return False
+        guard = self.guarded_by(mate)
+        return C.point_segment_distance(guard.pos, h.pos, target) > 3.0
+
     def errant_chance(self, h: Agent, d: float, lob: bool) -> float:
         """Chance a pass is thrown away or fumbled: a defender's hands in the passing
         window, the length of the pass and the passer's skill."""
@@ -1101,13 +1125,14 @@ class HalfCourtGame:
         d = C.dist(h.pos, mate.pos)
         target, flight, lob = self.pass_target(h, mate)
         mate.target(target)                            # stop and show a target, or keep cutting
+        safe = self.p.routine_pass_risk if not lob and self.routine(h, mate, target) else 1.0
         source = ("cut" if self.cutter is mate else
                   "roll" if self.pnr and self.pnr["set"] and mate is self.pnr["screener"] else None)
         # Interception? (Lobs go over the top; they're contested at the catch instead.)
         for de in ([] if lob else self.defense):
             lane = C.point_segment_distance(de.pos, h.pos, target)
             if lane < 2.0 and C.dist(de.pos, h.pos) > 1.5:
-                p = (self.p.pass_steal_scale * (1.4 if self.scheme == "press" else 1.0)
+                p = (safe * self.p.pass_steal_scale * (1.4 if self.scheme == "press" else 1.0)
                      * math.exp(0.12 * (de.a("stealing") - 10))
                      * (2.0 - lane) / 2.0 * (1.3 if d > 25 else 1.0))
                 if self.rng.random() < p:
@@ -1116,7 +1141,7 @@ class HalfCourtGame:
                     self.holder = None
                     self.mode = "pass"
                     return
-        if self.rng.random() < self.errant_chance(h, d, lob):
+        if self.rng.random() < safe * self.errant_chance(h, d, lob):
             away = C.toward(h.pos, target, d + 6.0 + self.rng.uniform(0, 6))
             self.flight = Flight("pass", h.pos, (max(-25.0, min(25.0, away[0])), max(0.0, min(47.0, away[1]))),
                                  self.now, flight, data={"errant": mate, "passer": h})
