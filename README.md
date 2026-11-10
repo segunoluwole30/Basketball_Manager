@@ -351,6 +351,107 @@ too close on threes (the make chance is generous on contested shots to
 compensate), and possessions are short and pass-light. Fixing realistic contest
 distances and ball movement comes before tuning the totals.
 
+### Automated calibration (`params.py`, `calibrate.py`)
+
+```bash
+python -m hoopsim.spatial.calibrate --log calibration.jsonl     # ~45 min on 3 cores
+python -m hoopsim.spatial.calibrate --log calibration.jsonl --resume
+python -m hoopsim.spatial.measure --params calibrated_params.json
+```
+
+The settings behind the rim-versus-arc trade-off now live in one dataclass,
+`SpatialParams`. It covers help timing and depth, defender reaction, stunt and
+tag distances, drop depth, sag, closeout gap and speed, contest reach and
+strength, finishing and three-point adjustments, foul rate, turnover rates and
+the rebounding edge. `HalfCourtGame(params=None)` uses the defaults.
+`LEGACY_PARAMS` holds the hand-set values from before calibration, and a test
+checks that they still play exactly as before.
+
+A candidate can't be judged with decision values trained for different physics,
+because the offence would keep taking the shots that used to be good. So each
+candidate is retrained (3 rounds × 6,000 possessions, warm-started from the
+saved values) on the training leagues 100–102 and then measured there on 9,000
+possessions. Its score is the weighted mean of ((sim − target) / tolerance)².
+Points per possession, eFG, the shot mix and 3P% carry the most weight. Seconds
+and passes carry little, because these settings barely move them.
+
+The search runs in three phases:
+1. **Noise:** the defaults are evaluated with 6 different seeds.
+2. **Sample:** 90 Latin-hypercube samples over 28 parameters.
+3. **Refine:** a (1+3) evolution strategy. Mutants that beat the incumbent are
+   re-run with a fresh seed and must still win on the mean.
+
+It uses 3 worker processes. Every evaluation is logged to JSONL, and the search
+resumes from that log. The held-out leagues 0–2 are never used during the search.
+
+**Noise:** for the old defaults, the score is 6.90 ± 1.19 (sd across seeds).
+Per metric the sd is: points per possession .010, eFG .007, rim share .019,
+three share .038 (the retrained policy wobbles), 3P% .004.
+
+**Result:** the Latin-hypercube phase found the basin, with the best sample
+scoring 1.54 against the defaults' 6.9. Refinement accepted one step (mean 1.16
+over two seeds), and then 20 generations brought nothing beyond noise. The
+values were then fully retrained (`train.py` defaults) and measured on the
+held-out leagues:
+
+| held-out seed 0 / 1 / 2 | before | after | target |
+|---|---|---|---|
+| points per possession | 1.19 / 1.24 / 1.25 | 1.17 / 1.19 / 1.17 | 1.10 ± .04 |
+| eFG | .528 / .543 / .566 | .511 / .514 / .511 | .527 |
+| rim share | .17 / .15 / .15 | .28 / .31 / .30 | .28 |
+| close share | .13 / .10 / .10 | .25 / .21 / .24 | .23 |
+| mid share | .06 / .08 / .07 | .06 / .11 / .10 | .07 |
+| three share | .65 / .68 / .69 | .41 / .37 / .36 | .42 |
+| FG% rim | .66 / .64 / .67 | .61 / .64 / .62 | .64 |
+| 3P% | .350 / .363 / .382 | .334 / .333 / .338 | .362 |
+| threes within 2 ft | .06 / .13 / .06 | .02 / .03 / .05 | .02 |
+| wide-open threes | .18 / .19 / .20 | .19 / .26 / .20 | .44 |
+| turnovers | .086 / .083 / .082 | .081 / .078 / .080 | .13 |
+| offensive rebounds | .26 / .28 / .24 | .23 / .22 / .19 | .27 |
+| FTA / FGA | .16 / .14 / .14 | .32 / .33 / .37 | .24 |
+| assists per make | .58 / .70 / .68 | .39 / .51 / .48 | .60 |
+| passes per possession | 1.2 / 1.4 / 1.3 | 0.8 / 1.0 / 1.0 | 3.2 |
+| seconds per possession | 11.3 / 11.3 / 11.2 | 11.2 / 11.3 / 11.3 | 15.5 |
+| within tolerance (of 18) | 8 / 7 / 6 | 8 / 7 / 9 | |
+| weighted score | 4.0 / 6.2 / 6.7 | 1.8 / 1.8 / 2.0 | 0 |
+
+**What changed:**
+- **Later, shallower help.** The help trigger went from 22 to 16.5 ft and tag
+  range from 15 to 8.3 ft. The stunt stops 7.6 ft from the driver instead of
+  4.5, and help leaves shooters more readily (penalty 8 → 3.6).
+- **Slower reactions** (×1.3).
+- **Heavier contests on jumpers.** The contest penalty is ×1.6, contests at
+  release reach to 1.65 ft, and an open three is two points harder to make.
+- **More fouls** (×1.28) and three times as many errant passes.
+
+The shot mix, eFG and contest tightness are now in range.
+
+**Still off:** the search fixed the shot mix mostly by making threes *worse*,
+not by making the rim *available*.
+- 3P% fell below target (.333).
+- Wide-open threes stayed at ~20% (target 44%). In this engine an open three
+  is the best shot, so the learned policy takes every one it gets, and only
+  contested or harder threes keep the share at 42%.
+- Points per possession are still ~1.18 despite a low eFG. The excess comes
+  from free throws (FTA/FGA .32–.37, because the search raised the foul rate)
+  and too few turnovers (8%).
+- Turnovers resist tuning: tripling errant passes just made the offence pass
+  less (0.8–1.0 per possession, assists .39–.51).
+- Rim attempts now come ~75–80% from drives. Cuts, putbacks and post-ups have
+  shrunk, and offensive rebounds are low (.19–.23).
+
+**Bounds and mechanisms:**
+- Only `contest_reach` ended near a bound (1.65 in 1.5–4.5).
+- The mechanisms the search couldn't fix are structural: ball movement (the
+  pass value), free-throw rate independent of rim volume, and the open-three
+  premium.
+- Suggested next changes:
+  - Make passing reduce defensive organisation, for example rotations that
+    compound after each swing, so passes create open threes instead of the
+    defence always recovering.
+  - Model fouls on drives separately from the shot.
+  - Hold `foul_scale` at 1 in a follow-up search.
+
 ## Simulation commands
 
 ```bash

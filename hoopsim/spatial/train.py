@@ -17,15 +17,18 @@ import random
 import time
 from collections import Counter
 from datetime import date
+from typing import Optional
 
 from ..generate import generate_league
+from .params import SpatialParams
 from .sim import HalfCourtGame
 from .values import DEFAULT_PATH, FEATURES, HEURISTIC, DecisionModel, fit
 
 TRAIN_SEEDS = (100, 101, 102)
 
 
-def play_round(model: DecisionModel, possessions: int, explore: float, seed: int) -> tuple[dict, Counter]:
+def play_round(model: DecisionModel, possessions: int, explore: float, seed: int,
+               params: Optional[SpatialParams] = None) -> tuple[dict, Counter]:
     samples: dict = {}
     stats = Counter()
     rng = random.Random(seed)
@@ -36,14 +39,17 @@ def play_round(model: DecisionModel, possessions: int, explore: float, seed: int
         pairs = [(teams[i], teams[(i + 1) % len(teams)]) for i in range(len(teams))]
         for home, away in pairs:
             game = HalfCourtGame(league, home, away, rng, record=False, model=model,
-                                 explore=explore, recorder=samples)
+                                 explore=explore, recorder=samples, params=params)
             game.play(max(2, per_league // len(pairs)))
             stats += game.stats
     return samples, stats
 
 
 def train(rounds: int = 5, possessions: int = 20000, ridge: float = 50.0,
-          start: DecisionModel = HEURISTIC, verbose: bool = True) -> DecisionModel:
+          start: DecisionModel = HEURISTIC, verbose: bool = True,
+          params: Optional[SpatialParams] = None, seed: int = 0) -> DecisionModel:
+    """``params``: the engine settings to learn values for (default: ``DEFAULT_PARAMS``);
+    ``seed`` offsets the per-round game seeds."""
     model = start
     history: list[DecisionModel] = []
     resumed = start is not HEURISTIC
@@ -51,7 +57,7 @@ def train(rounds: int = 5, possessions: int = 20000, ridge: float = 50.0,
     for r in range(rounds):
         t0 = time.time()
         explore = schedule[min(r, len(schedule) - 1)]
-        samples, stats = play_round(model, possessions, explore, seed=r)
+        samples, stats = play_round(model, possessions, explore, seed=seed + r, params=params)
         model = fit(samples, prior=model, ridge=ridge)
         history.append(model)
         if verbose:
@@ -86,9 +92,11 @@ def main() -> None:
     ap.add_argument("--ridge", type=float, default=50.0)
     ap.add_argument("--no-save", action="store_true")
     ap.add_argument("--resume", action="store_true", help="start from the saved values")
+    ap.add_argument("--params", help="JSON file of SpatialParams to train for (default: the defaults)")
     args = ap.parse_args()
     start = DecisionModel.load() if args.resume else HEURISTIC
-    model = train(args.rounds, args.possessions, args.ridge, start=start)
+    params = SpatialParams.load(args.params) if args.params else None
+    model = train(args.rounds, args.possessions, args.ridge, start=start, params=params)
     print("\nLearned weights:\n" + describe(model))
     if not args.no_save:
         model.save()
