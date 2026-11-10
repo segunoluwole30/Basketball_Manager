@@ -186,20 +186,21 @@ minutes are estimates; sources in `measure.py`):
 
 | | Sim | NBA |
 |---|---|---|
-| Pace | 103.9 (135 before set plays) | 99.4 |
-| Points per team | 117 (113 per 100) | 115.6 (115.8 per 100) |
+| Pace | 103.0 (135 before set plays) | 99.4 |
+| Points per team | 114 (111 per 100) | 115.6 (115.8 per 100) |
 | Transition share of possessions | 13.8% | ~15% (est.) |
 | Transition points per possession | 1.24 | ~1.26 (est.) |
-| FTA per 100 possessions | 25.7 | 23.6 |
-| Personal fouls per 100 possessions | 20.0 | 20.0 |
-| Turnovers per 100 possessions | 14.8 | 14.6 |
-| Starters' minutes (by rank) | 34.3, 32.6, 31.3, 29.6, 25.9 | ~30–36 (est.) |
+| FTA per 100 possessions | 26.1 | 23.6 |
+| Personal fouls per 100 possessions | 20.7 | 20.0 |
+| Turnovers per 100 possessions | 14.6 | 14.6 |
+| Starters' minutes (by rank) | 34.0, 32.7, 31.4, 29.8, 26.0 | ~30–36 (est.) |
 
 Non-shooting fouls (reach-ins, holds) are a per-second risk of live half-court
 play (`non_shooting_foul_per_second` = 0.011, about 7 a team-game). They used to be
-scheduled on 25% of possessions, so longer possessions inflated them. Pace is still
-~4.5 possessions high: half-court shots come almost entirely with 15–7 s left,
-with no late-clock tail. The scoring leader averages ~31 points. Full games take
+scheduled on 25% of possessions, so longer possessions inflated them. Pace is
+~3.5 possessions high, and points per 100 possessions are ~5 low. Teams take ~28
+threes a game (NBA ~37): the three-point share in full games (33%) is below the
+half-court yardstick's (36–42%). The scoring leader averages ~29 points. Full games take
 about 0.7 s each.
 
 ### Learned decision values (`values.py`, `train.py`)
@@ -692,6 +693,24 @@ productive. The two yardsticks now disagree: the same engine is above the half-c
 estimate yet below the real per-100 rate in full games, where fatigue and benches
 play. The full-game numbers come from Basketball-Reference and the half-court ones
 are estimates, so the full-game numbers decide.
+
+### Pace: denial
+
+A set defence often overplays a shooter one pass away. On a swing, the receiver's
+defender denies with probability `deny_rate` = 0.45, scaled up for good perimeter
+defenders and good shooters, ×1.5 in a press and never in a zone. He sits in the
+passing lane, so a forced pass there isn't routine. The receiver V-cuts (toward
+the rim, then back out) and the pass waits until he's free, which takes 0.6–2.8 s
+depending on his speed and IQ against the defender's. If that outlasts the
+action's 3.5 s, the action dies. Set-play reads also follow the coach's
+three-point appetite: high three-point-rate and perimeter-focus teams take a
+catch-and-shoot three during the set a little more readily.
+
+Shot timing was not the problem: rough NBA shot-clock splits put the average shot
+at ~11.8 s remaining, and half-court first shots here come at ~11 s. The gap was
+~0.5–0.9 s of game clock per possession spread across possession types. Denial is
+worth about a possession a game: full-game pace 103.9 → 103.0 (deny 0.8 would give
+~102, but that's more denial than NBA defences play).
 
 ## Simulation commands
 

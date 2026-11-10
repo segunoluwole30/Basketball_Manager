@@ -145,8 +145,9 @@ class InsideGameTests(unittest.TestCase):
         receivers = [e.split(" throws the lob to ")[1] for e in self.events if " throws the lob to " in e]
         for name in receivers:
             a = names[name]
-            self.assertGreaterEqual(a.height, 6.75)
-            self.assertGreaterEqual(a.a("vertical"), 12)
+            # Cutters need height and spring; a roller needs one or the other (a short
+            # lob over a drop big).
+            self.assertTrue(a.height >= 6.75 or a.a("vertical") >= 13, (name, a.height, a.a("vertical")))
 
     def test_alley_oops_finish_at_the_rim(self):
         for g in self.games:

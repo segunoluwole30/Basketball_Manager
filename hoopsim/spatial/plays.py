@@ -121,6 +121,7 @@ def start_next(g: "HalfCourtGame", play: dict) -> bool:
     if kind == "swing":
         a["to"] = min(swing_to, key=lambda m: C.dist(m.pos, h.pos))
         a["at"] = g.now + rng.uniform(0.6, 1.3)
+        _maybe_deny(g, a)
     elif kind == "handoff":
         a["to"] = min(wings, key=lambda m: C.dist(m.pos, h.pos))
     elif kind == "pnr":
@@ -140,6 +141,34 @@ def start_next(g: "HalfCourtGame", play: dict) -> bool:
     return True
 
 
+def _maybe_deny(g: "HalfCourtGame", a: dict) -> None:
+    """A set defence often overplays a shooter one pass away: the swing isn't there
+    until he V-cuts free (or the action dies on the shot clock)."""
+    if g.p.deny_rate <= 0 or g.scramble > 0:
+        return
+    mate = a["to"]
+    d = g.guarded_by(mate)
+    scheme = {"press": 1.5, "zone": 0.0}.get(g.scheme, 1.0)
+    p = (g.p.deny_rate * scheme * math.exp(0.06 * (d.a("perimeter_defense") - 10))
+         * math.exp(0.05 * (mate.a("three_point") - 10)))
+    if g.rng.random() >= min(0.95, p):
+        return
+    # How long he needs to get free: his quickness and smarts against the defender's.
+    edge = ((mate.a("speed") + mate.a("basketball_iq")) - (d.a("speed") + d.a("perimeter_defense"))) / 2
+    work = max(0.6, g.rng.uniform(1.0, 2.8) - 0.08 * edge)
+    a.update({"deny": d, "free_at": g.now + work, "vcut_turn": g.now + 0.55 * work})
+    g.stats["denials"] += 1
+    g.say(f"{d.p.name} denies {mate.p.name} the ball")
+
+
+def defense_target(g: "HalfCourtGame", d: "Agent") -> Optional[tuple[float, float]]:
+    """A denying defender sits in the passing lane until his man gets free."""
+    act = g.play["action"] if g.play else None
+    if act is None or act.get("deny") is not d or g.now >= act["free_at"] or g.holder is None:
+        return None
+    return C.clamp(C.toward(act["to"].pos, g.holder.pos, 2.0))
+
+
 def offense_target(g: "HalfCourtGame", a: "Agent") -> Optional[tuple[float, float]]:
     """Where an off-ball player in the current action goes (None: his usual logic)."""
     act = g.play["action"] if g.play else None
@@ -147,6 +176,10 @@ def offense_target(g: "HalfCourtGame", a: "Agent") -> Optional[tuple[float, floa
         return None
     kind, h = act["kind"], g.holder
     if kind == "swing" and a is act["to"] and h is not None:
+        if act.get("deny") is not None and g.now < act["free_at"]:
+            if g.now < act["vcut_turn"]:                               # V-cut: take him toward the rim...
+                return C.clamp(C.toward(RIM, a.spot, max(12.0, C.dist_to_rim(a.spot) - 6.0)))
+            return C.clamp(C.toward(h.pos, a.spot, 2.0))                # ...then pop back out to the ball
         return C.clamp(C.toward(h.pos, a.spot, 2.0))                # step up and show for it
     if kind == "handoff" and a is act["to"] and h is not None:
         # Come at the handler, then take it going toward the top of the key.
@@ -178,7 +211,7 @@ def handler_step(g: "HalfCourtGame") -> None:
         return
     if kind == "swing":
         h.target(h.spot)
-        if now >= act["at"]:
+        if now >= act["at"] and (act.get("deny") is None or now >= act["free_at"]):
             _entry_pass(g, h, mate)
     elif kind == "handoff":
         h.target(C.clamp(C.toward(mate.pos, h.pos, 3.0)))             # dribble at him
@@ -229,7 +262,12 @@ def on_catch(g: "HalfCourtGame", mate: "Agent") -> None:
     rt = g.release_time(mate, True)
     contest = max(0.0, dd - g.closing_speed(closer, mate) * (0.35 + rt))
     ep = g.shot_value(mate, p=spot, contest_d=contest, defender=closer, catch=True)
-    if ep >= g.p.entry_read:
+    read = g.p.entry_read
+    if C.is_three(spot):                 # the coach's three-point appetite moves the bar
+        tac = g.teams[g.side].tactics
+        read -= 0.005 * (tac.three_point_rate - 10) + {"perimeter": 0.025, "inside": -0.025}.get(
+            tac.offensive_focus.value, 0.0)
+    if ep >= read:
         g.stats["entry_shots"] += 1
         g.play = None
         g.take_shot(mate, moving=False)

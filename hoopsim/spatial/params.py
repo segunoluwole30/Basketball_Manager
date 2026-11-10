@@ -64,6 +64,7 @@ class SpatialParams:
     # --- set plays (plays.py) ---------------------------------------------------
     entry_actions: float = 3.0            # entry actions before attacking, at pace 10
     entry_read: float = 1.12              # a catch worth this many points (wide open) is shot in the entry
+    deny_rate: float = 0.45               # chance a set defence denies a swing receiver (scaled by skill)
     entry_pnr: float = 0.5                # weight of a closing pick-and-roll among the set's last actions
     entry_drive_gap: float = 5.0          # ... and drives a freed catch only with this much daylight (ft)
     routine_pass_risk: float = 0.4        # steal and errant chances on routine perimeter passes
@@ -167,5 +168,6 @@ SEARCH_SPACE = {
     "routine_pass_risk": (0.2, 1.0),
     "entry_drive_gap": (2.0, 8.0),
     "entry_pnr": (0.0, 2.0),
+    "deny_rate": (0.0, 1.0),
     "second_actions": (0.0, 3.0),
 }

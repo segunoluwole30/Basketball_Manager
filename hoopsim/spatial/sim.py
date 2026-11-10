@@ -621,6 +621,8 @@ class HalfCourtGame:
                 # contests end at hand's length, not body to body.
                 gap = C.dist(d.pos, self.holder.pos)
                 d.target(C.toward(self.holder.pos, d.pos, max(self.p.contest_reach, gap - 2.5)))
+            elif self.play is not None and (deny := plays.defense_target(self, d)) is not None:
+                d.target(deny)                                   # denying the entry pass
             elif d is stunter:
                 d.target(C.toward(self.holder.pos, d.pos, self.p.stunt_distance))
             elif d is helper:

@@ -31,8 +31,9 @@ class SetPlayTests(unittest.TestCase):
         with_plays.play(300)
         without.play(300)
         self.assertEqual(without.stats["entries"], 0)
-        # (sets often finish in a pick-and-roll rather than another pass)
-        self.assertGreater(with_plays.stats["passes"], 1.15 * without.stats["passes"])
+        # (sets often finish in a pick-and-roll rather than another pass, and a denied
+        # swing can kill the action)
+        self.assertGreater(with_plays.stats["passes"], 1.08 * without.stats["passes"])
         self.assertGreater(with_plays.stats["seconds"], 1.15 * without.stats["seconds"])
 
     def test_legacy_params_run_no_entries(self):
@@ -118,9 +119,55 @@ class ClosingPickAndRollTests(unittest.TestCase):
         g = game()
         g.play(400)
         self.assertGreater(g.stats["entry_pnr"], 20)
-        self.assertGreater(g.stats["pnr"] / g.stats["possessions"], 0.12)
+        # (denials kill some sets before their last action)
+        self.assertGreater(g.stats["pnr"] / g.stats["possessions"], 0.08)
 
     def test_no_closing_pick_and_roll_when_weight_is_zero(self):
         g = game(DEFAULT_PARAMS.with_values(entry_pnr=0.0))
         g.play(200)
         self.assertEqual(g.stats["entry_pnr"], 0)
+
+
+class DenialTests(unittest.TestCase):
+    def test_set_defences_deny_some_swings(self):
+        g = game()
+        g.play(300)
+        swings = g.stats["entry_swing"]
+        self.assertGreater(g.stats["denials"], 0.1 * swings)
+        self.assertLess(g.stats["denials"], 0.9 * swings)
+
+    def test_zones_do_not_deny(self):
+        league = generate_league(seed=41)
+        from hoopsim.models import DefensiveScheme
+        for t in league.teams.values():
+            t.tactics.defensive_scheme = DefensiveScheme.ZONE
+        g = HalfCourtGame(league, 1, 2, random.Random(4), model=HEURISTIC)
+        g.play(200)
+        self.assertEqual(g.stats["denials"], 0)
+
+    def test_denied_swing_waits_for_the_v_cut(self):
+        g = game(DEFAULT_PARAMS.with_values(deny_rate=50.0))   # always deny
+        for _ in range(200):
+            g.play_possession("home")
+            if g.stats["denials"]:
+                break
+        self.assertGreater(g.stats["denials"], 0)
+        # Set one up by hand and check the pass is held until he's free.
+        g.play_possession("home")
+        g.result, g.situation, g.game_clock, g.scramble = None, None, None, 0.0
+        g.holder, g.mode, g.shot_clock = g.offense[0], "probe", 18.0
+        g.offense[0].place(0.0, 28.0)
+        g.offense[1].place(19.0, 22.0)
+        play = {"left": 1, "action": None, "done": 0}
+        while True:                                   # draw until the action is a swing
+            self.assertTrue(plays.start_next(g, play) or True)
+            if play["action"]["kind"] == "swing":
+                break
+            play["left"] = 1
+        g.play = play
+        act = play["action"]
+        self.assertIn("deny", act)
+        passes = g.passes
+        while g.now < act["free_at"] - 0.15 and g.flight is None:
+            g.step()
+        self.assertEqual(g.passes, passes)            # not thrown while he's denied
