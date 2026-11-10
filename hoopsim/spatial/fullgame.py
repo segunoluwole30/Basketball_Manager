@@ -75,10 +75,12 @@ class GameTuning:
     fatigue_speed: float = 0.22
     fatigue_reaction: float = 0.45
     fatigue_shot: float = 0.12
-    # Non-shooting defensive fouls (reach-ins, holds, loose balls): chance a possession
-    # has one scheduled, and the window it falls in (it only happens if the ball is still live).
-    non_shooting_foul_rate: float = 0.25
-    non_shooting_foul_window: tuple = (0.5, 16.0)
+    # Non-shooting defensive fouls (reach-ins, holds, loose balls): a per-second risk
+    # during live half-court play, so their number doesn't depend on how long
+    # possessions last. ~0.011/s gives ~7.5 a team-game (NBA personal fouls ~20 per 100
+    # possessions, of which roughly 9-10 shooting and 2 offensive).
+    non_shooting_foul_per_second: float = 0.011
+    non_shooting_foul_earliest: float = 0.5
     press_foul_factor: float = 1.25
     bring_up: tuple = (3.5, 6.0)           # half-court starts: shot-clock seconds to get into the offence
     inbound_after_make: tuple = (1.0, 2.5)  # game clock running before the inbound is touched
@@ -535,11 +537,11 @@ class FullGame:
             self.stats["intentional_fouls"] += 1
             self.log(defense, f"{defense.team.abbreviation} foul to stop the clock")
             return
-        rate = gt.non_shooting_foul_rate
+        rate = gt.non_shooting_foul_per_second
         if defense.tactics.defensive_scheme is DefensiveScheme.PRESS:
             rate *= gt.press_foul_factor
-        if rng.random() < rate:
-            at = rng.uniform(*gt.non_shooting_foul_window)
+        at = gt.non_shooting_foul_earliest + rng.expovariate(rate)
+        if at < 24.0:                       # it only happens if the ball is still live then
             start["foul_at"] = at
             start["bonus"] = self.in_bonus_after_foul(defense, self.clock - at)
 

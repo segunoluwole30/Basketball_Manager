@@ -170,3 +170,26 @@ class ShortGameTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NonShootingFoulTests(unittest.TestCase):
+    """Reach-ins and holds are a per-second risk of live play, not a per-possession one."""
+
+    def fouls(self, rate: float) -> float:
+        from dataclasses import replace
+        from hoopsim.spatial.fullgame import DEFAULT_GAME_TUNING
+        league = generate_league(seed=5)
+        gt = replace(DEFAULT_GAME_TUNING, non_shooting_foul_per_second=rate)
+        n = 0
+        for i in range(3):
+            g = FullGame(league, 1 + i, 4 + i, random.Random(i), game_tuning=gt)
+            g.run()
+            n += g.hc.stats["non_shooting_fouls"]
+        return n / 6                                  # per team-game
+
+    def test_rate_sets_the_number_of_fouls(self):
+        default = self.fouls(0.011)
+        self.assertGreater(default, 3.0)
+        self.assertLess(default, 12.0)
+        self.assertGreater(self.fouls(0.03), 1.8 * default)
+        self.assertEqual(self.fouls(1e-9), 0)

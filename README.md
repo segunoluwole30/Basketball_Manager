@@ -186,19 +186,24 @@ estimates; sources in `measure.py`):
 
 | | Sim | NBA |
 |---|---|---|
-| Pace | 107.5 (135 before set plays) | 99.4 |
-| Points per team | 120 (112 per 100) | 115.6 (115.8 per 100) |
+| Pace | 107.4 (135 before set plays) | 99.4 |
+| Points per team | 116 (108 per 100) | 115.6 (115.8 per 100) |
 | Transition share of possessions | 14.8% | ~15% (est.) |
-| Transition points per possession | 1.23 | ~1.26 (est.) |
-| FTA per 100 possessions | 28.1 | 23.6 |
-| Personal fouls per 100 possessions | 23.5 | 20.0 |
-| Turnovers per 100 possessions | 14.8 | 14.6 |
-| Starters' minutes (by rank) | 34.6, 32.9, 31.2, 29.2, 25.0 | ~30–36 (est.) |
+| Transition points per possession | 1.21 | ~1.26 (est.) |
+| FTA per 100 possessions | 24.0 | 23.6 |
+| Personal fouls per 100 possessions | 19.4 | 20.0 |
+| Turnovers per 100 possessions | 15.5 | 14.6 |
+| Starters' minutes (by rank) | 34.4, 32.9, 31.4, 29.5, 26.2 | ~30–36 (est.) |
 
-Half-court possessions use about 8 s of game clock after the bring-up (5.3 s
-before set plays), and the scoring leader averages ~30 points. Pace is still ~8
-possessions high, and fouls and free throws run high. Teams use about 11 players a
-game. Full games take about 0.7 s each.
+Non-shooting fouls (reach-ins, holds) are a per-second risk of live half-court
+play (`non_shooting_foul_per_second` = 0.011, about 7 a team-game). They used to be
+scheduled on 25% of possessions and only counted if the ball was still live, so
+when set plays lengthened possessions they jumped to ~11.6 a game, taking fouls
+to 23.5 and free throws to 28 per 100. Now 8 of the 10 full-game numbers are in
+range. Pace is still ~8 possessions high, so points per game look right only
+because points per 100 possessions are a little low (108). Half-court
+possessions use about 8 s of game clock after the bring-up, and the scoring
+leader averages ~30 points. Full games take about 0.7 s each.
 
 ### Learned decision values (`values.py`, `train.py`)
 
