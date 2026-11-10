@@ -31,7 +31,8 @@ class SetPlayTests(unittest.TestCase):
         with_plays.play(300)
         without.play(300)
         self.assertEqual(without.stats["entries"], 0)
-        self.assertGreater(with_plays.stats["passes"], 1.3 * without.stats["passes"])
+        # (sets often finish in a pick-and-roll rather than another pass)
+        self.assertGreater(with_plays.stats["passes"], 1.15 * without.stats["passes"])
         self.assertGreater(with_plays.stats["seconds"], 1.15 * without.stats["seconds"])
 
     def test_legacy_params_run_no_entries(self):
@@ -110,3 +111,16 @@ class SafePassAndResetTests(unittest.TestCase):
         g = game(LEGACY_PARAMS)
         g.play(50)
         self.assertEqual(g.stats["second_actions"], 0)
+
+
+class ClosingPickAndRollTests(unittest.TestCase):
+    def test_sets_often_finish_in_a_pick_and_roll(self):
+        g = game()
+        g.play(400)
+        self.assertGreater(g.stats["entry_pnr"], 20)
+        self.assertGreater(g.stats["pnr"] / g.stats["possessions"], 0.12)
+
+    def test_no_closing_pick_and_roll_when_weight_is_zero(self):
+        g = game(DEFAULT_PARAMS.with_values(entry_pnr=0.0))
+        g.play(200)
+        self.assertEqual(g.stats["entry_pnr"], 0)

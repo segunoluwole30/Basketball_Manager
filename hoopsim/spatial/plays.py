@@ -30,9 +30,10 @@ from .court import RIM
 if TYPE_CHECKING:            # pragma: no cover
     from .sim import Agent, HalfCourtGame
 
-KINDS = ("swing", "handoff", "downscreen")
+KINDS = ("swing", "handoff", "downscreen", "pnr")
 MIN_CLOCK = 10.0             # don't start an entry action with less than this on the shot clock
 ABORT_CLOCK = 7.5            # ... and drop it when the clock gets this low
+MAX_ACTIONS = 4               # most entry actions in one possession
 ACTION_TIMEOUT = 3.5         # an action that hasn't produced its pass by then is dropped
 
 
@@ -47,7 +48,7 @@ def plan(g: "HalfCourtGame") -> Optional[dict]:
         return None
     pace = g.teams[g.side].tactics.pace
     n = round(p.entry_actions * max(0.3, 1 - 0.06 * (pace - 10)) + g.rng.uniform(-0.75, 0.75))
-    n = max(0, min(3, n))
+    n = max(0, min(MAX_ACTIONS, n))
     if n == 0:
         return None
     play = {"left": n, "action": None, "done": 0}
@@ -107,6 +108,12 @@ def start_next(g: "HalfCourtGame", play: dict) -> bool:
     bigs = [a for a in g.offense if a.slot >= 3 and a is not h and a not in corners]
     if corners and bigs:
         options.append(("downscreen", 0.30))
+    # Sets usually finish in a pick-and-roll: the last action calls one.
+    screeners = [a for a in g.offense if a.slot >= 3 and a is not h]
+    closing = play["left"] == 1 or g.shot_clock < MIN_CLOCK + 4
+    if (closing and screeners and g.pnr_used < 3 and C.dist_to_rim(h.pos) > 18
+            and g.shot_clock >= MIN_CLOCK + 1):
+        options.append(("pnr", g.p.entry_pnr))
     if not options:
         return False
     kind = rng.choices([k for k, _ in options], [w for _, w in options])[0]
@@ -116,6 +123,8 @@ def start_next(g: "HalfCourtGame", play: dict) -> bool:
         a["at"] = g.now + rng.uniform(0.6, 1.3)
     elif kind == "handoff":
         a["to"] = min(wings, key=lambda m: C.dist(m.pos, h.pos))
+    elif kind == "pnr":
+        a["to"] = min(screeners, key=lambda m: C.dist(m.pos, h.pos))
     else:
         c = rng.choice(corners)
         side = math.copysign(1.0, c.spot[0] or 1.0)
@@ -160,6 +169,13 @@ def handler_step(g: "HalfCourtGame") -> None:
         finish(g)
         return
     kind, mate = act["kind"], act["to"]
+    if kind == "pnr":
+        # The set's last action: call the screen and let the pick-and-roll play out
+        # (the handler reads it with the learned decisions).
+        g.play = None
+        g.mode, g.mode_since = "probe", now
+        g.call_pnr(h, mate)
+        return
     if kind == "swing":
         h.target(h.spot)
         if now >= act["at"]:
@@ -218,7 +234,10 @@ def on_catch(g: "HalfCourtGame", mate: "Agent") -> None:
         g.play = None
         g.take_shot(mate, moving=False)
         return
-    if g.now < on.stuck_until or C.dist_to_rim(on.pos) > C.dist_to_rim(mate.pos) + 3:
+    # Attack only if the action really freed him: his man is caught or trailing AND
+    # there's daylight between them.
+    freed = g.now < on.stuck_until or C.dist_to_rim(on.pos) > C.dist_to_rim(mate.pos) + 1
+    if freed and C.dist(on.pos, mate.pos) > g.p.entry_drive_gap:
         g.stats["entry_drives"] += 1
         g.play = None
         g.start_drive(mate)

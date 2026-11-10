@@ -180,30 +180,27 @@ games could later be stored like season games. It isn't wired into the season lo
   down three. These are passed to the half-court decisions as small value biases.
 
 Measured over 60 games (seed 0; per team-game), with the calibrated half-court
-defence, rotation lag, set plays, safe routine passes and resets, against
-2025-26 Basketball-Reference league averages (transition and minutes are
-estimates; sources in `measure.py`):
+defence, rotation lag, set plays (closing in a pick-and-roll), safe routine passes
+and resets, against 2025-26 Basketball-Reference league averages (transition and
+minutes are estimates; sources in `measure.py`):
 
 | | Sim | NBA |
 |---|---|---|
-| Pace | 107.4 (135 before set plays) | 99.4 |
-| Points per team | 116 (108 per 100) | 115.6 (115.8 per 100) |
-| Transition share of possessions | 14.8% | ~15% (est.) |
-| Transition points per possession | 1.21 | ~1.26 (est.) |
-| FTA per 100 possessions | 24.0 | 23.6 |
-| Personal fouls per 100 possessions | 19.4 | 20.0 |
-| Turnovers per 100 possessions | 15.5 | 14.6 |
-| Starters' minutes (by rank) | 34.4, 32.9, 31.4, 29.5, 26.2 | ~30–36 (est.) |
+| Pace | 103.9 (135 before set plays) | 99.4 |
+| Points per team | 117 (113 per 100) | 115.6 (115.8 per 100) |
+| Transition share of possessions | 13.8% | ~15% (est.) |
+| Transition points per possession | 1.24 | ~1.26 (est.) |
+| FTA per 100 possessions | 25.7 | 23.6 |
+| Personal fouls per 100 possessions | 20.0 | 20.0 |
+| Turnovers per 100 possessions | 14.8 | 14.6 |
+| Starters' minutes (by rank) | 34.3, 32.6, 31.3, 29.6, 25.9 | ~30–36 (est.) |
 
 Non-shooting fouls (reach-ins, holds) are a per-second risk of live half-court
 play (`non_shooting_foul_per_second` = 0.011, about 7 a team-game). They used to be
-scheduled on 25% of possessions and only counted if the ball was still live, so
-when set plays lengthened possessions they jumped to ~11.6 a game, taking fouls
-to 23.5 and free throws to 28 per 100. Now 8 of the 10 full-game numbers are in
-range. Pace is still ~8 possessions high, so points per game look right only
-because points per 100 possessions are a little low (108). Half-court
-possessions use about 8 s of game clock after the bring-up, and the scoring
-leader averages ~30 points. Full games take about 0.7 s each.
+scheduled on 25% of possessions, so longer possessions inflated them. Pace is still
+~4.5 possessions high: half-court shots come almost entirely with 15–7 s left,
+with no late-clock tail. The scoring leader averages ~31 points. Full games take
+about 0.7 s each.
 
 ### Learned decision values (`values.py`, `train.py`)
 
@@ -662,6 +659,39 @@ Turnovers are fixed and more metrics are in range. The weighted score is
 unchanged within noise, because points per possession rose a little once fewer
 possessions ended in turnovers. In full games pace fell from 111 to 107.5 and
 turnovers per 100 match the NBA (14.8 vs 14.6).
+
+### Pace: closing pick-and-rolls and inbound time
+
+Game-clock time per possession was 13.4 s (NBA: 2,880 s / 2 / 99.4 = 14.5 s): about
+3.1 s of bring-up, 2.2 s in the open court and 8.1 s of half-court play. Bring-up
+times were realistic, so the shortfall is in the half court. Half-court shots came
+almost entirely with 15–7 s on the shot clock (92%; the NBA has a quarter of its
+shots under 7 s), and possessions averaged only 1.7 entry actions because early
+reads and the 10 s cutoff ended sets before their last action.
+
+Changes:
+- **Closing pick-and-roll.** A set's last action, or any action once the clock is
+  under 14 s, can be a pick-and-roll (`entry_pnr` weight 0.5) that then plays out
+  with the learned reads. Pick-and-rolls now feature in ~24% of possessions (was ~1%
+  chosen freely).
+- **Inbound after a make** runs 2–3.5 s of game clock (was 1–2.5), as an NBA
+  inbound does.
+- `entry_drive_gap`: a freed catch from an entry is driven only with 5 ft of
+  daylight (hand-offs and down screens generally do create it).
+- Up to 4 entry actions for slow teams. Full games take `params`.
+
+Things that did *not* move pace: 4 entry actions at pace 10, and starting actions
+down to 8 s on the clock. After a set, the learned offence attacks within a second
+or two, and first shots still come at ~11 s.
+
+Full games (60): pace 107.4 → 103.9, points per 100 108 → 112.6 (NBA 115.8), with
+fouls, free throws and turnovers still on target (8 of 10 in range). The half-court
+yardstick went the other way: 1.16–1.17 points per possession on the held-out
+leagues (target 1.10 ± .04; score 1.50 → 1.66), because closing pick-and-rolls are
+productive. The two yardsticks now disagree: the same engine is above the half-court
+estimate yet below the real per-100 rate in full games, where fatigue and benches
+play. The full-game numbers come from Basketball-Reference and the half-court ones
+are estimates, so the full-game numbers decide.
 
 ## Simulation commands
 

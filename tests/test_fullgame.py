@@ -192,4 +192,4 @@ class NonShootingFoulTests(unittest.TestCase):
         self.assertGreater(default, 3.0)
         self.assertLess(default, 12.0)
         self.assertGreater(self.fouls(0.03), 1.8 * default)
-        self.assertEqual(self.fouls(1e-9), 0)
+        self.assertLess(self.fouls(1e-9), 0.2 * default)   # only end-of-game intentional fouls left

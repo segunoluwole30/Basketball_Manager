@@ -83,7 +83,7 @@ class GameTuning:
     non_shooting_foul_earliest: float = 0.5
     press_foul_factor: float = 1.25
     bring_up: tuple = (3.5, 6.0)           # half-court starts: shot-clock seconds to get into the offence
-    inbound_after_make: tuple = (1.0, 2.5)  # game clock running before the inbound is touched
+    inbound_after_make: tuple = (2.0, 3.5)  # game clock running before the inbound is touched
     # A possession counts as transition if it began with an open-court phase and its
     # first shot, foul or turnover came within this many seconds of gaining the ball.
     transition_window: float = 8.0
@@ -147,12 +147,13 @@ class FullGame:
                  rng: Optional[random.Random] = None, *, record: bool = False,
                  tuning: SpatialTuning = DEFAULT_TUNING, game_tuning: GameTuning = DEFAULT_GAME_TUNING,
                  open_tuning: OpenCourtTuning = DEFAULT_OPEN_TUNING,
-                 model: Optional[DecisionModel] = None):
+                 model: Optional[DecisionModel] = None, params=None):
         self.league, self.rules = league, league.rules
         self.rng = rng or random.Random()
         self.gt, self.ot = game_tuning, open_tuning
         self.record = record
-        self.hc = HalfCourtGame(league, home_id, away_id, self.rng, tuning, record=record, model=model)
+        self.hc = HalfCourtGame(league, home_id, away_id, self.rng, tuning, record=record, model=model,
+                                params=params)
         self.sides = {key: self._side(key, tid) for key, tid in (("home", home_id), ("away", away_id))}
         self.hc.box = {id(s.agent): Counter() for side in self.sides.values() for s in side.roster}
         self._sync()
