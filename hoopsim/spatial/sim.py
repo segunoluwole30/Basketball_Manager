@@ -48,7 +48,7 @@ class SpatialTuning:
     block_base: dict = field(default_factory=lambda: {RIM_ZONE: 0.14, CLOSE_ZONE: 0.09, MID_ZONE: 0.02, THREE_ZONE: 0.01})
     free_throw: float = 0.775
     dribble_turnover_per_sec: float = 0.045   # with a defender in your face
-    pass_steal_scale: float = 0.30
+    pass_steal_scale: float = 0.20
     pass_speed: float = 40.0                  # ft/s
     defensive_rebound_edge: float = 4.6
     help_trigger_distance: float = 22.0       # drive this close to the rim draws help
@@ -70,7 +70,7 @@ class SpatialTuning:
     # Help defenders swipe at the ball when a driver comes through their reach.
     dig_per_sec: float = 0.35
     # Passes thrown away or fumbled (not picked off): more under ball pressure and on long passes.
-    errant_pass: float = 0.012
+    errant_pass: float = 0.006
 
 
 DEFAULT_TUNING = SpatialTuning()
@@ -557,6 +557,11 @@ class HalfCourtGame:
         help_at = self.t.help_trigger_distance + (4.0 if self.scheme == "zone" else 0.0)
         if driving and C.dist_to_rim(self.holder.pos) < help_at:
             helper = self.choose_helper()
+        # A perimeter defender stunts at a drive (a step toward the ball), which
+        # leaves his own man for a kick-out.
+        stunter = None
+        if driving and 6 < C.dist_to_rim(self.holder.pos) < 20:
+            stunter = self.choose_stunter(exclude=helper)
         tagger = threat = None
         if self.mode in ("probe", "drive", "pass", "post"):
             threat = self.paint_threat()
@@ -564,7 +569,7 @@ class HalfCourtGame:
                 tagger = self.choose_tagger(threat, exclude=helper)
         doubler = self.post["double"] if self.mode == "post" and self.post else None
         for d in self.defense:
-            d.helping = d is helper or d is tagger or d is doubler
+            d.helping = d is helper or d is tagger or d is doubler or d is stunter
             if now < d.next_think:
                 continue
             d.next_think = now + d.reaction
@@ -573,7 +578,12 @@ class HalfCourtGame:
             man = self.man_of(d)
             if self.mode == "release" and self.holder is not None and (
                     man is self.holder or C.dist(d.pos, self.holder.pos) < 8):
-                d.target(C.toward(self.holder.pos, d.pos, 1.2))   # get a hand up
+                # Get a hand up: lunge in as far as the shooting motion allows, but
+                # contests end at hand's length, not body to body.
+                gap = C.dist(d.pos, self.holder.pos)
+                d.target(C.toward(self.holder.pos, d.pos, max(2.5, gap - 2.5)))
+            elif d is stunter:
+                d.target(C.toward(self.holder.pos, d.pos, 4.5))
             elif d is helper:
                 # Meet the driver between him and the rim.
                 d_rim = C.dist_to_rim(self.holder.pos)
@@ -591,9 +601,10 @@ class HalfCourtGame:
             elif self.flight and self.flight.kind == "pass" and self.flight.data.get("to") is man:
                 d.target(C.toward(self.flight.end, RIM, self.closeout_gap(man)))   # close out on the catch
             elif man is self.holder:
-                # Press up on shooters out to 30 ft; give non-shooters room out there.
+                # About 3.5 ft off a perimeter ball handler: closer on shooters,
+                # more room for non-shooters (and far from the basket).
                 deep = C.dist_to_rim(man.pos)
-                gap = max(2.0, self.closeout_gap(man)) if deep >= 22 else 3.0   # up on shooters
+                gap = self.closeout_gap(man) + 0.5 if deep >= 22 else 3.0
                 if deep >= 27:
                     gap += 2.0
                 gap += {"zone": 1.0, "press": -0.8}.get(self.scheme, 0.0)   # zones sit back, presses get up
@@ -604,22 +615,32 @@ class HalfCourtGame:
             else:
                 pass_dist = C.dist(man.pos, ball)
                 # One pass away: stay close. Far side: sink into the paint to help.
-                sag = 0.08 if pass_dist < 22 else min(0.40, 0.08 + 0.02 * (pass_dist - 22))
+                sag = 0.08 if pass_dist < 22 else min(0.55, 0.10 + 0.025 * (pass_dist - 22))
                 if self.scheme == "zone":
                     sag = max(sag, 0.22)                         # a zone packs the paint
                 if man.a("three_point") >= 13:
-                    sag *= 0.6                                   # stay attached to shooters
+                    sag *= 0.75                                  # shade toward shooters
                 mx, my = man.pos
                 tx = mx + (RIM[0] - mx) * sag + (ball[0] - mx) * 0.08
                 ty = my + (RIM[1] - my) * sag + (ball[1] - my) * 0.08
                 d.target((tx, ty))
 
     def closeout_gap(self, man: Agent) -> float:
-        """How close to get on a closeout: run shooters off the line (arrive at arm's
-        length, hand up), give non-shooters room so they can't drive past."""
+        """Where a closeout stops: about 3 ft on shooters (hand up, still able to
+        slide with a drive), more room for non-shooters so they can't drive past."""
         if C.dist_to_rim(man.pos) < 20:
             return 2.5
-        return max(1.5, min(5.0, 3.0 - 0.35 * (man.a("three_point") - 11)))
+        return max(2.8, min(5.5, 3.5 - 0.25 * (man.a("three_point") - 11)))
+
+    def choose_stunter(self, exclude: Optional[Agent]) -> Optional[Agent]:
+        """The nearest perimeter defender to a drive (not the on-ball or rim help)."""
+        on_ball = self.guarded_by(self.holder)
+        cands = [d for d in self.defense if d not in (on_ball, exclude)
+                 and C.dist_to_rim(self.man_of(d).pos) >= 18]
+        if not cands:
+            return None
+        best = min(cands, key=lambda d: C.dist(d.pos, self.holder.pos))
+        return best if C.dist(best.pos, self.holder.pos) < 16 else None
 
     def choose_helper(self) -> Optional[Agent]:
         h = self.holder
@@ -714,7 +735,7 @@ class HalfCourtGame:
             if pull is not None:
                 options.append(pull)
             options.append(("drive", ("drive",), self.drive_features(h)))
-            if self.pnr is None and self.pnr_used < 2 and d_rim > 17:
+            if self.pnr is None and self.pnr_used < 3 and d_rim > 15:
                 scr = self.offense[4] if self.offense[4] is not h else self.offense[3]
                 options.append(("pnr", ("pnr", scr), [1.0, hold_curve(sc - 4), h.a("ball_handling") - 10.0,
                                                       scr.a("strength") - 10.0]))

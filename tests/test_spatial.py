@@ -256,3 +256,53 @@ class DefenceTests(unittest.TestCase):
             n += g.travel_check(h)
         self.assertGreater(n, 3)
         self.assertLess(n, 200)
+
+
+class ContestAndMovementTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.league = generate_league(seed=81)
+        cls.stats = None
+        from collections import Counter
+        total = Counter()
+        for home, away in ((1, 2), (3, 4)):
+            g = HalfCourtGame(cls.league, home, away, random.Random(home), record=False)
+            g.play(600)
+            total += g.stats
+        cls.stats = total
+
+    def test_threes_are_rarely_contested_body_to_body(self):
+        s = self.stats
+        threes = sum(s[f"contest_three_{b}"] for b in ("tight", "close", "open", "wide"))
+        self.assertGreater(threes, 200)
+        # NBA: ~2% of threes have a defender within 2 ft; allow some slack.
+        self.assertLess(s["contest_three_tight"] / threes, 0.2)
+        self.assertGreater(s["contest_three_wide"] / threes, 0.08)
+
+    def test_three_point_accuracy_near_nba(self):
+        s = self.stats
+        self.assertTrue(0.31 <= s["fgm_three"] / s["fga_three"] <= 0.42)
+
+    def test_closeouts_stop_short_of_shooters(self):
+        g = HalfCourtGame(self.league, 1, 2, random.Random(1), record=False)
+        g.play(1)
+        shooters = sorted((a for a in g.everyone), key=lambda a: a.a("three_point"))
+        best, worst = shooters[-1], shooters[0]
+        best.place(19.0, 22.0)
+        worst.place(-19.0, 22.0)
+        self.assertGreaterEqual(g.closeout_gap(best), 2.8)                 # hand up, not body to body
+        self.assertGreater(g.closeout_gap(worst), g.closeout_gap(best))    # more room for poor shooters
+
+    def test_drives_draw_a_stunt(self):
+        g = HalfCourtGame(self.league, 1, 2, random.Random(2), record=False)
+        g.play_possession("home")
+        h = g.offense[0]
+        h.place(0.0, 15.0)
+        g.holder, g.mode = h, "drive"
+        for i, a in enumerate(g.offense[1:], 1):
+            a.place(*[(19.0, 22.0), (-19.0, 22.0), (-22.6, 4.5), (5.0, 4.0)][i - 1])
+        for d, m in zip(g.defense, g.offense):
+            d.place(m.x * 0.8, m.y * 0.9)
+        stunter = g.choose_stunter(exclude=None)
+        self.assertIsNotNone(stunter)
+        self.assertGreaterEqual(C.dist_to_rim(g.man_of(stunter).pos), 18)

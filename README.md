@@ -293,6 +293,35 @@ Held-out leagues against the new targets (seeds 0 / 1 / 2):
 | Turnovers | 8–10% | ~13% |
 | Rim share | 18–21% | ~28% |
 
+Update after reworking contests and ball movement:
+- **Contest geometry.** Defenders keep realistic distances: about 3.5 ft off a
+  perimeter ball handler, closeouts that stop at about 3 ft on shooters (more on
+  non-shooters), and a hand-up that closes at most about 2.5 ft during the
+  shooting motion. Before, any defender within 8 ft ran to 1.2 ft.
+- **Help and movement.** A perimeter defender stunts at drives, leaving his man
+  for the kick-out. Weak-side defenders sink deeper. Passes are safer (about NBA
+  rates), and pick-and-rolls are easier to call.
+
+| | Before | After | NBA half court |
+|---|---|---|---|
+| Threes with a defender within 2 ft | 35–53% | 6–13% | ~2% |
+| Wide-open threes | 10–14% | 19–21% | ~44% |
+| 3P% | 31–36% | 36–38% | ~36% |
+| eFG% | .49–.54 | .52–.54 | ~.53 |
+| Passes per possession | 0.7–0.9 | 1.3 | ~3.2 |
+| Points per possession | 1.16–1.20 | 1.20–1.23 | ~1.10 |
+| Threes, share of shots | 57–58% | 65–71% | ~42% |
+| Rim share | 18–21% | 11–15% | ~28% |
+
+Shooting accuracy and how contested shots are are now realistic, and the ball
+moves more. The shot mix got worse, though, and the reason is now measured:
+**drives die**. Teams drive about 0.5 times per possession (near the NBA), but only
+19% of drives end in a shot at the rim, because help always arrives in time.
+Pick-and-rolls are still rare (0.05 per possession). With a weak inside game, a
+realistic perimeter game makes threes the best option. The next engine work is
+drive success against help (late or bad rotations, finishing through contact,
+dump-offs), and pick-and-rolls worth running.
+
 The scoring gap is small. What's wrong is the *structure*: defenders get far
 too close on threes (the make chance is generous on contested shots to
 compensate), and possessions are short and pass-light. Fixing realistic contest
