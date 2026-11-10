@@ -225,6 +225,10 @@ class Player:
     jersey_number: Optional[int] = None
     morale: float = 50.0           # 0-100
     injury: Optional[Injury] = None
+    retired: bool = False
+    draft_year: Optional[int] = None   # season of the draft that brought him in
+    draft_pick: Optional[int] = None   # overall pick; None = undrafted
+    career: list[dict] = field(default_factory=list)  # one stat line per season (see stats.py)
 
     def __post_init__(self) -> None:
         if not ABILITY_MIN <= self.potential_ability <= ABILITY_MAX:
@@ -281,6 +285,10 @@ class Player:
             "jersey_number": self.jersey_number,
             "morale": self.morale,
             "injury": self.injury.to_dict() if self.injury else None,
+            "retired": self.retired,
+            "draft_year": self.draft_year,
+            "draft_pick": self.draft_pick,
+            "career": self.career,
         }
 
     @classmethod
@@ -302,6 +310,10 @@ class Player:
             jersey_number=d.get("jersey_number"),
             morale=d.get("morale", 50.0),
             injury=Injury.from_dict(d["injury"]) if d.get("injury") else None,
+            retired=d.get("retired", False),
+            draft_year=d.get("draft_year"),
+            draft_pick=d.get("draft_pick"),
+            career=list(d.get("career", [])),
         )
 
 
@@ -558,6 +570,9 @@ class LeagueRules:
     team_fouls_bonus: int = 5      # team fouls per quarter before free throws
     timeouts_per_game: int = 7
     timeouts_per_overtime: int = 2
+    playoff_series_length: int = 7
+    draft_rounds: int = 2
+    mid_level_exception: int = 12_500_000   # one signing per offseason for teams over the cap
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -571,6 +586,55 @@ class RosterError(Exception):
     pass
 
 
+class Phase(str, Enum):
+    REGULAR_SEASON = "regular_season"
+    PLAYOFFS = "playoffs"
+    OFFSEASON = "offseason"
+
+
+@dataclass
+class Series:
+    """A playoff series. The higher seed has home court."""
+
+    id: int
+    round: int                     # 1 = first round
+    conference: Optional[str]      # None for the finals
+    high_id: int
+    low_id: int
+    high_seed: int
+    low_seed: int
+    best_of: int = 7
+    high_wins: int = 0
+    low_wins: int = 0
+    game_ids: list[int] = field(default_factory=list)
+
+    @property
+    def wins_needed(self) -> int:
+        return self.best_of // 2 + 1
+
+    @property
+    def over(self) -> bool:
+        return max(self.high_wins, self.low_wins) >= self.wins_needed
+
+    @property
+    def winner_id(self) -> Optional[int]:
+        if not self.over:
+            return None
+        return self.high_id if self.high_wins > self.low_wins else self.low_id
+
+    @property
+    def loser_id(self) -> Optional[int]:
+        w = self.winner_id
+        return None if w is None else (self.low_id if w == self.high_id else self.high_id)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Series":
+        return cls(**d)
+
+
 @dataclass
 class League:
     name: str
@@ -580,6 +644,9 @@ class League:
     teams: dict[int, Team] = field(default_factory=dict)
     players: dict[int, Player] = field(default_factory=dict)
     games: dict[int, Game] = field(default_factory=dict)
+    phase: Phase = Phase.REGULAR_SEASON
+    playoffs: list[Series] = field(default_factory=list)   # current season's bracket
+    history: list[dict] = field(default_factory=list)      # one summary per finished season
 
     # -- id allocation ------------------------------------------------------
     def next_player_id(self) -> int:
@@ -594,7 +661,7 @@ class League:
                       key=lambda p: p.current_ability, reverse=True)
 
     def free_agents(self) -> list[Player]:
-        return sorted((p for p in self.players.values() if p.team_id is None),
+        return sorted((p for p in self.players.values() if p.team_id is None and not p.retired),
                       key=lambda p: p.current_ability, reverse=True)
 
     def payroll(self, team_id: int) -> int:
@@ -687,6 +754,13 @@ class League:
             self.players[pid].team_id = team_b
         for pid in players_b:
             self.players[pid].team_id = team_a
+        # A new arrival whose number is taken picks the lowest free one.
+        for tid, incoming in ((team_b, players_a), (team_a, players_b)):
+            for pid in incoming:
+                p = self.players[pid]
+                taken = {q.jersey_number for q in self.roster(tid) if q.id != pid}
+                if p.jersey_number in taken:
+                    p.jersey_number = min(n for n in range(100) if n not in taken)
 
     # -- validation ---------------------------------------------------------
     def validate(self) -> list[str]:

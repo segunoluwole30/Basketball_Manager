@@ -21,10 +21,11 @@ import random
 from dataclasses import dataclass, field
 from typing import Optional
 
+from .injuries import draw_injury
 from .lineup import lineup_is_usable, plan_rotation
 from .models import (
-    BoxScore, DefensiveScheme, Game, GameResult, League, OffensiveFocus, Player, PlayerLine,
-    Position, Team, TeamBox,
+    BoxScore, DefensiveScheme, Game, GameResult, Injury, League, OffensiveFocus, Player,
+    PlayerLine, Position, Team, TeamBox,
 )
 
 POSITIONS = list(Position)
@@ -68,6 +69,11 @@ class Tuning:
     late_clock_make_factor: float = 0.70
     # A trailing team's set play with a few seconds to spare is a better look.
     chase_make_factor: float = 0.92
+    # Injuries: chance per 36 minutes on court for an average (proneness 10),
+    # fresh player. Tired and injury-prone players get hurt more.
+    injury_rate_per_36: float = 0.02
+    # Morale shifts game-day form: +/-1.8% at morale 80 / 20.
+    morale_form_effect: float = 0.0006
     # How strongly ratings move outcomes. 1.0 = raw ratings; lower compresses
     # every rating toward 10 so talent gaps produce realistic point margins.
     skill_impact: float = 0.5
@@ -86,7 +92,7 @@ DEFAULT_TUNING = Tuning()
 # --------------------------------------------------------------------------
 class _InGame:
     __slots__ = ("p", "line", "target_seconds", "energy", "on_court", "form",
-                 "stint_start", "left_at", "team", "ca", "fit", "impact")
+                 "stint_start", "left_at", "team", "ca", "fit", "impact", "injury", "checked")
 
     def __init__(self, player: Player, team: "_Side", target_minutes: int, form: float):
         self.p = player
@@ -99,6 +105,8 @@ class _InGame:
         self.left_at = -1e9
         self.team = team
         self.impact = team.sim.t.skill_impact
+        self.injury: Optional[Injury] = None   # hurt during this game
+        self.checked = 0.0                     # court seconds already rolled for injury
         # Ratings don't change mid-game, so cache ability and positional fit.
         self.ca = player.current_ability
         self.fit = [(player.ability_at(pos) - self.ca) / 10 for pos in POSITIONS]
@@ -111,6 +119,10 @@ class _InGame:
     @property
     def fouled_out(self) -> bool:
         return self.line.pf >= self.team.sim.league.rules.personal_foul_limit
+
+    @property
+    def unavailable(self) -> bool:
+        return self.injury is not None or self.fouled_out
 
     def __repr__(self) -> str:
         return f"<{self.p.name}>"
@@ -131,7 +143,8 @@ class _Side:
         for p in players:
             # Low consistency -> wider spread of good and bad nights.
             sd = 0.02 + (20 - p.hidden.consistency) * 0.0025
-            self.players[p.id] = _InGame(p, self, minutes.get(p.id, 0), rng.gauss(1.0, sd))
+            form = rng.gauss(1.0, sd) + (p.morale - 50) * sim.t.morale_form_effect
+            self.players[p.id] = _InGame(p, self, minutes.get(p.id, 0), form)
         self.lineup: list[_InGame] = [self.players[pid] for pid in starters]  # slot i = POSITIONS[i]
         for ig in self.lineup:
             ig.on_court = True
@@ -176,6 +189,7 @@ class GameSim:
     result: GameResult
     box_score: BoxScore
     play_by_play: list[PlayEvent]
+    injuries: list[tuple[int, Injury]] = field(default_factory=list)  # (player id, injury)
 
 
 # --------------------------------------------------------------------------
@@ -276,7 +290,7 @@ class _GameSim:
 
     # -- substitutions -----------------------------------------------------
     def _sub_score(self, ig: _InGame, crunch: bool, garbage: bool) -> float:
-        if ig.fouled_out:
+        if ig.unavailable:
             return -1e9
         if crunch:
             score = ig.ca / 10 + 6 * (ig.energy - 0.8)
@@ -302,14 +316,14 @@ class _GameSim:
     def substitutions(self, side: _Side) -> None:
         crunch = self.period >= 4 and self.clock <= 300 and self.margin() <= 8
         garbage = self.period >= 4 and self.clock <= 360 and self.margin() >= 20
-        bench = [ig for ig in side.bench if not ig.fouled_out]
+        bench = [ig for ig in side.bench if not ig.unavailable]
         if not bench:
             return
         scores = {id(ig): self._sub_score(ig, crunch, garbage) for ig in side.players.values()}
         order = sorted(range(5), key=lambda i: scores[id(side.lineup[i])])
         for slot in order:
             out = side.lineup[slot]
-            forced = out.fouled_out
+            forced = out.unavailable
             if not forced and self.elapsed - out.stint_start < 240 and not (crunch or garbage):
                 continue                   # let a fresh stint breathe
 
@@ -325,10 +339,31 @@ class _GameSim:
                 best.on_court, best.stint_start = True, self.elapsed
                 out.on_court, out.left_at = False, self.elapsed
                 bench.remove(best)
-                if not out.fouled_out:
+                if not out.unavailable:
                     bench.append(out)
                 self.log(side, f"Sub: {best.p.name} in for {out.p.name}"
-                         + (" (fouled out)" if forced else ""))
+                         + (" (injured)" if out.injury else " (fouled out)" if forced else ""))
+
+    # -- injuries -------------------------------------------------------------
+    def check_injuries(self) -> None:
+        """Roll for injuries on court time since the last check (called at dead balls)."""
+        t = self.t
+        for side in (self.home, self.away):
+            hurt = False
+            for ig in side.lineup:
+                exposure = ig.line.seconds - ig.checked
+                ig.checked = ig.line.seconds
+                if exposure <= 0 or ig.injury:
+                    continue
+                rate = (t.injury_rate_per_36 / 2160
+                        * math.exp(0.12 * (ig.p.hidden.injury_proneness - 10))
+                        * (1 + 1.5 * (1 - ig.energy)))
+                if self.rng.random() < rate * exposure:
+                    ig.injury = draw_injury(self.rng)
+                    hurt = True
+                    self.log(side, f"{ig.p.name} is hurt ({ig.injury.description})")
+            if hurt:
+                self.substitutions(side)
 
     # -- fouls ----------------------------------------------------------------
     def foul(self, defense: _Side, fouler: _InGame) -> None:
@@ -850,6 +885,7 @@ class _GameSim:
             ending = self.possession(offense, self.other(offense), ending)
             offense = self.other(offense)
             if ending == "dead" and self.clock > 0:
+                self.check_injuries()
                 # Stop the bleeding: timeout on an 8-0 run (saving a few for the end).
                 for side in (self.home, self.away):
                     if side.run_against >= 8 and side.timeouts > 2 and self.clock > 120:
@@ -874,7 +910,10 @@ class _GameSim:
                            key=lambda l: (not l.starter, -l.seconds))
             boxes.append(TeamBox(side.team.id, side.period_points, lines, side.possessions))
         result = GameResult(self.home.score, self.away.score, overtimes=max(0, self.period - 4))
-        return GameSim(result, BoxScore(*boxes), self.events)
+        self.check_injuries()
+        injuries = [(ig.p.id, ig.injury) for side in (self.home, self.away)
+                    for ig in side.players.values() if ig.injury]
+        return GameSim(result, BoxScore(*boxes), self.events, injuries)
 
 
 # --------------------------------------------------------------------------
@@ -894,16 +933,40 @@ def play_game(league: League, game_id: int, rng: Optional[random.Random] = None,
         raise ValueError(f"game {game_id} has already been played")
     sim = simulate_game(league, game, rng, record_pbp=record_pbp, tuning=tuning)
     game.result, game.box_score = sim.result, sim.box_score
+    for pid, injury in sim.injuries:
+        league.players[pid].injury = injury
     return sim
 
 
 def play_day(league: League, day: int, rng: Optional[random.Random] = None) -> list[Game]:
+    """Play one day's games, then tick injuries for the teams that played."""
     games = sorted((g for g in league.games.values()
                     if g.season == league.season and g.day == day and not g.played),
                    key=lambda g: g.id)
+    clear_healed(league)
+    played: set[int] = set()
+    hurt_today: set[int] = set()
     for g in games:
-        play_game(league, g.id, rng)
+        sim = play_game(league, g.id, rng)
+        played |= {g.home_team_id, g.away_team_id}
+        hurt_today |= {pid for pid, _ in sim.injuries}
+    tick_injuries(league, played, hurt_today)
     return games
+
+
+def tick_injuries(league: League, team_ids: set[int], exclude: set[int] = frozenset()) -> None:
+    """Count a missed game for injured players on teams that just played (and every
+    injured free agent). Players hurt in today's game don't count today."""
+    for p in league.players.values():
+        if p.injury and p.id not in exclude and (p.team_id in team_ids or p.team_id is None):
+            p.injury.games_remaining -= 1
+
+
+def clear_healed(league: League) -> None:
+    """Players whose time out is served are available again."""
+    for p in league.players.values():
+        if p.injury and p.injury.games_remaining <= 0:
+            p.injury = None
 
 
 def play_season(league: League, rng: Optional[random.Random] = None) -> None:

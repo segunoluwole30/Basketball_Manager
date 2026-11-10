@@ -2,17 +2,20 @@
 
     python -m hoopsim new    [--seed N] [--teams N] [--out league.db] [--team ABBR]
     python -m hoopsim game   [--seed N] [--pbp]          # one game: box score (+ play-by-play)
-    python -m hoopsim season [--seed N] [--out league.db] # full season: standings and leaders
+    python -m hoopsim season [--seed N] [--out league.db] # season + playoffs, awards, leaders
+    python -m hoopsim career [--seasons 10] [--seed N] [--load league.db] [--out league.db]
 """
 from __future__ import annotations
 
 import argparse
 import random
-from collections import defaultdict
 
 from . import generate_league, load_league, save_league
-from .engine import play_game, play_season
+from .engine import play_game
 from .models import League, Player, TeamBox
+from .playoffs import ranked, team_records
+from .season import play_full_season, run_offseason
+from .stats import career_per_game, leaders, player_label, totals_from_careers
 
 
 def _money(n: int) -> str:
@@ -108,47 +111,108 @@ def cmd_game(args) -> None:
     print_box(league, b.home)
 
 
-def cmd_season(args) -> None:
-    league = generate_league(seed=args.seed, num_teams=args.teams)
-    play_season(league, random.Random(args.seed))
-    if args.out:
-        save_league(league, args.out)
-        print(f"Saved to {args.out}\n")
-
+def print_standings(league: League) -> None:
+    rec = team_records(league)
     for conf in sorted({t.conference for t in league.teams.values()}):
         print(f"{conf:<26}{'W':>4}{'L':>4}{'PCT':>7}{'NET':>7}")
-        for team, w, l in league.standings():
-            if team.conference != conf:
-                continue
-            diffs = []
-            for g in league.games.values():
-                if team.id in (g.home_team_id, g.away_team_id):
-                    d = g.result.home_score - g.result.away_score
-                    diffs.append(d if g.home_team_id == team.id else -d)
-            print(f"{team.full_name:<26}{w:>4}{l:>4}{w / (w + l):>7.3f}{sum(diffs) / len(diffs):>+7.1f}")
+        for tid in ranked(league, [t.id for t in league.teams.values() if t.conference == conf]):
+            w, l, diff = rec[tid]
+            print(f"{league.teams[tid].full_name:<26}{w:>4}{l:>4}{w / max(1, w + l):>7.3f}"
+                  f"{diff / max(1, w + l):>+7.1f}")
         print()
 
-    totals = defaultdict(lambda: defaultdict(float))
-    for g in league.games.values():
-        for box in (g.box_score.home, g.box_score.away):
-            for l in box.lines:
-                t = totals[l.player_id]
-                t["gp"] += l.seconds > 0
-                t["min"] += l.minutes
-                for f in ("pts", "trb", "ast", "stl", "blk", "tpm"):
-                    t[f] += getattr(l, f)
-    min_gp = league.rules.games_per_season * 0.6
-    qualified = [pid for pid, t in totals.items() if t["gp"] >= min_gp]
+
+def print_playoffs(league: League) -> None:
+    names = {1: "First round", 2: "Second round", 3: "Third round", 4: "Fourth round"}
+    for s in sorted(league.playoffs, key=lambda s: (s.round, s.id)):
+        stage = "Finals" if s.conference is None else f"{s.conference} {names.get(s.round, 'round ' + str(s.round))}"
+        hi, lo = league.teams[s.high_id].abbreviation, league.teams[s.low_id].abbreviation
+        print(f"  {stage:<22} ({s.high_seed}) {hi} {s.high_wins}-{s.low_wins} {lo} ({s.low_seed})")
+
+
+def print_awards(league: League, summary: dict) -> None:
+    labels = {"mvp": "MVP", "finals_mvp": "Finals MVP", "dpoy": "Defensive POY",
+              "roy": "Rookie of the Year", "sixth_man": "Sixth Man", "mip": "Most Improved"}
+    for key, label in labels.items():
+        print(f"  {label:<20}{player_label(league, summary['awards'].get(key))}")
+
+
+def print_leaders(league: League, season: int) -> None:
+    totals = totals_from_careers(league, season)
     print("League leaders (per game)")
     for stat, label in (("pts", "Points"), ("trb", "Rebounds"), ("ast", "Assists"),
                         ("stl", "Steals"), ("blk", "Blocks"), ("tpm", "3PT made")):
-        top = sorted(qualified, key=lambda pid: totals[pid][stat] / totals[pid]["gp"], reverse=True)[:3]
-        cells = []
-        for pid in top:
-            p = league.players[pid]
-            cells.append(f"{p.name} ({league.teams[p.team_id].abbreviation}) "
-                         f"{totals[pid][stat] / totals[pid]['gp']:.1f}")
+        cells = [f"{player_label(league, pid)} {v:.1f}" for pid, v in leaders(league, totals, stat)]
         print(f"  {label:<10}" + " | ".join(cells))
+
+
+def cmd_season(args) -> None:
+    league = generate_league(seed=args.seed, num_teams=args.teams)
+    summary = play_full_season(league, random.Random(args.seed))
+    if args.out:
+        save_league(league, args.out)
+        print(f"Saved to {args.out}\n")
+    print_standings(league)
+    print("Playoffs")
+    print_playoffs(league)
+    champ = league.teams[summary["champion"]]
+    print(f"\nChampions: {champ.full_name} (won the finals {summary['finals']})\n")
+    print("Awards")
+    print_awards(league, summary)
+    print()
+    print_leaders(league, summary["season"])
+    for line in summary["deadline_trades"]:
+        print(line)
+
+
+def cmd_career(args) -> None:
+    """Simulate many seasons and show the league's history."""
+    if args.load:
+        league = load_league(args.load)
+    else:
+        league = generate_league(seed=args.seed, num_teams=args.teams)
+    rng = random.Random(args.seed)
+    print(f"{'Season':<9}{'Champion':<26}{'Finals':<8}{'Best':>5}{'Worst':>6}  MVP / Rookie of the Year")
+    first_draft = None
+    for _ in range(args.seasons):
+        s = play_full_season(league, rng)
+        wins = sorted((w for _, w, _ in s["standings"]), reverse=True)
+        names = s["award_names"]
+        print(f"{s['season']}-{(s['season'] + 1) % 100:02d}  {league.teams[s['champion']].full_name:<26}"
+              f"{s['finals']:<8}{wins[0]:>5}{wins[-1]:>6}  {names['mvp']} / {names['roy'] or '-'}")
+        report = run_offseason(league, rng)
+        if first_draft is None and report["draft"]:
+            first_draft = next(p for p in league.players.values()
+                               if p.draft_year == league.season and p.draft_pick == 1)
+        if report["problems"]:
+            print("  problems:", report["problems"])
+    if args.out:
+        save_league(league, args.out)
+        print(f"\nSaved to {args.out}")
+
+    print("\nTitles")
+    titles: dict[int, int] = {}
+    for h in league.history:
+        titles[h["champion"]] = titles.get(h["champion"], 0) + 1
+    for tid, n in sorted(titles.items(), key=lambda kv: -kv[1]):
+        print(f"  {league.teams[tid].full_name:<26}{n}")
+
+    print("\nCareer points leaders (regular season)")
+    career_pts = sorted(((sum(c["pts"] for c in p.career if not c["playoffs"]), p)
+                         for p in league.players.values() if p.career), key=lambda x: -x[0])[:5]
+    for pts, p in career_pts:
+        seasons = [c for c in p.career if not c["playoffs"]]
+        gp = sum(c["gp"] for c in seasons)
+        status = "retired" if p.retired else league.teams[p.team_id].abbreviation if p.team_id else "FA"
+        print(f"  {p.name:<22}{pts:>6} pts in {gp} games over {len(seasons)} seasons ({status})")
+
+    if first_draft:
+        p = first_draft
+        print(f"\nFollowing {p.name}, #1 pick in {p.draft_year} (potential {p.potential_ability}):")
+        for c in (c for c in p.career if not c["playoffs"]):
+            pg = career_per_game(c)
+            print(f"  {c['season']} age {c['age']} {c['team']}  CA {c['ca']:>3}  "
+                  f"{pg['mpg']:4.1f} mpg {pg['ppg']:4.1f} ppg {pg['rpg']:4.1f} rpg {pg['apg']:4.1f} apg")
 
 
 def main() -> None:
@@ -165,15 +229,22 @@ def main() -> None:
     game.add_argument("--seed", type=int, default=0)
     game.add_argument("--pbp", action="store_true", help="print the play-by-play")
 
-    season = sub.add_parser("season", help="simulate a full season")
+    season = sub.add_parser("season", help="simulate a full season with playoffs and awards")
     season.add_argument("--seed", type=int, default=0)
     season.add_argument("--teams", type=int, default=12)
     season.add_argument("--out", help="save the finished season to this file")
 
+    career = sub.add_parser("career", help="simulate many seasons (draft, free agency, ageing...)")
+    career.add_argument("--seasons", type=int, default=10)
+    career.add_argument("--seed", type=int, default=0)
+    career.add_argument("--teams", type=int, default=12)
+    career.add_argument("--load", help="continue a saved league instead of generating one")
+    career.add_argument("--out", help="save the league afterwards")
+
     args = ap.parse_args()
     if args.cmd is None:  # bare `python -m hoopsim` behaves like `new`
         args = ap.parse_args(["new"])
-    {"new": cmd_new, "game": cmd_game, "season": cmd_season}[args.cmd](args)
+    {"new": cmd_new, "game": cmd_game, "season": cmd_season, "career": cmd_career}[args.cmd](args)
 
 
 if __name__ == "__main__":

@@ -40,11 +40,14 @@ def plan_rotation(players: list[Player], depth: int) -> tuple[list[int], dict[in
 
     shape = _MINUTES_SHAPE[:len(rotation)]
     scale = GAME_MINUTES / sum(shape)
-    minutes = [min(MAX_MINUTES, round(m * scale)) for m in shape]
+    # An injury-hit team with only 5 or 6 healthy players has to ride them longer
+    # than the usual 40-minute cap (otherwise 240 minutes can't be reached).
+    cap = max(MAX_MINUTES, -(-GAME_MINUTES // len(rotation)))
+    minutes = [min(cap, round(m * scale)) for m in shape]
     i = 0
     while sum(minutes) != GAME_MINUTES:  # fix rounding drift, starters first
         step = 1 if sum(minutes) < GAME_MINUTES else -1
-        if 1 <= minutes[i] + step <= MAX_MINUTES:
+        if 1 <= minutes[i] + step <= cap:
             minutes[i] += step
         i = (i + 1) % len(minutes)
     return [p.id for p in starters], {p.id: m for p, m in zip(rotation, minutes)}

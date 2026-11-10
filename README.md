@@ -6,7 +6,8 @@ no dependencies.
 ```bash
 python -m hoopsim new --seed 1 --teams 12 --out league.db   # generate, save, print summary
 python -m hoopsim game --seed 1 --pbp                       # one game: play-by-play + box score
-python -m hoopsim season --seed 1                           # full season: standings + leaders
+python -m hoopsim season --seed 1                           # season + playoffs, awards, leaders
+python -m hoopsim career --seasons 20 --seed 1              # 20 years: drafts, free agency, ageing
 python -m hoopsim.calibrate --seasons 3                     # compare sim averages with the NBA
 python -m unittest discover -s tests -t .                   # run tests
 ```
@@ -124,7 +125,48 @@ Known gaps:
 - **Guards rebound a little too little.**
 - **No in-game injuries.**
 
-## Next
+## Season loop (`hoopsim/season.py`)
 
-Season loop: injuries, player development and ageing, morale, contracts and
-free agency, the draft, AI trades, playoffs.
+```python
+league = generate_league(seed=1)
+rng = random.Random(1)
+summary = play_full_season(league, rng)   # regular season, playoffs, awards
+report = run_offseason(league, rng)        # everything between seasons
+```
+
+**During the season**
+- **Injuries** happen in games. The risk rises with court time, fatigue and the
+  hidden injury-proneness rating. Injuries range from day-to-day knocks to
+  season-ending tears, and about 1.2 players per team are out on a typical day.
+  A player listed "out N games" misses exactly his team's next N games.
+- **Coaches re-plan rotations** when players get hurt or come back.
+- **Morale** updates weekly from playing time versus role, winning (weighted by
+  ambition) and injuries. It feeds game-day form and re-signing decisions.
+- **Trade deadline** at 60% of the season.
+- **Playoffs** (`playoffs.py`): the top two thirds of each conference (rounded down
+  to a power of two) are seeded by record, then point differential. Best-of-7
+  series use 2-2-1-1-1 home court, and the conference champions meet in the finals.
+- **Awards**: MVP, Finals MVP, Defensive POY, Rookie of the Year, Sixth Man and Most
+  Improved. Each player's season line (stats, age, CA) goes into `player.career`.
+
+**Offseason**, in order:
+1. **Retirements**: likelier with age and declining ability, and much likelier
+   for players nobody signed.
+2. **Development** (`development.py`): growth peaks at 19–22 and declines from about
+   30, with athleticism going first. It's scaled by work ethic, minutes played and
+   room to potential (never above PA). Professionalism slows decline.
+3. **Options**: teams decline overpaid team options; underpaid players opt out.
+4. **Re-signing**: teams keep rotation players they can afford. Contenders will
+   pay some tax. Players re-sign based on loyalty, morale and team quality.
+5. **Draft** (`draft.py`): a 4-pick lottery for non-playoff teams weighted toward
+   the worst, then 2 rounds. Teams scout potential through noise. First-rounders
+   get a rookie scale deal with a team option; undrafted players become free agents.
+6. **Free agency** (`market.py`): rounds of bids under a simplified soft cap (cap
+   space, one mid-level exception, minimum deals). Players take the best mix of
+   money and team quality, and lower their asks round by round.
+7. **Trades**: contenders value ability now; rebuilders value 3-year projections
+   and cap relief. Trades happen only when both sides gain.
+8. **Roster cuts and fills** to 13–15, a new schedule and fresh lineups.
+
+Box scores are summarised into career lines at the end of each season and then
+dropped, so save files stay small over decades.

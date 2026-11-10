@@ -181,11 +181,16 @@ def generate_player(rng: random.Random, player_id: int, on: date, *,
     )
 
 
-def market_salary(ability: int, rules: LeagueRules) -> int:
-    """Rough market value: steep curve so stars cost far more than role players."""
+# Salary curve: (ability floor, ability at max salary, exponent). Calibrated so an
+# average team's payroll sits near the cap and stars approach the max.
+SALARY_FLOOR, SALARY_TOP, SALARY_EXPONENT = 55, 165, 2.0
+
+
+def market_salary(ability: float, rules: LeagueRules) -> int:
+    """Market value per season: steep curve so stars cost far more than role players."""
     max_salary = int(rules.salary_cap * rules.max_salary_cap_fraction)
-    x = max(0.0, min(1.0, (ability - 60) / 110))
-    salary = rules.min_salary + (max_salary - rules.min_salary) * x ** 2.5
+    x = max(0.0, min(1.0, (ability - SALARY_FLOOR) / (SALARY_TOP - SALARY_FLOOR)))
+    salary = rules.min_salary + (max_salary - rules.min_salary) * x ** SALARY_EXPONENT
     return int(round(salary, -4))
 
 
@@ -295,5 +300,9 @@ def generate_league(*, seed: int = 0, num_teams: int = 12, season: int = 2026,
         league.add_player(generate_player(rng, league.next_player_id(), league.current_date,
                                           potential=potential))
 
+    # Teenagers in the starting league count as this season's rookies.
+    for p in league.players.values():
+        if p.age(league.current_date) <= 20:
+            p.draft_year = season
     generate_schedule(league, rng)
     return league

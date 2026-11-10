@@ -14,9 +14,9 @@ import sqlite3
 from datetime import date
 from pathlib import Path
 
-from .models import Game, League, LeagueRules, Player, Team
+from .models import Game, League, LeagueRules, Phase, Player, Series, Team
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2   # v2 adds phase, playoffs and history (v1 files still load)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -71,6 +71,9 @@ def save_league(league: League, path: str | Path) -> None:
                 "season": str(league.season),
                 "current_date": league.current_date.isoformat(),
                 "rules": json.dumps(league.rules.to_dict()),
+                "phase": league.phase.value,
+                "playoffs": json.dumps([s.to_dict() for s in league.playoffs]),
+                "history": json.dumps(league.history),
             }
             conn.executemany("INSERT INTO meta VALUES (?, ?)", meta.items())
             conn.executemany(
@@ -98,13 +101,16 @@ def load_league(path: str | Path) -> League:
     try:
         meta = dict(conn.execute("SELECT key, value FROM meta"))
         version = int(meta.get("schema_version", 0))
-        if version != SCHEMA_VERSION:
+        if version not in (1, SCHEMA_VERSION):
             raise ValueError(f"save file schema v{version}, expected v{SCHEMA_VERSION}")
         league = League(
             name=meta["name"],
             season=int(meta["season"]),
             current_date=date.fromisoformat(meta["current_date"]),
             rules=LeagueRules.from_dict(json.loads(meta["rules"])),
+            phase=Phase(meta.get("phase", Phase.REGULAR_SEASON.value)),
+            playoffs=[Series.from_dict(s) for s in json.loads(meta.get("playoffs", "[]"))],
+            history=json.loads(meta.get("history", "[]")),
         )
         for (data,) in conn.execute("SELECT data FROM teams ORDER BY id"):
             league.add_team(Team.from_dict(json.loads(data)))
