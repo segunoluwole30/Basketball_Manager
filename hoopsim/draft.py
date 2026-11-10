@@ -17,7 +17,7 @@ def generate_draft_class(league: League, rng: random.Random, size: int) -> list[
     prospects = []
     for _ in range(size):
         age = rng.choices([19, 20, 21, 22], [35, 30, 20, 15])[0]
-        potential = int(max(45, min(195, rng.gauss(86, 27))))
+        potential = int(max(45, min(195, rng.gauss(89, 27.5))))
         p = generate_player(rng, league.next_player_id() + len(prospects), league.current_date,
                             age=age, potential=potential)
         prospects.append(p)
