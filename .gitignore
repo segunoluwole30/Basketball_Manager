@@ -3,3 +3,4 @@ __pycache__/
 hoopsim_watch.html
 node_modules/
 web/dist/
+.claude/
