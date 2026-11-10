@@ -267,7 +267,7 @@ class HalfCourtGame:
             prob += t.post_strength_effect * (shooter.a("strength") - defender.a("strength"))
         if lob:
             prob += t.lob_bonus + 0.01 * (shooter.a("vertical") - 10)
-        prob -= shooter.fatigue_shot
+        prob *= 1.0 - shooter.fatigue_shot           # tired legs: the same fraction off every shot
         return max(0.02, min(0.95, prob)), z
 
     def shot_value(self, shooter: Agent, p=None, contest_d=None, defender=None, moving=False,
@@ -1452,7 +1452,7 @@ class HalfCourtGame:
         rest = defenders[3:] + attackers[3:]
         for i, a in enumerate(rest):
             a.place((-1) ** i * (10 + 3 * i), 24.0)
-        pct = max(0.35, min(0.95, self.t.free_throw + 0.018 * (shooter.a("free_throw") - 10) - shooter.fatigue_shot))
+        pct = max(0.35, min(0.95, self.t.free_throw + 0.018 * (shooter.a("free_throw") - 10)) * (1.0 - shooter.fatigue_shot))
         made = 0
         last_missed = False
         for _ in range(n):

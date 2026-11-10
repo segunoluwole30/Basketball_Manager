@@ -193,3 +193,19 @@ class NonShootingFoulTests(unittest.TestCase):
         self.assertLess(default, 12.0)
         self.assertGreater(self.fouls(0.03), 1.8 * default)
         self.assertLess(self.fouls(1e-9), 0.2 * default)   # only end-of-game intentional fouls left
+
+
+class FatigueShootingTests(unittest.TestCase):
+    def test_fatigue_takes_the_same_fraction_off_every_shot(self):
+        from hoopsim.spatial import HalfCourtGame
+        league = generate_league(seed=5)
+        g = HalfCourtGame(league, 1, 2, random.Random(0))
+        g.play_possession("home")
+        shooter = g.offense[1]
+        spots = [(0.0, 6.0), (0.0, 15.0), (0.0, 26.0)]          # rim, mid-range, three
+        fresh = [g.make_prob(shooter, p, contest_d=6.0)[0] for p in spots]
+        shooter.fatigue_shot = 0.05
+        tired = [g.make_prob(shooter, p, contest_d=6.0)[0] for p in spots]
+        ratios = [t / f for t, f in zip(tired, fresh)]
+        for r in ratios:
+            self.assertAlmostEqual(r, 0.95, places=3)

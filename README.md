@@ -186,21 +186,21 @@ minutes are estimates; sources in `measure.py`):
 
 | | Sim | NBA |
 |---|---|---|
-| Pace | 103.0 (135 before set plays) | 99.4 |
-| Points per team | 114 (111 per 100) | 115.6 (115.8 per 100) |
-| Transition share of possessions | 13.8% | ~15% (est.) |
-| Transition points per possession | 1.24 | ~1.26 (est.) |
-| FTA per 100 possessions | 26.1 | 23.6 |
-| Personal fouls per 100 possessions | 20.7 | 20.0 |
-| Turnovers per 100 possessions | 14.6 | 14.6 |
-| Starters' minutes (by rank) | 34.0, 32.7, 31.4, 29.8, 26.0 | ~30–36 (est.) |
+| Pace | 103.4 (135 before set plays) | 99.4 |
+| Points per team | 116 (112 per 100) | 115.6 (115.8 per 100) |
+| Threes attempted per team | 31.5 (share .356) | 37.0 (share .415) |
+| Transition share of possessions | 14.1% | ~15% (est.) |
+| Transition points per possession | 1.19 | ~1.26 (est.) |
+| FTA per 100 possessions | 24.8 | 23.6 |
+| Personal fouls per 100 possessions | 20.0 | 20.0 |
+| Turnovers per 100 possessions | 13.9 | 14.6 |
+| Starters' minutes (by rank) | 34.6, 32.8, 31.6, 30.0, 26.4 | ~30–36 (est.) |
 
 Non-shooting fouls (reach-ins, holds) are a per-second risk of live half-court
 play (`non_shooting_foul_per_second` = 0.011, about 7 a team-game). They used to be
 scheduled on 25% of possessions, so longer possessions inflated them. Pace is
-~3.5 possessions high, and points per 100 possessions are ~5 low. Teams take ~28
-threes a game (NBA ~37): the three-point share in full games (33%) is below the
-half-court yardstick's (36–42%). The scoring leader averages ~29 points. Full games take
+~4 possessions high, and points per 100 possessions are ~4 low. Teams take ~31
+threes a game (NBA ~37). The scoring leader averages ~30 points. Full games take
 about 0.7 s each.
 
 ### Learned decision values (`values.py`, `train.py`)
@@ -711,6 +711,32 @@ at ~11.8 s remaining, and half-court first shots here come at ~11 s. The gap was
 ~0.5–0.9 s of game clock per possession spread across possession types. Denial is
 worth about a possession a game: full-game pace 103.9 → 103.0 (deny 0.8 would give
 ~102, but that's more denial than NBA defences play).
+
+### Full-game three-point volume
+
+Full games took ~28 threes a team (NBA ~37), a share of .326 against .415, below
+the half-court yardstick. A breakdown by possession type (30 games):
+
+| per team-game | FGA | three share | rim share |
+|---|---|---|---|
+| set half court | 65.8 | .349 | .333 |
+| flows out of transition, no advantage | 7.8 | .172 | .507 |
+| flows out of transition, numbers / kick-out | 1.7 | .308 | .462 |
+| breakaways | 2.9 | .011 | .724 |
+
+**Fatigue was the main cause.** It took a flat amount off every make chance (about
+4 points when tired): ~11% of a three's value but ~6% of a layup's, so tired
+lineups abandoned the three. It is now proportional (make chance × (1 − k·tiredness)),
+which lifts the set half-court share to .374, close to the .383 with fatigue
+switched off.
+
+Tried and reverted: pulling no-advantage pushes out into the half-court set (60% of
+the time). It raised the three share only to .353, but cut transition to 11.7% of
+possessions at 1.17 points.
+
+Result (60 games): 31.5 threes a team (share .356), points per 100 110.8 → 111.9,
+115.7 points a team. The rest of the gap is engine-wide: the half-court yardstick's
+own three share is .36–.42, and transition flows go to the rim.
 
 ## Simulation commands
 

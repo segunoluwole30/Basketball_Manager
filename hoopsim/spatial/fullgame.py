@@ -71,7 +71,8 @@ class GameTuning:
     effort_floor: float = 0.45             # standing around still tires you this much
     press_drain: float = 1.15
     # What fatigue does (at energy e): speed x (1 - k (1 - e)), reaction x (1 + k (1 - e)),
-    # make chance - k (1 - e).
+    # make chance x (1 - k (1 - e)): proportional, so it doesn't tilt the shot mix
+    # (a flat cut took ~11% off threes but ~6% off layups and drove tired teams inside).
     fatigue_speed: float = 0.22
     fatigue_reaction: float = 0.45
     fatigue_shot: float = 0.12
