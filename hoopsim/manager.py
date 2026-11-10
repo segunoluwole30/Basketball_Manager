@@ -24,7 +24,7 @@ from .market import (
     _choose_jersey, _trade_gain, _upgrade_margin, evaluate_trade, execute_user_trade,
 )
 from .models import (
-    ATTR_MAX, ATTR_MIN, Contract, DefensiveScheme, League, OffensiveFocus, Phase, Player,
+    ATTR_MAX, ATTR_MIN, Contract, DefensiveScheme, League, OffensiveFocus, Phase, Player, Tendencies,
 )
 
 
@@ -214,6 +214,44 @@ def describe_tactics(league: League) -> str:
     t = _user_team(league).tactics
     return (f"pace {t.pace}, three {t.three_point_rate}, focus {t.offensive_focus.value}, "
             f"defense {t.defensive_scheme.value}, crash {t.crash_offensive_glass}, depth {t.rotation_depth}")
+
+
+TENDENCY_KEYS = {
+    "three": "three_point", "mid": "mid_range", "drive": "drive",
+    "post": "post_up", "pass": "passing", "cut": "cutting",
+}
+
+
+def set_player_tendencies(league: League, player_id: int, **changes) -> tuple[bool, str]:
+    """Player instructions: how one of your players should play (1-20, 10 = no preference).
+    e.g. three=16 (look for your three), post=4 (stop posting up)."""
+    team = _user_team(league)
+    p = league.players.get(player_id)
+    if p is None or p.team_id != team.id:
+        return False, "you can only instruct your own players"
+    values = p.tendencies.to_dict()
+    for key, value in changes.items():
+        field = TENDENCY_KEYS.get(key, key if key in values else None)
+        if field is None:
+            return False, f"unknown instruction '{key}' (try: {', '.join(TENDENCY_KEYS)})"
+        try:
+            value = int(value)
+        except ValueError:
+            return False, f"{key} must be a number from 1 to 20"
+        if not ATTR_MIN <= value <= ATTR_MAX:
+            return False, f"{key} must be 1-20"
+        values[field] = value
+    p.tendencies = Tendencies(**values)
+    return True, f"{p.name}: {describe_tendencies(p)}"
+
+
+def describe_tendencies(p: Player) -> str:
+    t = p.tendencies
+    def word(v):
+        return "avoids" if v <= 5 else "rarely" if v <= 8 else "often" if v >= 15 else "sometimes" if v >= 12 else "normal"
+    parts = [("threes", t.three_point), ("mid-range", t.mid_range), ("drives", t.drive),
+             ("post-ups", t.post_up), ("passing", t.passing), ("cuts", t.cutting)]
+    return ", ".join(f"{name} {v} ({word(v)})" for name, v in parts)
 
 
 # --------------------------------------------------------------------------

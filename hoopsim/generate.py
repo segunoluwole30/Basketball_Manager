@@ -16,7 +16,7 @@ from typing import Optional
 from .lineup import POSITIONS, auto_lineup
 from .models import (
     ABILITY_MAX, ABILITY_MIN, ATTR_MAX, Attributes, Contract, ContractOption, Game,
-    HiddenAttributes, League, LeagueRules, Physique, Player, Position, Team, Tactics,
+    HiddenAttributes, League, LeagueRules, Physique, Player, Position, Team, Tactics, Tendencies,
     clamp, compute_ability,
 )
 
@@ -176,6 +176,7 @@ def generate_player(rng: random.Random, player_id: int, on: date, *,
         physique=Physique(height, wingspan, weight),
         attributes=attrs,
         hidden=_hidden(rng),
+        tendencies=Tendencies.from_attributes(attrs, noise=lambda: rng.gauss(0, 2.5)),
         # Ability can exceed the drawn potential by rounding; PA must stay >= CA.
         potential_ability=max(potential, compute_ability(attrs, position)),
     )

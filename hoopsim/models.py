@@ -112,6 +112,35 @@ class Attributes(_AttributeBlock):
 
 
 @dataclass
+class Tendencies(_AttributeBlock):
+    """How a player likes to play, 1-20 (10 = no preference). Mostly follows his
+    skills but not always: some players love a shot they aren't great at. Managers
+    can change them with player instructions."""
+
+    three_point: int = 10        # looks for his three
+    mid_range: int = 10          # pull-ups and elbow jumpers
+    drive: int = 10              # attacks the basket off the dribble
+    post_up: int = 10            # calls for it on the block
+    passing: int = 10            # pass-first
+    cutting: int = 10            # moves without the ball
+
+    @classmethod
+    def from_attributes(cls, a: "Attributes", noise=None) -> "Tendencies":
+        """Skill-based tendencies; ``noise()`` (if given) adds personal quirks."""
+        n = noise or (lambda: 0.0)
+        raw = {
+            "three_point": 10 + 0.7 * (a.three_point - 10),
+            "mid_range": 10 + 0.7 * (a.mid_range - 10),
+            "drive": 10 + 0.4 * (a.ball_handling - 10) + 0.3 * (a.speed - 10) + 0.2 * (a.finishing - 10),
+            "post_up": 10 + 0.4 * (a.close_range - 10) + 0.4 * (a.strength - 10),
+            "passing": 10 + 0.4 * (a.passing - 10) + 0.4 * (a.vision - 10),
+            "cutting": 10 + 0.4 * (a.basketball_iq - 10) + 0.3 * (a.speed - 10) - 0.3 * (a.three_point - 10),
+        }
+        # +1: generated ratings average a little under 10; keep the league's average style neutral.
+        return cls(**{k: max(ATTR_MIN, min(ATTR_MAX, round(v + 1 + n()))) for k, v in raw.items()})
+
+
+@dataclass
 class HiddenAttributes(_AttributeBlock):
     """Ratings the user never sees directly (scouting reveals hints)."""
 
@@ -229,8 +258,11 @@ class Player:
     draft_year: Optional[int] = None   # season of the draft that brought him in
     draft_pick: Optional[int] = None   # overall pick; None = undrafted
     career: list[dict] = field(default_factory=list)  # one stat line per season (see stats.py)
+    tendencies: Optional[Tendencies] = None             # derived from attributes if not given
 
     def __post_init__(self) -> None:
+        if self.tendencies is None:
+            self.tendencies = Tendencies.from_attributes(self.attributes)
         if not ABILITY_MIN <= self.potential_ability <= ABILITY_MAX:
             raise ValueError("potential_ability out of range")
         if not 0 <= self.morale <= 100:
@@ -289,6 +321,7 @@ class Player:
             "draft_year": self.draft_year,
             "draft_pick": self.draft_pick,
             "career": self.career,
+            "tendencies": self.tendencies.to_dict(),
         }
 
     @classmethod
@@ -314,6 +347,7 @@ class Player:
             draft_year=d.get("draft_year"),
             draft_pick=d.get("draft_pick"),
             career=list(d.get("career", [])),
+            tendencies=Tendencies.from_dict(d["tendencies"]) if d.get("tendencies") else None,
         )
 
 

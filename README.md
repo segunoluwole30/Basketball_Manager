@@ -30,6 +30,29 @@ free-agent bids each round (weaker teams have to outbid stronger ones), trade
 offers from AI teams, and roster cuts. Answer `auto` to hand any of them to
 your assistant.
 
+**Player instructions.** Every player has tendencies (1–20, 10 = no preference):
+`three`, `mid`, `drive`, `post`, `pass` and `cut`. They follow his skills, with
+some personality: some players love a shot they aren't great at. Change them with
+`instruct ID three=16 post=4`; the player card shows them. Tendencies change what a
+player *chooses*, not how well it goes. In the spatial engine they're a style
+preference added to each option's learned value, about 0.25 points at 20. In the
+season engine they shape his shot mix, usage and passing.
+
+**Tactics** in both engines:
+
+| Tactic | Effect |
+|---|---|
+| `three` (rate) and `focus` | A team-wide shot preference. Perimeter focus spaces five-out; inside focus puts both bigs on the blocks and favours post entries. |
+| `pace` | Shorter setup and earlier shots. |
+| `crash` | How many players attack the offensive glass. |
+| `defense` | `zone` packs the paint and concedes perimeter looks. `press` forces turnovers but gets beaten off the dribble more. `switch` swaps on screens. `man` plays drop coverage. |
+
+Same two teams with different instructions (spatial engine): perimeter focus with
+three-point rate 20 takes 61–65% threes; inside focus with rate 1 takes 35–41% and
+nearly doubles post-ups. A press roughly doubles a ball-handling opponent's
+turnovers. A mid-range tendency of 20 more than doubles that player's two-point
+jumpers.
+
 You never see everything. Potential is shown as your scouts' estimate with a
 range. The range narrows as a player ages and builds a track record, and it's
 tighter for your own players. Hidden attributes show up as scouting notes
@@ -105,6 +128,12 @@ passing (turnovers fell to 4%), because dribbling under pressure was nearly risk
 and pull-up jumpers were as good as catch-and-shoot ones. Both are now modelled:
 pressure turnovers, a catch-and-shoot bonus and an off-the-dribble penalty
 (NBA: ~37% vs ~34% from three). Receivers' defenders now break on passes.
+
+### Pull-ups
+
+A ball handler at the arc can take one or two hard dribbles into a mid-range
+jumper. It's valued like any other shot (off the dribble, defender trailing), so
+mid-range specialists take it and most players don't.
 
 ### Inside game
 

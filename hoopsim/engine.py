@@ -450,6 +450,12 @@ class _GameSim:
             w[RIM] *= 0.9; w[CLOSE] *= 0.9; w[THREE] *= 1.2
         if defense.tactics.defensive_scheme is DefensiveScheme.ZONE:
             w[THREE] *= 1.15; w[RIM] *= 0.9
+        # Player tendencies: how he likes to score.
+        tend = ig.p.tendencies
+        w[RIM] *= math.exp(0.05 * (tend.drive - 10))
+        w[CLOSE] *= math.exp(0.04 * (tend.post_up - 10))
+        w[MID] *= math.exp(0.07 * (tend.mid_range - 10))
+        w[THREE] *= math.exp(0.06 * (tend.three_point - 10))
         if fast_break:
             w[RIM] *= 4; w[MID] *= 0.5
         if putback:
@@ -523,7 +529,9 @@ class _GameSim:
         if putback is not None:
             slot = offense.lineup.index(putback)
         else:
+            # Pass-first players take fewer shots.
             weights = [math.exp(USAGE * (_offense_skill(ig) - 10)
+                                - 0.03 * (ig.p.tendencies.passing - 10)
                                 + (0.35 * (ig.r("three_point") - 10) if need_three or heave else 0))
                        for ig in offense.lineup]
             slot = rng.choices(range(5), weights)[0]
@@ -619,7 +627,8 @@ class _GameSim:
         p = self.t.assist[zone] * math.exp(0.05 * (passing - 10)) * (0.75 if fast_break else 1.0)
         if self.rng.random() >= p:
             return None
-        w = [math.exp(0.45 * ((ig.r("passing") + ig.r("vision")) / 2 - 10)) for ig in mates]
+        w = [math.exp(0.45 * ((ig.r("passing") + ig.r("vision")) / 2 - 10)
+                      + 0.05 * (ig.p.tendencies.passing - 10)) for ig in mates]
         assister = _pick(self.rng, mates, w)
         assister.line.ast += 1
         return assister

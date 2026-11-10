@@ -17,9 +17,9 @@ from typing import Callable, Optional
 from .db import load_league, save_league
 from .generate import generate_league
 from .manager import (
-    AIManager, choose_team, describe_tactics, free_agent_ask, hidden_traits, offer_contract,
-    propose_trade, release_player, scouted_potential, set_auto_lineup, set_minutes,
-    set_starters, set_tactics,
+    AIManager, choose_team, describe_tactics, describe_tendencies, free_agent_ask, hidden_traits,
+    offer_contract, propose_trade, release_player, scouted_potential, set_auto_lineup, set_minutes,
+    set_player_tendencies, set_starters, set_tactics,
 )
 from .contracts import cap_room, payment_route, payroll_for
 from .lineup import POSITIONS
@@ -254,6 +254,7 @@ Your team
   start A B C D E    set starters (PG SG SF PF C ids)     minutes ID=MIN ...   set minute targets
   tactics [k=v ...]  pace=1-20 three=1-20 crash=1-20 depth=5-15 focus=inside|balanced|perimeter
                      defense=man|switch|zone|press
+  instruct ID k=v    player instructions: three mid drive post pass cut (1-20, 10 = normal)
   finances           payroll, cap room, contracts
 Moves
   fa [N]             best free agents and what they want  sign ID SALARY YEARS (salary in $M)
@@ -477,6 +478,7 @@ class Game:
             self.say(f"  {label:<11}" + "  ".join(f"{n.replace('_', ' ')} {getattr(p.attributes, n)}" for n in names))
         traits = hidden_traits(p)
         self.say(f"  Scouting notes: {', '.join(traits) if traits else 'nothing stands out'}")
+        self.say(f"  Plays: {describe_tendencies(p)}")
         if p.contract:
             opt = f", {p.contract.option.value} option" if p.contract.option else ""
             self.say(f"  Contract: {money(p.contract.salary)} through {p.contract.expires_season}{opt}")
@@ -533,6 +535,14 @@ class Game:
             return
         changes = dict(a.split("=", 1) for a in args)
         ok, msg = set_tactics(self.league, **changes)
+        self.say(msg)
+
+    def cmd_instruct(self, args):
+        if len(args) < 2:
+            self.say("Usage: instruct ID three=16 mid=12 drive=8 post=4 pass=14 cut=10   (1-20, 10 = normal)")
+            return
+        changes = dict(a.split("=", 1) for a in args[1:])
+        ok, msg = set_player_tendencies(self.league, int(args[0]), **changes)
         self.say(msg)
 
     def cmd_finances(self, args):

@@ -58,6 +58,8 @@ class SpatialTuning:
     lob_bonus: float = 0.08                   # alley-oops are close to dunks
     cut_rate: float = 0.008                   # chance per tick an off-ball player cuts (scaled)
     post_strength_effect: float = 0.01        # make chance per point of strength edge in the post
+    # Style: points of option value per tendency point away from 10 (a 20 tendency = +0.12).
+    tendency_weight: float = 0.025
     off_dribble_penalty: float = 0.035
 
 
@@ -276,19 +278,25 @@ class HalfCourtGame:
         self.last_passer: Optional[Agent] = None
         self.catch_time = -9.0
         self.orb_time = -9.0
-        self.next_decision = rng.uniform(1.5, 3.0)
+        # Fast-paced teams get into their offence sooner.
+        pace = self.teams[side].tactics.pace
+        self.next_decision = rng.uniform(1.5, 3.0) * max(0.5, 1 - 0.03 * (pace - 10))
         self.passes = 0
         self.decisions: list[tuple[str, list[float]]] = []
         self.result: Optional[str] = None
         self.points = 0
 
         mirror = rng.random() < 0.5
-        five_out = self.offense[4].a("three_point") >= 12
+        focus = self.teams[side].tactics.offensive_focus.value
+        five_out_shooting = {"perimeter": 10, "inside": 15}.get(focus, 12)
+        five_out = self.offense[4].a("three_point") >= five_out_shooting
         spots = list(SPOTS_4OUT)
         if five_out:
             spots[4] = FIVE_OUT_C
         else:
             spots[4] = POST_BLOCK if self.can_post(self.offense[4]) else DUNKER
+        if focus == "inside" and self.can_post(self.offense[3]):
+            spots[3] = (-POST_BLOCK[0], POST_BLOCK[1])          # both bigs inside: three out, two in
         for i, a in enumerate(self.offense):
             sx, sy = spots[i]
             a.spot = (-sx if mirror else sx, sy)
@@ -347,13 +355,13 @@ class HalfCourtGame:
         self.defense_targets()
         if self.flight:
             self.advance_flight()
-        elif self.holder is not None and self.mode in ("setup", "probe", "drive", "post"):
+        elif self.holder is not None and self.mode in ("setup", "probe", "drive", "post", "pullup"):
             self.handler_logic()
         boost = 1.08 if self.mode == "drive" else 0.35 if self.mode == "post" else 1.0
         for a in self.everyone:
             a.move(dt, self.now, boost if a is self.holder else 1.0)
         self.separate()
-        if self.result is None and self.holder is not None and self.mode in ("probe", "drive", "setup", "post") \
+        if self.result is None and self.holder is not None and self.mode in ("probe", "drive", "setup", "post", "pullup") \
                 and self.shot_clock <= 0:
             self.credit(self.holder, "tov")
             self.stats["tov"] += 1
@@ -429,7 +437,8 @@ class HalfCourtGame:
         elif h is not None and self.mode == "probe" and self.now - self.mode_since > 1.0:
             # Probe: work around your spot, sometimes attacking the elbow or short wing.
             if self.rng.random() < 0.06:
-                if self.rng.random() < 0.4:
+                elbow = max(0.15, min(0.8, 0.25 + 0.04 * (h.p.tendencies.mid_range - 10)))
+                if self.rng.random() < elbow:
                     angle = math.radians(self.rng.uniform(25, 155))
                     r = self.rng.uniform(15, 20)
                     h.target((RIM[0] + r * math.cos(angle), RIM[1] + r * math.sin(angle)))
@@ -437,7 +446,42 @@ class HalfCourtGame:
                     h.target((h.spot[0] + self.rng.uniform(-4, 4), h.spot[1] + self.rng.uniform(-3, 3)))
 
     def can_post(self, a: Agent) -> bool:
-        return a.slot >= 3 and (a.a("close_range") + a.a("strength")) / 2 >= 11
+        """A big who can (and likes to) score on the block."""
+        return (a.slot >= 3 and (a.a("close_range") + a.a("strength")) / 2 >= 11
+                and a.p.tendencies.post_up >= 8)
+
+    @property
+    def scheme(self) -> str:
+        """The defending team's scheme: man, switch, zone or press."""
+        defending = "away" if self.side == "home" else "home"
+        return self.teams[defending].tactics.defensive_scheme.value
+
+    def style_bias(self, h: Agent, kind: str, action: tuple) -> float:
+        """How much this player (and his coach's tactics) prefer an option, in points.
+        Added to the learned value when choosing; it changes choices, not outcomes."""
+        tend = h.p.tendencies
+        tac = self.teams[self.side].tactics
+        focus = tac.offensive_focus.value
+        k = self.t.tendency_weight
+        if kind == "shoot":
+            zone = action[1]
+            if zone == THREE_ZONE:
+                return (k * (tend.three_point - 10) + 0.008 * (tac.three_point_rate - 10)
+                        + {"perimeter": 0.03, "inside": -0.03}.get(focus, 0.0))
+            if zone == MID_ZONE:
+                return k * (tend.mid_range - 10)
+            return 0.02 if focus == "inside" else 0.0
+        if kind in ("drive", "continue"):
+            return k * (tend.drive - 10) + (0.02 if focus == "inside" else 0.0)
+        if kind == "post":
+            return k * (tend.post_up - 10) + {"inside": 0.04, "perimeter": -0.03}.get(focus, 0.0)
+        if kind == "pass":
+            mate = action[1]
+            feed_post = 0.03 if focus == "inside" and self.can_post(mate) and C.dist_to_rim(mate.pos) < 11 else 0.0
+            return 0.8 * k * (tend.passing - 10) + feed_post
+        if kind == "hold":
+            return -0.012 * (tac.pace - 10)                     # fast teams take earlier shots
+        return 0.0
 
     def maybe_cut(self, a: Agent, d: Agent) -> None:
         """Off-ball players cut to the rim when their man loses them. Smart players,
@@ -447,7 +491,8 @@ class HalfCourtGame:
         if C.dist_to_rim(a.pos) < 10 or (self.pnr and a is self.pnr["screener"]):
             return
         gap = C.dist(a.pos, d.pos)
-        rate = (self.t.cut_rate * (1 + 0.06 * (a.a("basketball_iq") - 10)) * (2.0 if gap > 6 else 1.0)
+        rate = (self.t.cut_rate * math.exp(0.08 * (a.p.tendencies.cutting - 10))
+                * (1 + 0.06 * (a.a("basketball_iq") - 10)) * (2.0 if gap > 6 else 1.0)
                 * (1.6 if a.a("three_point") < 11 else 0.7))
         if self.rng.random() < rate:
             self.cutter = a
@@ -495,7 +540,8 @@ class HalfCourtGame:
         ball = self.flight.position(now)[:2] if self.flight else (self.holder.pos if self.holder else RIM)
         driving = self.mode == "drive" and self.holder is not None
         helper = None
-        if driving and C.dist_to_rim(self.holder.pos) < self.t.help_trigger_distance:
+        help_at = self.t.help_trigger_distance + (4.0 if self.scheme == "zone" else 0.0)
+        if driving and C.dist_to_rim(self.holder.pos) < help_at:
             helper = self.choose_helper()
         tagger = threat = None
         if self.mode in ("probe", "drive", "pass", "post"):
@@ -531,6 +577,7 @@ class HalfCourtGame:
                 # Press up on shooters out to 30 ft; give non-shooters room out there.
                 deep = C.dist_to_rim(man.pos)
                 gap = 3.0 if deep < 27 else 5.0
+                gap += {"zone": 1.0, "press": -0.8}.get(self.scheme, 0.0)   # zones sit back, presses get up
                 # Anticipate: play where he's going, not where he was.
                 lead = 0.45 if self.mode == "drive" else 0.2
                 ahead = C.clamp((man.x + man.vx * lead, man.y + man.vy * lead))
@@ -539,6 +586,8 @@ class HalfCourtGame:
                 pass_dist = C.dist(man.pos, ball)
                 # One pass away: stay close. Far side: sink into the paint to help.
                 sag = 0.08 if pass_dist < 22 else min(0.40, 0.08 + 0.02 * (pass_dist - 22))
+                if self.scheme == "zone":
+                    sag = max(sag, 0.22)                         # a zone packs the paint
                 if man.a("three_point") >= 13:
                     sag *= 0.6                                   # stay attached to shooters
                 mx, my = man.pos
@@ -569,6 +618,10 @@ class HalfCourtGame:
                 self.next_decision = now
             return
         if self.dribble_turnover(h):
+            return
+        if self.mode == "pullup":
+            if C.dist(h.pos, self.pull_point) < 1.5 or now - self.mode_since > 1.0:
+                self.take_shot(h, moving=False)
             return
         if self.mode == "post":
             d_rim = C.dist_to_rim(h.pos)
@@ -620,11 +673,14 @@ class HalfCourtGame:
             predicted = max(0.0, dd - self.closing_speed(closer, h) * 0.35)
             ep = self.shot_value(h, p=spot, contest_d=predicted, defender=closer, moving=moving,
                                  catch=self.just_caught(moving), post=self.mode == "post")
-            options.append(("shoot", ("shoot",), [1.0, ep, float(C.is_three(spot)), float(moving),
+            options.append(("shoot", ("shoot", C.zone(spot)), [1.0, ep, float(C.is_three(spot)), float(moving),
                                                    max(0.0, 6.0 - sc) / 6.0]))
         if self.mode == "post":
             options.append(("post", ("post",), self.post_features(h)))
         elif self.mode == "probe":
+            pull = self.pull_up_option(h)
+            if pull is not None:
+                options.append(pull)
             options.append(("drive", ("drive",), self.drive_features(h)))
             if self.pnr is None and self.pnr_used < 2 and d_rim > 17:
                 scr = self.offense[4] if self.offense[4] is not h else self.offense[3]
@@ -643,12 +699,18 @@ class HalfCourtGame:
             kind, action, feats = rng.choice(options)              # try something (training only)
         else:
             temperature = 0.03 + 0.006 * (20 - h.a("basketball_iq"))   # smarter = closer to the best option
-            scored = [(self.model.value(k, f), (k, a, f)) for k, a, f in options]
+            scored = [(self.model.value(k, f) + self.style_bias(h, k, a), (k, a, f)) for k, a, f in options]
             kind, action, feats = _softmax_choice(rng, scored, temperature)
         self.decisions.append((kind, feats))
         self.stats[f"choice_{kind}"] += 1
         self.next_decision = now + h.reaction * rng.uniform(1.2, 2.2)
-        if kind == "shoot":
+        if kind == "shoot" and action[0] == "pullup":
+            self.mode, self.mode_since = "pullup", now
+            self.pull_point = action[2]
+            self.catch_time = -9.0                         # it's off the dribble now
+            h.target(self.pull_point)
+            self.say(f"{h.p.name} takes two dribbles in")
+        elif kind == "shoot":
             self.take_shot(h, moving=moving)
         elif kind == "drive":
             self.start_drive(h)
@@ -668,6 +730,21 @@ class HalfCourtGame:
         dx, dy = target.x - defender.x, target.y - defender.y
         d = math.hypot(dx, dy) or 1.0
         return max(0.0, (defender.vx * dx + defender.vy * dy) / d)
+
+    def pull_up_option(self, h: Agent) -> Optional[tuple]:
+        """One or two hard dribbles in from the arc into a mid-range jumper."""
+        d_rim = C.dist_to_rim(h.pos)
+        if not 21.0 <= d_rim <= 29.0:
+            return None
+        point = C.clamp(C.toward(RIM, h.pos, 16.5))
+        if C.zone(point) != MID_ZONE:
+            return None
+        on = self.guarded_by(h)
+        # His man follows him in; he gains a little separation on the stop.
+        contest = max(0.0, C.dist(on.pos, h.pos) - 0.5 + 0.02 * (h.a("speed") - on.a("speed")) * 10)
+        ep = self.shot_value(h, p=point, contest_d=contest, defender=on, moving=True, catch=False)
+        feats = [1.0, ep, 0.0, 1.0, max(0.0, 6.0 - self.shot_clock) / 6.0]
+        return ("shoot", ("pullup", MID_ZONE, point), feats)
 
     def just_caught(self, moving: bool) -> bool:
         """Shooting straight off a pass (no dribble move in between)?"""
@@ -755,7 +832,7 @@ class HalfCourtGame:
             return False
         rate = (self.t.dribble_turnover_per_sec
                 * math.exp(0.15 * (on.a("stealing") - 10) - 0.15 * (h.a("ball_handling") - 10))
-                * (3.5 - dd) / 2.5)
+                * (3.5 - dd) / 2.5 * (1.6 if self.scheme == "press" else 1.0))
         if self.rng.random() < rate * self.t.dt:
             self.credit(h, "tov")
             self.stats["tov"] += 1
@@ -790,6 +867,9 @@ class HalfCourtGame:
         self.mode, self.mode_since = "drive", self.now
         self.stats["drives"] += 1
         self.say(f"{h.p.name} drives {'right' if side > 0 else 'left'}")
+        if self.scheme == "press" and self.now >= on.stuck_until and self.rng.random() < 0.35:
+            on.stuck_until = self.now + 0.3                      # pressing up, he was caught leaning
+            self.say(f"{on.p.name} overplays and gets beaten")
         self.next_decision = self.now + 0.4
 
     def call_pnr(self, h: Agent, screener: Agent) -> None:
@@ -832,7 +912,8 @@ class HalfCourtGame:
         for de in ([] if lob else self.defense):
             lane = C.point_segment_distance(de.pos, h.pos, target)
             if lane < 2.0 and C.dist(de.pos, h.pos) > 1.5:
-                p = (self.t.pass_steal_scale * math.exp(0.12 * (de.a("stealing") - 10))
+                p = (self.t.pass_steal_scale * (1.4 if self.scheme == "press" else 1.0)
+                     * math.exp(0.12 * (de.a("stealing") - 10))
                      * (2.0 - lane) / 2.0 * (1.3 if d > 25 else 1.0))
                 if self.rng.random() < p:
                     self.flight = Flight("pass", h.pos, de.pos, self.now, max(0.2, C.dist(h.pos, de.pos) / self.t.pass_speed),
@@ -1036,8 +1117,10 @@ class HalfCourtGame:
             else:
                 d.target(land)
         for a in self.offense:
-            # The big crashes; others only if the ball comes right to them.
-            crash = a.slot == 4 or C.dist(a.pos, land) < 6
+            # The big crashes; more bodies (and from further out) when the coach says crash.
+            crash_level = self.teams[self.side].tactics.crash_offensive_glass
+            crash = (a.slot == 4 or (a.slot == 3 and crash_level >= 13) or (a.slot >= 1 and crash_level >= 18)
+                     or C.dist(a.pos, land) < 6 + 0.3 * (crash_level - 10))
             a.target(land if crash else a.spot)
 
     def resolve_rebound(self, f: Flight) -> None:

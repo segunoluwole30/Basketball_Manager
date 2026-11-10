@@ -45,6 +45,7 @@ def play_round(model: DecisionModel, possessions: int, explore: float, seed: int
 def train(rounds: int = 5, possessions: int = 20000, ridge: float = 50.0,
           start: DecisionModel = HEURISTIC, verbose: bool = True) -> DecisionModel:
     model = start
+    history: list[DecisionModel] = []
     resumed = start is not HEURISTIC
     schedule = [0.1] * 8 if resumed else [0.25, 0.2, 0.15, 0.12, 0.1, 0.1, 0.08, 0.08]
     for r in range(rounds):
@@ -52,13 +53,20 @@ def train(rounds: int = 5, possessions: int = 20000, ridge: float = 50.0,
         explore = schedule[min(r, len(schedule) - 1)]
         samples, stats = play_round(model, possessions, explore, seed=r)
         model = fit(samples, prior=model, ridge=ridge)
+        history.append(model)
         if verbose:
             n = stats["possessions"]
             fga = sum(stats[f"fga_{z}"] for z in ("rim", "close", "mid", "three"))
             print(f"round {r + 1}: {n} possessions (exploring {explore:.0%}), "
                   f"{sum(len(v) for v in samples.values())} decisions, {stats['points'] / n:.3f} pts/poss, "
                   f"threes {stats['fga_three'] / max(1, fga):.0%} of shots, {time.time() - t0:.0f}s")
+    # Average the last rounds: where options are nearly equal in value, single
+    # rounds wander between equally good policies; the average is stable.
+    tail = history[-min(3, len(history)):]
+    model = DecisionModel({k: [sum(m.weights[k][i] for m in tail) / len(tail)
+                               for i in range(len(FEATURES[k]))] for k in FEATURES})
     model.meta = {"source": "learned", "rounds": rounds, "possessions_per_round": possessions,
+                  "averaged_rounds": len(tail),
                   "ridge": ridge, "trained": date.today().isoformat(), "train_seeds": list(TRAIN_SEEDS)}
     return model
 
