@@ -203,3 +203,30 @@ class DefenceTests(unittest.TestCase):
         shooter, non_shooter = sorted(g.offense, key=lambda a: a.a("three_point"))[::-1][0::4]
         self.assertGreater(shooter.a("three_point"), non_shooter.a("three_point"))
         self.assertLess(g.closeout_gap(shooter), g.closeout_gap(non_shooter))
+
+    def test_help_defenders_dig_at_drives(self):
+        g, h = frozen_scene()
+        on = g.guarded_by(h)
+        helper = next(d for d in g.defense if d is not on)
+        def strips(near: bool, trials: int = 300) -> int:
+            n = 0
+            for _ in range(trials):
+                g.result = None
+                helper.place(h.x + (1.0 if near else 9.0), h.y)
+                helper.stuck_until = -1.0
+                n += g.dig(h)
+            return n
+        self.assertEqual(strips(near=False), 0)
+        self.assertGreater(strips(near=True), 3)
+
+    def test_errant_passes_under_pressure(self):
+        g, h = frozen_scene()
+        on = g.guarded_by(h)
+        on.stuck_until = -1.0
+        on.place(h.x, h.y - 1.5)
+        pressured = g.errant_chance(h, 20.0, lob=False)
+        on.place(h.x, h.y - 8.0)
+        free = g.errant_chance(h, 20.0, lob=False)
+        self.assertGreater(pressured, free)
+        self.assertGreater(g.errant_chance(h, 35.0, lob=False), free)    # long passes are riskier
+        self.assertLess(free, 0.05)
