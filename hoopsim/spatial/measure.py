@@ -182,13 +182,19 @@ FULLGAME_TARGETS = {
     "tov_per_100": (14.6, 1.5),
     "starter_minutes": (33.0, 3.0),
     "top_minutes": (36.0, 3.0),
+    # 2025-26 Advanced Stats, League Average: 3PA rate, eFG%, ORB%.
+    "three_share": (0.415, 0.025),
+    "efg": (0.546, 0.015),
+    "orb_pct": (0.260, 0.025),
 }
 
 
 def _fullgame_batch(job: tuple) -> tuple[Counter, list]:
     """Play ``games`` full games in one league (a worker for --jobs)."""
     from .fullgame import FullGame
-    seed, start, games = job
+    seed, start, games = job[:3]
+    params, model = (job[3], job[4]) if len(job) > 3 else (None, None)
+    offset = job[5] if len(job) > 5 else 0
     league = generate_league(seed=seed)
     teams = sorted(league.teams)
     total, starters = Counter(), []
@@ -196,7 +202,8 @@ def _fullgame_batch(job: tuple) -> tuple[Counter, list]:
         home, away = teams[i % len(teams)], teams[(i + 1 + i // len(teams)) % len(teams)]
         if home == away:
             away = teams[(i + 2) % len(teams)]
-        game = FullGame(league, home, away, random.Random(seed * 100_003 + i))
+        game = FullGame(league, home, away, random.Random(seed * 100_003 + i + offset), params=params,
+                        model=model)
         sim = game.run()
         total += game.stats
         total["open_court_steals"] += game.hc.stats["open_court_steals"]
@@ -208,7 +215,7 @@ def _fullgame_batch(job: tuple) -> tuple[Counter, list]:
             total["team_games"] += 1
             total["possessions_total"] += box.possessions
             total["pts"] += t.pts
-            for f in ("fga", "tpa", "fta", "orb", "drb", "ast", "stl", "blk", "tov", "pf"):
+            for f in ("fgm", "fga", "tpm", "tpa", "fta", "orb", "drb", "ast", "stl", "blk", "tov", "pf"):
                 total[f] += getattr(t, f)
             mins = sorted((l.minutes for l in box.lines), reverse=True)
             starters.append(sorted((l.minutes for l in box.lines if l.starter), reverse=True))
@@ -218,10 +225,23 @@ def _fullgame_batch(job: tuple) -> tuple[Counter, list]:
     return total, starters
 
 
-def collect_fullgames(games: int, seed: int, jobs: int = 1) -> dict:
-    jobs = max(1, min(jobs, 2, games))                 # this machine is shared: at most two processes
-    per = -(-games // jobs)
-    work = [(seed, k * per, min(per, games - k * per)) for k in range(jobs) if games - k * per > 0]
+def collect_fullgames(games: int, seed: int, jobs: int = 1, params=None, model=None,
+                      seeds: Optional[list[int]] = None, offset: int = 0) -> dict:
+    """``seeds``: spread the games over these leagues (default: league ``seed`` only).
+    ``params``/``model`` are only used in-process (jobs=1)."""
+    if seeds:
+        n = len(seeds)
+        work = [(sd, 0, games // n + (1 if k < games % n else 0), params, model, offset)
+                for k, sd in enumerate(seeds)]
+        work = [w for w in work if w[2] > 0]
+        jobs = 1
+    else:
+        jobs = max(1, min(jobs, 2, games))             # this machine is shared: at most two processes
+        if params is not None or model is not None:
+            jobs = 1
+        per = -(-games // jobs)
+        work = [(seed, k * per, min(per, games - k * per), params, model, offset)
+                for k in range(jobs) if games - k * per > 0]
     start = time.time()
     if jobs > 1:
         from multiprocessing import Pool
@@ -248,6 +268,9 @@ def collect_fullgames(games: int, seed: int, jobs: int = 1) -> dict:
         "tov_per_100": per100("tov"),
         "starter_minutes": sum(sum(m) for m in starters) / max(1, sum(len(m) for m in starters)),
         "top_minutes": sum(m[0] for m in starters if m) / max(1, len(starters)),
+        "three_share": s["tpa"] / max(1, s["fga"]),
+        "efg": (s["fgm"] + 0.5 * s["tpm"]) / max(1, s["fga"]),
+        "orb_pct": s["orb"] / max(1, s["orb"] + s["drb"]),
     }
     out["_games"] = s["games"]
     out["_seconds_per_game"] = (time.time() - start) / s["games"] * jobs

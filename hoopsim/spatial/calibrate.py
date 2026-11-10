@@ -33,7 +33,7 @@ import zlib
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
-from .measure import TARGETS, play, summarize
+from .measure import FULLGAME_TARGETS, TARGETS, collect_fullgames, play, summarize
 from .params import DEFAULT_PARAMS, SEARCH_SPACE, SpatialParams
 from .train import TRAIN_SEEDS, train
 from .values import DEFAULT_PATH, DecisionModel
@@ -59,6 +59,33 @@ def score(metrics: dict) -> float:
 
 def within(metrics: dict) -> int:
     return sum(abs(metrics[k] - t) <= tol for k, (t, tol) in TARGETS.items())
+
+
+# Full-game objective: the 2025-26 league averages (measure.FULLGAME_TARGETS).
+# Minutes barely depend on these settings; transition numbers are estimates.
+FULLGAME_WEIGHTS = {
+    "pace": 3.0, "points_per_100": 3.0, "efg": 3.0, "three_share": 2.5,
+    "fta_per_100": 1.5, "tov_per_100": 1.5, "pf_per_100": 1.0, "orb_pct": 1.5,
+    "transition_share": 0.75, "transition_ppp": 0.75,
+    "starter_minutes": 0.25, "top_minutes": 0.25, "points": 0.0,   # points = pace x efficiency
+}
+
+
+def score_full(metrics: dict) -> float:
+    total = wsum = 0.0
+    for k, (target, tol) in FULLGAME_TARGETS.items():
+        w = FULLGAME_WEIGHTS.get(k, 1.0)
+        total += w * ((metrics[k] - target) / tol) ** 2
+        wsum += w
+    return total / wsum
+
+
+def within_full(metrics: dict) -> int:
+    return sum(abs(metrics[k] - t) <= tol for k, (t, tol) in FULLGAME_TARGETS.items())
+
+
+def targets_for(objective: str) -> dict:
+    return FULLGAME_TARGETS if objective == "fullgame" else TARGETS
 
 
 # ------------------------------------------------------------------ parameter space
@@ -102,11 +129,18 @@ def evaluate(job: dict) -> dict:
     if job["rounds"] > 0:
         model = train(job["rounds"], job["train_possessions"], start=model, verbose=False,
                       params=params, seed=seed)
-    stats, _ = play(job["possessions"], TRAIN_SEEDS, model=model, params=params, rng_seed=seed + 7919)
-    metrics = summarize(stats)
-    metrics = {k: v for k, v in metrics.items() if not isinstance(v, str)}
+    if job.get("objective") == "fullgame":
+        metrics = collect_fullgames(job["games"], 0, params=params, model=model,
+                                    seeds=list(TRAIN_SEEDS), offset=seed)
+        metrics = {k: v for k, v in metrics.items() if not k.startswith("_")}
+        sc, ok = score_full(metrics), within_full(metrics)
+    else:
+        stats, _ = play(job["possessions"], TRAIN_SEEDS, model=model, params=params, rng_seed=seed + 7919)
+        metrics = summarize(stats)
+        metrics = {k: v for k, v in metrics.items() if not isinstance(v, str)}
+        sc, ok = score(metrics), within(metrics)
     return {**{k: job[k] for k in ("id", "phase", "params", "seed")}, **job.get("tags", {}),
-            "score": score(metrics), "within": within(metrics), "metrics": metrics,
+            "score": sc, "within": ok, "metrics": metrics,
             "seconds": round(time.time() - t0, 1)}
 
 
@@ -114,8 +148,10 @@ def evaluate(job: dict) -> dict:
 class Search:
     def __init__(self, log: Path, budget: dict, workers: int = 3, seed: int = 0,
                  warm: Path = DEFAULT_PATH, resume: bool = False,
-                 printer: Callable[[str], None] = print):
+                 printer: Callable[[str], None] = print, objective: str = "halfcourt"):
         self.log, self.budget, self.workers, self.seed = Path(log), budget, workers, seed
+        self.objective = objective
+        self.targets = targets_for(objective)
         self.warm = Path(warm)
         self.say = printer
         self.done: dict[str, dict] = {}
@@ -148,7 +184,7 @@ class Search:
         return {"id": job_id, "phase": phase, "params": params.to_dict(), "tags": tags or {},
                 "seed": zlib.crc32(f"{self.seed}:{job_id}".encode()) % 1_000_000,
                 "warm": str(self.warm), "rounds": b["rounds"], "train_possessions": b["train_possessions"],
-                "possessions": b["possessions"]}
+                "possessions": b["possessions"], "objective": self.objective, "games": b.get("games", 30)}
 
     def run(self, jobs: list[dict]) -> list[dict]:
         """Evaluate jobs (reusing logged results); results in job order."""
@@ -157,10 +193,14 @@ class Search:
         for rec in results:
             self.done[rec["id"]] = rec
             self.write(rec)
-            self.say(f"  {rec['id']:<10} score {rec['score']:7.2f}  {rec['within']:>2}/{len(TARGETS)} ok  "
-                     f"ppp {rec['metrics']['points_per_possession']:.3f} rim {rec['metrics']['share_rim']:.2f} "
-                     f"3s {rec['metrics']['share_three']:.2f} 3p% {rec['metrics']['fg_three']:.3f} "
-                     f"({rec['seconds']:.0f}s)")
+            m = rec["metrics"]
+            detail = (f"pace {m['pace']:.1f} per100 {m['points_per_100']:.1f} efg {m['efg']:.3f} "
+                      f"3s {m['three_share']:.3f} orb {m['orb_pct']:.3f} tov {m['tov_per_100']:.1f}"
+                      if self.objective == "fullgame" else
+                      f"ppp {m['points_per_possession']:.3f} rim {m['share_rim']:.2f} "
+                      f"3s {m['share_three']:.2f} 3p% {m['fg_three']:.3f}")
+            self.say(f"  {rec['id']:<10} score {rec['score']:7.2f}  {rec['within']:>2}/{len(self.targets)} ok  "
+                     f"{detail} ({rec['seconds']:.0f}s)")
         return [self.done[j["id"]] for j in jobs]
 
     # -------------------------------------------------------------- phases
@@ -169,10 +209,10 @@ class Search:
         recs = self.run([self.job(f"noise-{i}", "noise", DEFAULT_PARAMS) for i in range(n)])
         scores = [r["score"] for r in recs]
         out = {"mean": mean(scores), "sd": sd(scores), "metrics_sd": {}}
-        for k in TARGETS:
+        for k in self.targets:
             out["metrics_sd"][k] = sd([r["metrics"][k] for r in recs])
         self.say(f"noise: default params score {out['mean']:.2f} +/- {out['sd']:.2f} (sd over {n} seeds)")
-        for k, (_, tol) in TARGETS.items():
+        for k, (_, tol) in self.targets.items():
             self.say(f"  {k:<24} sd {out['metrics_sd'][k]:.4f}  ({out['metrics_sd'][k] / tol:.2f} tol)")
         return out
 
@@ -290,14 +330,17 @@ def main(argv: Optional[list[str]] = None) -> dict:
     ap.add_argument("--patience", type=int, default=15, help="stop after this many generations without a gain")
     ap.add_argument("--sigma", type=float, default=0.15, help="initial mutation step (unit-cube scale)")
     ap.add_argument("--min-sigma", type=float, default=0.02)
+    ap.add_argument("--objective", choices=["halfcourt", "fullgame"], default="halfcourt",
+                    help="score candidates on half-court possessions or on full games (2025-26 averages)")
+    ap.add_argument("--games", type=int, default=30, help="full games per candidate (--objective fullgame)")
     args = ap.parse_args(argv)
     workers = max(1, min(3, args.workers))
     budget = {"rounds": args.rounds, "train_possessions": args.train_possessions,
               "possessions": args.possessions, "noise": max(1, args.noise), "samples": args.samples,
               "generations": args.generations, "patience": args.patience, "sigma": args.sigma,
-              "min_sigma": args.min_sigma}
+              "min_sigma": args.min_sigma, "games": args.games}
     s = Search(Path(args.log), budget, workers=workers, seed=args.seed, warm=Path(args.warm),
-               resume=args.resume)
+               resume=args.resume, objective=args.objective)
     try:
         result = s.search()
     finally:

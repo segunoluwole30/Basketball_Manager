@@ -96,3 +96,24 @@ class CalibrateSmokeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FullGameObjectiveTests(unittest.TestCase):
+    def test_score_full_is_zero_on_target_and_grows_off_it(self):
+        from hoopsim.spatial.measure import FULLGAME_TARGETS
+        on = {k: t for k, (t, _) in FULLGAME_TARGETS.items()}
+        self.assertEqual(calibrate.score_full(on), 0.0)
+        self.assertEqual(calibrate.within_full(on), len(FULLGAME_TARGETS))
+        off = dict(on, pace=on["pace"] + 2 * FULLGAME_TARGETS["pace"][1])
+        self.assertGreater(calibrate.score_full(off), 0.0)
+        self.assertEqual(calibrate.within_full(off), len(FULLGAME_TARGETS) - 1)
+
+    def test_fullgame_evaluation_runs(self):
+        job = {"id": "t", "phase": "test", "params": DEFAULT_PARAMS.to_dict(), "seed": 1,
+               "warm": str(calibrate.DEFAULT_PATH), "rounds": 0, "train_possessions": 0,
+               "possessions": 0, "objective": "fullgame", "games": 3}
+        rec = calibrate.evaluate(job)
+        for k in ("pace", "points_per_100", "three_share", "efg", "orb_pct"):
+            self.assertIn(k, rec["metrics"])
+        self.assertGreater(rec["metrics"]["pace"], 80)
+        self.assertGreaterEqual(rec["score"], 0.0)
