@@ -179,19 +179,20 @@ games could later be stored like season games. It isn't wired into the season lo
   hold for the last shot of a quarter, go two-for-one, and look for a three when
   down three. These are passed to the half-court decisions as small value biases.
 
-Measured over 60 games (seed 0; per team-game, NBA figures approximate), with the
-calibrated half-court defence:
+Measured over 60 games (seed 0; per team-game), with the calibrated half-court
+defence, against 2025-26 Basketball-Reference league averages (transition and
+minutes are estimates; sources in `measure.py`):
 
 | | Sim | NBA |
 |---|---|---|
-| Transition share of possessions | 14.9% | ~15% |
-| Transition points per possession | 1.23 | ~1.25 |
-| FTA per 100 possessions | 27.1 | ~22 |
-| Personal fouls per 100 possessions | 19.3 | ~19 |
-| Starters' minutes (by rank) | 34.4, 32.6, 30.5, 28.2, 23.4 | ~30–36 |
-| Pace | 135 | ~99 |
-| Points per team | 152 (113 per 100) | ~114 (115 per 100) |
-| Turnovers per 100 possessions | 10.2 | ~13.5 |
+| Transition share of possessions | 14.9% | ~15% (est.) |
+| Transition points per possession | 1.23 | ~1.26 (est.) |
+| FTA per 100 possessions | 27.1 | 23.6 |
+| Personal fouls per 100 possessions | 19.3 | 20.0 |
+| Starters' minutes (by rank) | 34.4, 32.6, 30.5, 28.2, 23.4 | ~30–36 (est.) |
+| Pace | 135 | 99.4 |
+| Points per team | 152 (113 per 100) | 115.6 (115.8 per 100) |
+| Turnovers per 100 possessions | 10.2 | 14.6 |
 
 Points per 100 possessions, transition, fouls and minutes are about right. Pace is
 far too high: half-court possessions use about 5.3 s of game clock after the

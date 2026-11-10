@@ -21,12 +21,17 @@ approximate):
   ~3 passes per possession.
 
 Full games (``--games N``, see ``fullgame.py``) are measured per team-game against
-NBA league averages for 2023-24 / 2024-25. These are from memory of
-Basketball-Reference's league-average tables (the site couldn't be reached from
-this environment), so treat them as approximate:
-* pace ~98.5-99.5 possessions per 48 minutes; ~114 points per team (offensive
-  rating ~115 per 100 possessions); ~21.7 FTA, ~19 personal fouls, ~13.5
-  turnovers (team turnovers ~13% of possessions) per team-game.
+the 2025-26 regular-season league averages on Basketball-Reference
+(https://www.basketball-reference.com/leagues/NBA_2026.html, "Per Game Stats" and
+"Advanced Stats" League Average rows; 2024-25 in brackets as a check,
+https://www.basketball-reference.com/leagues/NBA_2025.html):
+* pace 99.4 [98.8] possessions per 48 minutes; 115.6 [113.8] points per team;
+  offensive rating 115.8 [114.5] per 100 possessions.
+* Per team-game: 23.5 [21.7] FTA, 19.9 [18.6] personal fouls, 14.5 [14.3]
+  turnovers (12.7% [12.6%] of possessions). Per 100 possessions that is 23.6 FTA,
+  20.0 fouls and 14.6 turnovers.
+* Also: eFG .546, 3PA rate .415, FTA/FGA .264, offensive rebound rate 26.0%
+  (all possessions, transition included).
 * Transition: Cleaning the Glass puts ~15% of plays in transition (after steals,
   defensive rebounds and some makes) at ~1.25-1.27 points per play, against
   ~0.98 per half-court play (~1.10 per half-court possession). Synergy's
@@ -167,14 +172,14 @@ def report(stats: dict) -> int:
 
 # Full games, per team-game unless noted: stat: (target, tolerance)
 FULLGAME_TARGETS = {
-    "pace": (99.0, 3.0),
-    "points": (114.0, 4.0),
-    "points_per_100": (115.0, 3.0),
+    "pace": (99.4, 3.0),
+    "points": (115.6, 4.0),
+    "points_per_100": (115.8, 3.0),
     "transition_share": (0.15, 0.02),
     "transition_ppp": (1.26, 0.06),
-    "fta_per_100": (22.0, 3.0),
-    "pf_per_100": (19.2, 2.0),
-    "tov_per_100": (13.5, 1.5),
+    "fta_per_100": (23.6, 3.0),
+    "pf_per_100": (20.0, 2.0),
+    "tov_per_100": (14.6, 1.5),
     "starter_minutes": (33.0, 3.0),
     "top_minutes": (36.0, 3.0),
 }
