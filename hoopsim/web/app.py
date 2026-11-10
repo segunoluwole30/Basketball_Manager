@@ -22,6 +22,7 @@ STATIC = Path(__file__).parent / "static"
 class NewGame(BaseModel):
     seed: Optional[int] = None
     num_teams: int = 12
+    match_engine: str = "statistical"
 
 
 class TeamChoice(BaseModel):
@@ -105,7 +106,7 @@ def create_app(session: Optional[GameSession] = None) -> FastAPI:
 
     @app.post("/api/new")
     def new_game(body: NewGame):
-        return run(game.new_game, body.seed, body.num_teams)
+        return run(game.new_game, body.seed, body.num_teams, body.match_engine)
 
     @app.get("/api/new/teams")
     def team_choices():

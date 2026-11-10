@@ -21,6 +21,7 @@ from ..contracts import cap_room, max_contract, payment_route, payroll_for, team
 from ..db import load_league, save_league
 from ..engine import play_day
 from ..generate import generate_league
+from ..models import MATCH_ENGINES
 from ..lineup import POSITIONS
 from ..manager import (
     TACTIC_KEYS, TENDENCY_KEYS, AIManager, choose_team, describe_tendencies, free_agent_ask,
@@ -109,12 +110,16 @@ class GameSession:
         return {"ok": True, "message": message}
 
     # -- new / load / save -------------------------------------------------------
-    def new_game(self, seed: Optional[int] = None, num_teams: int = 12) -> dict:
+    def new_game(self, seed: Optional[int] = None, num_teams: int = 12,
+                 match_engine: str = "statistical") -> dict:
         if not 4 <= num_teams <= 30 or num_teams % 2:
             raise UserError("number of teams must be an even number from 4 to 30")
         seed = random.randrange(1_000_000) if seed is None else int(seed)
         try:
+            if match_engine not in MATCH_ENGINES:
+                raise ValueError(f"match engine must be one of {', '.join(MATCH_ENGINES)}")
             self.league = generate_league(seed=seed, num_teams=num_teams)
+            self.league.rules.match_engine = match_engine
         except ValueError as e:
             raise UserError(str(e))
         self.rng = random.Random(seed)

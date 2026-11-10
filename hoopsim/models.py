@@ -589,6 +589,9 @@ class Game:
 # --------------------------------------------------------------------------
 # League
 # --------------------------------------------------------------------------
+MATCH_ENGINES = ("statistical", "spatial")
+
+
 @dataclass
 class LeagueRules:
     salary_cap: int = 140_000_000
@@ -608,6 +611,11 @@ class LeagueRules:
     playoff_series_length: int = 7
     draft_rounds: int = 2
     mid_level_exception: int = 12_500_000   # one signing per offseason for teams over the cap
+    match_engine: str = "statistical"        # "statistical" (fast) or "spatial" (players on a court)
+
+    def __post_init__(self) -> None:
+        if self.match_engine not in MATCH_ENGINES:
+            raise ValueError(f"match_engine must be one of {', '.join(MATCH_ENGINES)}")
 
     def to_dict(self) -> dict:
         return asdict(self)

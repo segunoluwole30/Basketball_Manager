@@ -930,7 +930,10 @@ class _GameSim:
 # --------------------------------------------------------------------------
 def simulate_game(league: League, game: Game, rng: Optional[random.Random] = None, *,
                   record_pbp: bool = False, tuning: Tuning = DEFAULT_TUNING) -> GameSim:
-    """Simulate ``game`` without changing the league."""
+    """Simulate ``game`` without changing the league (on the league's match engine)."""
+    if league.rules.match_engine == "spatial":
+        from .spatial.season_game import simulate_spatial   # lazy: the spatial engine imports this module
+        return simulate_spatial(league, game, rng or random.Random())
     return _GameSim(league, game, rng or random.Random(), tuning, record_pbp).run()
 
 

@@ -64,6 +64,38 @@ The AI never makes your team's decisions. Everything goes through a `Manager`
 The only exception is a roster below the league minimum, which gets
 minimum-salary fills. Tests use a manager that refuses everything to prove it.
 
+## Choosing the match engine
+
+Every league plays its games on one of two engines (`rules.match_engine`, saved
+with the league):
+
+- **statistical** (default): fast (a few milliseconds a game). It is calibrated to
+  17 NBA per-team-game stats.
+- **spatial**: the full spatial game, with ten players on a court, set plays,
+  transition, fatigue and substitutions. It takes about 0.7 s a game, so a
+  12-team, 82-game season (492 games) takes about 6 minutes and a 30-team season
+  about 15.
+
+```bash
+python -m hoopsim play --engine spatial       # new game (or switch a loaded one) on the spatial engine
+python -m hoopsim season --engine spatial --teams 8
+python -m hoopsim game --engine spatial
+```
+
+The browser's new-game form has the same choice. Regular season, playoffs, the web
+interface and `play` all go through `engine.play_game`, so standings, stats,
+awards, morale, development and the offseason work the same on either engine.
+
+Differences on the spatial engine, for now (`spatial/season_game.py`):
+- Injuries are rolled after the game from each player's minutes, injury proneness
+  and how tired he finished, at the statistical engine's rate. A player hurt in a
+  game doesn't leave it early.
+- Morale doesn't change game-day form.
+- `game --pbp` has no text play-by-play. Watch the game instead
+  (`python -m hoopsim watch --full`).
+- The full-game numbers (pace ~103, ~116 points, three share ~.36) are in the
+  "Full games" section below.
+
 ## Web interface
 
 ```bash
@@ -737,6 +769,21 @@ possessions at 1.17 points.
 Result (60 games): 31.5 threes a team (share .356), points per 100 110.8 → 111.9,
 115.7 points a team. The rest of the gap is engine-wide: the half-court yardstick's
 own three share is .36–.42, and transition flows go to the rim.
+
+### Calibrating on full games (no change adopted)
+
+`calibrate.py --objective fullgame --games 36` scores each candidate on full games
+in the training leagues against the 2025-26 averages (`FULLGAME_TARGETS`, which now
+include three share .415, eFG .546 and ORB% .260). Pace, points per 100, eFG and
+three share carry the most weight. The defaults scored 3.38 ± 0.72 over 4 seeds:
+pace 104–106, points per 100 112–116, eFG .545–.558, three share .29–.32, ORB%
+.24–.26.
+
+A refinement (sigma 0.10, 16 generations, 24 min) accepted a single step: a 0.06 ft
+change in drop depth, which is noise. All 45 real mutants scored worse than the
+defaults, and `entry_actions` sat at its upper bound again. The remaining
+full-game gaps (pace ~4 high, three share ~6 points low) don't respond to these
+settings. They need mechanisms.
 
 ## Simulation commands
 

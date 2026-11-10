@@ -259,3 +259,20 @@ class WebApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WebMatchEngineTests(unittest.TestCase):
+    setUp = WebApiTests.setUp
+    post = WebApiTests.post
+
+    def tearDown(self):
+        if hasattr(WebApiTests, "tearDown"):
+            WebApiTests.tearDown(self)
+
+    def test_new_game_can_use_the_spatial_engine(self):
+        self.post("/api/new", {"seed": 7, "num_teams": 4, "match_engine": "spatial"})
+        self.assertEqual(self.session.league.rules.match_engine, "spatial")
+
+    def test_unknown_engine_is_refused(self):
+        r = self.client.post("/api/new", json={"seed": 7, "num_teams": 4, "match_engine": "arcade"})
+        self.assertGreaterEqual(r.status_code, 400)

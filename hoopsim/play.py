@@ -686,5 +686,7 @@ def start(args, io: Optional[IO] = None) -> None:
             a = io.ask("Team abbreviation: ").strip()
             team = next((t for t in league.teams.values() if t.abbreviation.lower() == a.lower()), None)
         choose_team(league, team.id)
+    if getattr(args, "engine", None):
+        league.rules.match_engine = args.engine          # choose (or switch) the match engine
     rng = random.Random(args.seed if args.seed is not None else None)
     Game(league, io, rng, save_path=args.load or args.out or "hoopsim_save.db").run()

@@ -46,10 +46,11 @@ export function Start({ onDone, onCancel }: { onDone: () => void; onCancel?: () 
   const [teams, setTeams] = useState<any[] | null>(null);
   const [seed, setSeed] = useState("");
   const [count, setCount] = useState(12);
+  const [engine, setEngine] = useState("statistical");
   const [loading, setLoading] = useState(false);
   const create = async () => {
     setLoading(true);
-    const r = await act(() => api.post("/api/new", { seed: seed.trim() ? parseInt(seed, 10) : null, num_teams: count }));
+    const r = await act(() => api.post("/api/new", { seed: seed.trim() ? parseInt(seed, 10) : null, num_teams: count, match_engine: engine }));
     setLoading(false);
     if (r) setTeams(r.teams);
   };
@@ -70,6 +71,12 @@ export function Start({ onDone, onCancel }: { onDone: () => void; onCancel?: () 
               <label>Teams
                 <select value={count} onChange={(e) => setCount(+e.target.value)}>
                   {[8, 10, 12, 14, 16, 20, 24, 30].map((n) => <option key={n} value={n}>{n} teams</option>)}
+                </select>
+              </label>
+              <label>Match engine
+                <select value={engine} onChange={(e) => setEngine(e.target.value)}>
+                  <option value="statistical">Statistical (fast)</option>
+                  <option value="spatial">Spatial: players on a court (~0.7 s a game)</option>
                 </select>
               </label>
               <label>Seed <span className="muted small">(optional, for a repeatable league)</span>
