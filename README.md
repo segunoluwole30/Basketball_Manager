@@ -610,6 +610,18 @@ and the three share is now a little low. Those are interactions for the next
 calibration run: `rotation_lag`, `scramble_decay`, `entry_actions` and
 `entry_read` are now in `SEARCH_SPACE`.
 
+**Second calibration run (no change adopted).** A refinement from these
+defaults (4 noise runs, then the evolution strategy with sigma 0.10, 25
+generations, 39 min) improved the training-league score from 0.87 ± 0.14 to
+0.49 with small nudges: help leaves shooters more readily, slightly deeper
+stunts, slightly tighter closeouts and fewer dribble turnovers. `entry_actions`
+ended at its upper bound (3). After a full retrain the held-out score was 1.43
+against 1.46 for the current defaults, which is noise, so the defaults were kept.
+The remaining gaps (turnovers ~16%, wide-open threes ~50–58%, ~1.8 passes and
+~14 s per possession) don't respond to these settings. They are structural:
+entry passes are lost as often as any other pass, and the search wants more
+patience than three entry actions allow.
+
 ## Simulation commands
 
 ```bash
