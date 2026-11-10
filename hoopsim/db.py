@@ -16,7 +16,8 @@ from pathlib import Path
 
 from .models import Game, League, LeagueRules, Phase, Player, Series, Team
 
-SCHEMA_VERSION = 2   # v2 adds phase, playoffs and history (v1 files still load)
+SCHEMA_VERSION = 3   # v2 adds phase, playoffs and history; v3 an offseason in progress and the inbox
+READABLE_VERSIONS = (1, 2, 3)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -76,6 +77,9 @@ def save_league(league: League, path: str | Path) -> None:
                 "history": json.dumps(league.history),
                 "user_team_id": json.dumps(league.user_team_id),
                 "mle_used": json.dumps(league.mle_used),
+                "offseason": json.dumps(league.offseason),
+                "last_offseason": json.dumps(league.last_offseason),
+                "inbox": json.dumps(league.inbox),
             }
             conn.executemany("INSERT INTO meta VALUES (?, ?)", meta.items())
             conn.executemany(
@@ -103,7 +107,7 @@ def load_league(path: str | Path) -> League:
     try:
         meta = dict(conn.execute("SELECT key, value FROM meta"))
         version = int(meta.get("schema_version", 0))
-        if version not in (1, SCHEMA_VERSION):
+        if version not in READABLE_VERSIONS:
             raise ValueError(f"save file schema v{version}, expected v{SCHEMA_VERSION}")
         league = League(
             name=meta["name"],
@@ -115,6 +119,9 @@ def load_league(path: str | Path) -> League:
             history=json.loads(meta.get("history", "[]")),
             user_team_id=json.loads(meta.get("user_team_id", "null")),
             mle_used=json.loads(meta.get("mle_used", "[]")),
+            offseason=_report_keys(json.loads(meta.get("offseason", "null"))),
+            last_offseason=_report_keys(json.loads(meta.get("last_offseason", "null"))),
+            inbox=json.loads(meta.get("inbox", "[]")),
         )
         for (data,) in conn.execute("SELECT data FROM teams ORDER BY id"):
             league.add_team(Team.from_dict(json.loads(data)))
@@ -125,3 +132,13 @@ def load_league(path: str | Path) -> League:
         return league
     finally:
         conn.close()
+
+
+def _report_keys(state):
+    """JSON turns the report's {player id: CA change} keys into strings: undo that."""
+    if not state:
+        return state
+    report = state.get("report", state)
+    if isinstance(report.get("development"), dict):
+        report["development"] = {int(k): v for k, v in report["development"].items()}
+    return state
