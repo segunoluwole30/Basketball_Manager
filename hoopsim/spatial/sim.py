@@ -65,6 +65,10 @@ class SpatialTuning:
     # contest is judged where the defenders are at release, not at the decision.
     release_catch: float = 0.30
     release_dribble: float = 0.36
+    # Help defenders swipe at the ball when a driver comes through their reach.
+    dig_per_sec: float = 0.35
+    # Passes thrown away or fumbled (not picked off): more under ball pressure and on long passes.
+    errant_pass: float = 0.012
 
 
 DEFAULT_TUNING = SpatialTuning()
@@ -657,6 +661,8 @@ class HalfCourtGame:
                 self.mode, self.mode_since, self.post = "probe", now, None   # nothing there: reset
                 h.spot = h.pos
         if self.mode == "drive":
+            if self.dig(h):
+                return
             d_rim = C.dist_to_rim(h.pos)
             if d_rim < 4.5:
                 self.take_shot(h, moving=False)
@@ -827,6 +833,7 @@ class HalfCourtGame:
                 lane = C.point_segment_distance(de.pos, h.pos, target)
                 if lane < 2.5 and C.dist(de.pos, h.pos) > 1.5:
                     risk += 0.25 * (2.5 - lane) / 2.5
+        risk += self.errant_chance(h, d, lob)
         guard = self.guarded_by(mate)
         contest_after = max(0.0, C.dist(guard.pos, target) - guard.max_speed * max(0.0, flight - guard.reaction))
         d_target = C.dist_to_rim(target)
@@ -866,6 +873,31 @@ class HalfCourtGame:
                 self.say(f"{h.p.name} loses it out of bounds")
             self.end("tov")
             return True
+        return False
+
+    def dig(self, h: Agent) -> bool:
+        """Driving through traffic: any help defender within reach can poke the ball loose."""
+        on = self.guarded_by(h)
+        for d in self.defense:
+            if d is on or self.now < d.stuck_until:
+                continue
+            dd = C.dist(d.pos, h.pos)
+            if dd >= 3.0:
+                continue
+            rate = (self.t.dig_per_sec * math.exp(0.15 * (d.a("stealing") - 10) - 0.15 * (h.a("ball_handling") - 10))
+                    * (3.0 - dd) / 1.5)
+            if self.rng.random() < rate * self.t.dt:
+                self.credit(h, "tov")
+                self.stats["tov"] += 1
+                self.stats["digs"] += 1
+                if self.rng.random() < 0.7:
+                    self.credit(d, "stl")
+                    self.stats["steals"] += 1
+                    self.say(f"{d.p.name} digs down and pokes it away from {h.p.name}!")
+                else:
+                    self.say(f"{d.p.name} gets a hand on it: out of bounds off {h.p.name}")
+                self.end("tov")
+                return True
         return False
 
     def charge_check(self, h: Agent) -> bool:
@@ -924,6 +956,15 @@ class HalfCourtGame:
             self.say(f"{h.p.name} comes off the screen")
         self.start_drive(h)
 
+    def errant_chance(self, h: Agent, d: float, lob: bool) -> float:
+        """Chance a pass is thrown away or fumbled: a defender's hands in the passing
+        window, the length of the pass and the passer's skill."""
+        on = self.guarded_by(h)
+        gap = C.dist(on.pos, h.pos)
+        pressure = 0.0 if self.now < on.stuck_until else max(0.0, (3.5 - gap) / 2.0) * math.exp(0.1 * (on.a("stealing") - 10))
+        return (self.t.errant_pass * math.exp(-0.1 * (h.a("passing") - 10) - 0.05 * (h.a("vision") - 10))
+                * (1 + 1.5 * pressure) * (1 + max(0.0, d - 20) / 15) * (1.5 if lob else 1.0))
+
     def throw_pass(self, h: Agent, mate: Agent) -> None:
         d = C.dist(h.pos, mate.pos)
         target, flight, lob = self.pass_target(h, mate)
@@ -943,6 +984,13 @@ class HalfCourtGame:
                     self.holder = None
                     self.mode = "pass"
                     return
+        if self.rng.random() < self.errant_chance(h, d, lob):
+            away = C.toward(h.pos, target, d + 6.0 + self.rng.uniform(0, 6))
+            self.flight = Flight("pass", h.pos, (max(-25.0, min(25.0, away[0])), max(0.0, min(47.0, away[1]))),
+                                 self.now, flight, data={"errant": mate, "passer": h})
+            self.holder = None
+            self.mode = "pass"
+            return
         self.flight = Flight("pass", h.pos, target, self.now, flight, apex=6.0 if lob else 0.0,
                              z0=6.0 if lob else 4.0, z1=9.0 if lob else 4.0,
                              data={"to": mate, "passer": h, "lob": lob, "source": source})
@@ -1081,6 +1129,13 @@ class HalfCourtGame:
                 self.stats["tov"] += 1
                 self.stats["steals"] += 1
                 self.say(f"Picked off! {thief.p.name} jumps the passing lane")
+                self.end("tov")
+                return
+            if "errant" in f.data:
+                self.credit(f.data["passer"], "tov")
+                self.stats["tov"] += 1
+                self.stats["errant_passes"] += 1
+                self.say(f"{f.data['passer'].p.name}'s pass gets away from {f.data['errant'].p.name}: turnover")
                 self.end("tov")
                 return
             mate = f.data["to"]
