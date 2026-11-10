@@ -64,6 +64,42 @@ The AI never makes your team's decisions. Everything goes through a `Manager`
 The only exception is a roster below the league minimum, which gets
 minimum-salary fills. Tests use a manager that refuses everything to prove it.
 
+## Web interface
+
+```bash
+pip install -r requirements-web.txt     # fastapi, uvicorn (+ httpx for the API tests)
+python -m hoopsim web                   # starts a local server and opens your browser
+python -m hoopsim web --load my.db --port 8000 --no-open
+```
+
+The same game as `play`, as a management UI in the browser: one league per server,
+saved to SQLite files in the folder you start it from (`Save`/`Load` in the sidebar,
+including half-way through an offseason). The simulator itself still needs no
+dependencies; only the web server does, and the built front end ships inside the
+package (`hoopsim/web/static/`), so Node isn't needed to play.
+
+| Screen | What's on it |
+|---|---|
+| **Home** | record, conference standings, next games and recent results, team leaders, injuries, and an inbox: results, injuries, trades, offers from AI teams (accept or decline), season news. The top bar sims a day, a week, to the trade deadline or to the end of the regular season, then runs the playoffs (a day, a round or all). |
+| **Squad** | sortable roster tables (overview, ratings, stats, contracts) for any team, finances. Click any name for the player card: attributes, scouted potential with its range, scouting notes, ability by position, player instructions, season and career stats. |
+| **Tactics** | starting five by position (with each player's ability at that slot), minutes that must total 240 (with a "balance" helper), the assistant-coach toggle, team tactics and player instructions. |
+| **Transfers** | free agents with their asks and a contract form that shows how you'd pay (cap space, mid-level exception, minimum); a trade builder with live salary-matching and roster feedback and the other team's verdict. |
+| **League** | standings, leaders, schedule and results with box scores (current season), a daily scoreboard, the playoff bracket and past seasons. |
+| **Offseason** | one screen per step: team options, re-signing (asks and the chance he stays), the draft board pick by pick, every free-agency round, trade offers and roster cuts. Any decision, a whole step or the rest of the summer can be handed to your assistant. |
+
+The offseason runs as resumable steps (`start_offseason`, `offseason_pending`,
+`answer_offseason` in `season.py`); `run_offseason` drives the same steps with a
+`Manager`, so the terminal game and the AI behave exactly as before. The API is
+under `/api` (interactive docs at `/api/docs`).
+
+Front-end development (React + TypeScript + Vite, source in `web/`):
+
+```bash
+cd web && npm install
+npm run dev        # http://localhost:5173, proxies /api to `python -m hoopsim web --no-open` on :8000
+npm run build      # type-checks and writes the bundle to hoopsim/web/static/ (commit it)
+```
+
 ## Watch: spatial prototype (`hoopsim/spatial/`)
 
 ```bash
