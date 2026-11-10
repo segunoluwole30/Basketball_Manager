@@ -6,6 +6,7 @@
     python -m hoopsim career [--seasons 10] [--seed N] [--load league.db] [--out league.db]
     python -m hoopsim play   [--team ABBR] [--load save.db]   # manage a team yourself
     python -m hoopsim watch  [--home ABBR --away ABBR] [--possessions 40]   # spatial prototype in a browser
+    python -m hoopsim watch --full [--quarter 4]   # a full spatial game (or one quarter of it)
     python -m hoopsim web    [--load save.db] [--port 8000]   # play as GM in your browser
 """
 from __future__ import annotations
@@ -244,10 +245,26 @@ def cmd_watch(args) -> None:
         away = by_abbr[args.away.lower()]
     if home == away:
         raise SystemExit("pick two different teams")
+    h, a = league.teams[home], league.teams[away]
+    if getattr(args, "full", False) or getattr(args, "quarter", None):
+        from .spatial.fullgame import FullGame
+        full = FullGame(league, home, away, random.Random(args.seed), record=True)
+        sim = full.run()
+        quarter = getattr(args, "quarter", None)
+        if quarter is not None and not 1 <= quarter <= full.period:
+            raise SystemExit(f"the game had {full.period} periods")
+        path = write_html(full.to_dict(period=quarter), args.out)
+        r = sim.result
+        ot = f" ({r.overtimes} OT)" if r.overtimes else ""
+        part = f"Q{quarter}" if quarter and quarter <= 4 else f"OT{quarter - 4}" if quarter else "full game"
+        print(f"{a.abbreviation} {r.away_score} @ {h.abbreviation} {r.home_score}{ot}; "
+              f"{part} -> {path.resolve()} ({path.stat().st_size / 1e6:.1f} MB)")
+        if not args.no_open:
+            webbrowser.open(Path(path).resolve().as_uri())
+        return
     game = HalfCourtGame(league, home, away, random.Random(args.seed))
     game.play(args.possessions)
     path = write_html(game.to_dict(), args.out)
-    h, a = league.teams[home], league.teams[away]
     print(f"{a.abbreviation} {game.score['away']} @ {h.abbreviation} {game.score['home']} "
           f"after {args.possessions} half-court possessions -> {path.resolve()}")
     if not args.no_open:
@@ -295,6 +312,9 @@ def main() -> None:
     watch.add_argument("--load", help="use a saved league (your team at home vs its next opponent)")
     watch.add_argument("--out", default="hoopsim_watch.html")
     watch.add_argument("--no-open", action="store_true", help="don't open the browser")
+    watch.add_argument("--full", action="store_true",
+                       help="a full game: four quarters, transition, substitutions, fatigue, fouls")
+    watch.add_argument("--quarter", type=int, help="with --full: export just this period (5 = first overtime)")
 
     web = sub.add_parser("web", help="play as general manager in your browser")
     web.add_argument("--load", help="open a saved game")

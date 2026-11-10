@@ -9,6 +9,7 @@ import math
 
 WIDTH = 50.0
 HALF_LENGTH = 47.0
+FULL_LENGTH = 94.0                # transition: the far baseline, in the attacking frame
 RIM = (0.0, 5.25)                 # centre of the rim
 BACKBOARD_Y = 4.0
 THREE_RADIUS = 23.75
@@ -47,10 +48,11 @@ def zone(p: tuple[float, float]) -> str:
     return MID_ZONE
 
 
-def clamp(p: tuple[float, float]) -> tuple[float, float]:
-    """Keep a point inside the half court (and out of the area behind the backboard)."""
+def clamp(p: tuple[float, float], full: bool = False) -> tuple[float, float]:
+    """Keep a point inside the half court (and out of the area behind the backboard).
+    ``full`` allows the backcourt too (players still running up in transition)."""
     x = max(-WIDTH / 2 + 0.5, min(WIDTH / 2 - 0.5, p[0]))
-    y = max(0.5, min(HALF_LENGTH - 0.5, p[1]))
+    y = max(0.5, min((FULL_LENGTH if full else HALF_LENGTH) - 0.5, p[1]))
     return x, y
 
 

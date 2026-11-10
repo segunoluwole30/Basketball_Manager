@@ -71,6 +71,22 @@ body {
 .clock .sc { font-size: 40px; font-weight: 700; line-height: 1; color: var(--accent);
   font-variant-numeric: tabular-nums; min-width: 2.4ch; display: inline-block; }
 .clock .label { font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.clock .game { font-size: 20px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em; white-space: nowrap; }
+.clock .game:empty { display: none; }
+.badge { display: inline-block; font: 600 11px/1 var(--font-body); letter-spacing: 0.06em; text-transform: uppercase;
+  color: #fff; background: var(--accent); border-radius: 4px; padding: 3px 5px; margin-left: 6px; vertical-align: 1px; }
+.periods { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.periods:empty { display: none; }
+.periods button { padding: 7px 10px; }
+.periods button[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+.tablewrap { overflow-x: auto; padding: 0 8px 12px; }
+table.box { border-collapse: collapse; width: 100%; font-size: 12px; font-variant-numeric: tabular-nums; }
+table.box th, table.box td { padding: 4px 6px; text-align: right; white-space: nowrap; }
+table.box th:first-child, table.box td:first-child { text-align: left; position: sticky; left: 0; background: var(--panel); }
+table.box thead th { color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--rule); }
+table.box tr.team td { font-weight: 700; padding-top: 10px; text-align: left; }
+table.box tr.dnp td { color: var(--muted); }
 
 /* Court */
 .stage { display: grid; gap: 10px; min-width: 0; }
@@ -105,7 +121,7 @@ button.primary { background: var(--ink); color: var(--panel); border-color: var(
 
 /* Side panel */
 aside { display: grid; gap: 16px; min-width: 0; }
-.card { background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius); }
+.card { background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius); min-width: 0; }
 .card h2 { margin: 0; padding: 12px 14px 8px; font: 600 13px/1 var(--font-body);
   letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .log { list-style: none; margin: 0; padding: 0 6px 8px; max-height: 420px; overflow-y: auto; }
@@ -134,7 +150,7 @@ aside { display: grid; gap: 16px; min-width: 0; }
       <div class="team away" id="awayBox"><span class="chip"></span>
         <div class="name"><div class="abbr" id="awayAbbr">AWY</div><div class="full" id="awayName"></div></div>
         <div class="pts" id="awayPts">0</div></div>
-      <div class="clock"><div class="label">Shot clock</div><span class="sc" id="shotClock">24</span></div>
+      <div class="clock"><div class="game" id="gameClock"></div><div class="label">Shot clock</div><span class="sc" id="shotClock">24</span></div>
       <div class="team home" id="homeBox"><div class="pts" id="homePts">0</div>
         <div class="name"><div class="abbr" id="homeAbbr">HME</div><div class="full" id="homeName"></div></div>
         <span class="chip"></span></div>
@@ -154,11 +170,13 @@ aside { display: grid; gap: 16px; min-width: 0; }
       <div class="scrub"><input type="range" id="scrub" min="0" max="0" value="0" aria-label="Possession">
         <output id="possLabel" for="scrub">1 / 1</output></div>
       <label class="toggle"><input type="checkbox" id="names"> Names</label>
+      <div class="periods" id="periods" role="group" aria-label="Jump to period"></div>
     </div>
   </div>
   <aside>
     <section class="card"><h2>Play-by-play</h2><ol class="log" id="log"></ol></section>
     <section class="card"><h2>On the floor</h2><div class="lineups" id="lineups"></div></section>
+    <section class="card" id="boxCard" hidden><h2>Box score</h2><div class="tablewrap" id="boxScore"></div></section>
     <section class="card note" id="about"><strong>Spatial prototype.</strong> Half-court possessions only:
       every position comes from the simulation, ten updates a second. Shots, passes, help defence
       and rebounds are decided by where players are.</section>
@@ -180,9 +198,11 @@ window.GAME = /*GAME_DATA*/null;
   const dt = G.dt || 0.1;
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  // ---- court geometry (feet), basket at the top of the canvas
-  const W = 50, L = 47, PAD = 2;
-  let scale = 1, ox = 0, oy = 0;
+  // ---- court geometry (feet), basket at the top of the canvas. Full games run the
+  // open court too (y up to 94, the far baseline): the camera pulls back to show it.
+  const W = 50, L = 47, FULL = 94, PAD = 2;
+  const FULLGAME = !!G.fullgame;
+  let scale = 1, ox = 0, oy = 0, viewL = L;
   function fit() {
     const cssW = canvas.clientWidth || 600;
     const ratio = Math.min(window.devicePixelRatio || 1, 2);
@@ -190,9 +210,29 @@ window.GAME = /*GAME_DATA*/null;
     canvas.width = Math.round(cssW * ratio);
     canvas.height = Math.round(cssH * ratio);
     canvas.style.height = cssH + "px";
-    scale = canvas.width / (W + PAD * 2);
-    ox = (PAD + W / 2) * scale;
+    camera(viewL);
+  }
+  function camera(len) {
+    viewL = len;
+    scale = Math.min(canvas.width / (W + PAD * 2), canvas.height / (len + PAD * 2));
+    ox = canvas.width / 2;
     oy = PAD * scale;
+  }
+  // How much floor each frame needs (deepest player or ball), smoothed over about two seconds.
+  function viewTrack(p) {
+    if (p._view) return p._view;
+    const deep = p.frames.map((f) => {
+      let m = f[3];
+      for (let n = 0; n < 10; n++) m = Math.max(m, f[7 + n * 2]);
+      return Math.min(FULL + 3, Math.max(L, m / 10 + 5));
+    });
+    const out = deep.map((_, i) => {
+      let s = 0, c = 0;
+      for (let j = Math.max(0, i - 8); j <= Math.min(deep.length - 1, i + 12); j++) { s += deep[j]; c++; }
+      return s / c;
+    });
+    p._view = out;
+    return out;
   }
   const X = (x) => ox + x * scale;
   const Y = (y) => oy + y * scale;
@@ -206,48 +246,72 @@ window.GAME = /*GAME_DATA*/null;
 
   function drawCourt() {
     const c = ctx;
+    c.setTransform(1, 0, 0, 1, 0, 0);
     c.fillStyle = colors.court;
     c.fillRect(0, 0, canvas.width, canvas.height);
-    // floorboards: 2.25-inch maple strips run baseline to half court
+    c.setTransform(scale, 0, 0, scale, ox, oy);           // draw in feet from here
+    // floorboards: 2.25-inch maple strips run baseline to baseline
     c.strokeStyle = colors["court-grain"];
-    c.lineWidth = Math.max(1, scale * 0.04);
+    c.lineWidth = 0.04;
     c.globalAlpha = 0.35;
-    for (let x = -W / 2; x <= W / 2; x += 2.25 / 12 * 8) {
-      c.beginPath(); c.moveTo(X(x), Y(0)); c.lineTo(X(x), Y(L)); c.stroke();
+    for (let x = -W / 2 - PAD * 4; x <= W / 2 + PAD * 4; x += 2.25 / 12 * 8) {
+      c.beginPath(); c.moveTo(x, -PAD); c.lineTo(x, FULL + PAD); c.stroke();
     }
     c.globalAlpha = 1;
-    // paint
-    c.fillStyle = colors.paint;
-    c.fillRect(X(-8), Y(0), 16 * scale, 19 * scale);
+    const lw = Math.max(2 / scale, 0.17);
+    const end = () => {
+      c.fillStyle = colors.paint;
+      c.fillRect(-8, 0, 16, 19);
+      c.strokeStyle = colors["court-line"];
+      c.lineWidth = lw;
+      const line = (x1, y1, x2, y2) => { c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.stroke(); };
+      c.strokeRect(-8, 0, 16, 19);                                       // lane
+      c.beginPath(); c.arc(0, 19, 6, 0, Math.PI); c.stroke();            // free-throw circle (top half)
+      c.setLineDash([1.1, 1.1]);
+      c.beginPath(); c.arc(0, 19, 6, Math.PI, 2 * Math.PI); c.stroke();
+      c.setLineDash([]);
+      // three-point line: 22 ft corners up to where they meet the 23.75 ft arc
+      const cy = 5.25 + Math.sqrt(23.75 ** 2 - 22 ** 2);
+      line(-22, 0, -22, cy); line(22, 0, 22, cy);
+      const a = Math.atan2(cy - 5.25, 22);
+      c.beginPath(); c.arc(0, 5.25, 23.75, a, Math.PI - a); c.stroke();
+      c.beginPath(); c.arc(0, 5.25, 4, 0, Math.PI); c.stroke();          // restricted area
+      c.lineWidth = Math.max(3 / scale, 0.3);
+      line(-3, 4, 3, 4);                                                 // backboard
+      c.strokeStyle = colors.accent;
+      c.lineWidth = Math.max(2 / scale, 0.16);
+      c.beginPath(); c.arc(0, 5.25, 0.75, 0, 2 * Math.PI); c.stroke();   // rim
+    };
+    end();
+    c.save(); c.translate(0, FULL); c.scale(1, -1); end(); c.restore();  // the far end
     c.strokeStyle = colors["court-line"];
-    c.lineWidth = Math.max(2, scale * 0.17);
-    const line = (x1, y1, x2, y2) => { c.beginPath(); c.moveTo(X(x1), Y(y1)); c.lineTo(X(x2), Y(y2)); c.stroke(); };
-    c.strokeRect(X(-W / 2), Y(0), W * scale, L * scale);         // boundary
-    c.strokeRect(X(-8), Y(0), 16 * scale, 19 * scale);           // lane
-    c.beginPath(); c.arc(X(0), Y(19), 6 * scale, 0, Math.PI); c.stroke();   // free-throw circle (top half)
-    c.setLineDash([scale * 1.1, scale * 1.1]);
-    c.beginPath(); c.arc(X(0), Y(19), 6 * scale, Math.PI, 2 * Math.PI); c.stroke();
-    c.setLineDash([]);
-    // three-point line: 22 ft corners up to where they meet the 23.75 ft arc
-    const cy = 5.25 + Math.sqrt(23.75 ** 2 - 22 ** 2);
-    line(-22, 0, -22, cy); line(22, 0, 22, cy);
-    const a = Math.atan2(cy - 5.25, 22);
-    c.beginPath(); c.arc(X(0), Y(5.25), 23.75 * scale, a, Math.PI - a); c.stroke();
-    // restricted area, half-court circle
-    c.beginPath(); c.arc(X(0), Y(5.25), 4 * scale, 0, Math.PI); c.stroke();
-    c.beginPath(); c.arc(X(0), Y(L), 6 * scale, Math.PI, 2 * Math.PI); c.stroke();
-    // backboard and rim
-    c.lineWidth = Math.max(3, scale * 0.3);
-    line(-3, 4, 3, 4);
-    c.strokeStyle = colors.accent;
-    c.lineWidth = Math.max(2, scale * 0.16);
-    c.beginPath(); c.arc(X(0), Y(5.25), 0.75 * scale, 0, 2 * Math.PI); c.stroke();
+    c.lineWidth = lw;
+    c.strokeRect(-W / 2, 0, W, FULL);                                    // boundary
+    c.beginPath(); c.moveTo(-W / 2, L); c.lineTo(W / 2, L); c.stroke();  // half-court line
+    c.beginPath(); c.arc(0, L, 6, 0, 2 * Math.PI); c.stroke();           // centre circle
+    c.setTransform(1, 0, 0, 1, 0, 0);
   }
 
   // ---- state
   let poss = 0, t = 0, playing = !reduceMotion, speed = 1, lastTs = null, holdUntil = 0;
-  // Frames list home players first (indices 0-4), then away (5-9).
-  const order = [...G.home.players.map((p) => ({ ...p, side: "home" })), ...G.away.players.map((p) => ({ ...p, side: "away" }))];
+  // Frames list the five home players on the floor first (indices 0-4), then the away five.
+  // Full games say who they are per possession (indices into the rosters), as subs come in.
+  const roster = { home: G.home.players.map((p) => ({ ...p, side: "home" })),
+                   away: G.away.players.map((p) => ({ ...p, side: "away" })) };
+  const DEFAULT_LINEUP = [0, 1, 2, 3, 4, 0, 1, 2, 3, 4];
+  function lineupAt(p, i) {
+    let lu = DEFAULT_LINEUP;
+    for (const [at, l] of (p.lineups || [])) if (at <= i) lu = l;
+    return lu;
+  }
+  function onFloor(p, i) {
+    return lineupAt(p, i).map((r, n) => roster[n < 5 ? "home" : "away"][r]);
+  }
+  const periodName = (n) => (n <= 4 ? "Q" + n : "OT" + (n - 4));
+  function clockText(sec) {
+    if (sec >= 60) { const m = Math.floor(sec / 60), s = Math.floor(sec % 60); return m + ":" + String(s).padStart(2, "0"); }
+    return sec.toFixed(1);
+  }
 
   function frameAt(p, time) {
     const frames = p.frames;
@@ -262,7 +326,10 @@ window.GAME = /*GAME_DATA*/null;
   function drawFrame() {
     const p = P[poss];
     const { a, b, k, i } = frameAt(p, t);
+    const track = viewTrack(p);
+    camera(lerp(track[i], track[Math.min(track.length - 1, i + 1)], k));
     drawCourt();
+    const order = onFloor(p, i);
     const showNames = $("names").checked;
     const r = Math.max(1.15 * scale, 9.5 * Math.min(window.devicePixelRatio || 1, 2));   // stay tappable-size on phones
     // players
@@ -302,6 +369,8 @@ window.GAME = /*GAME_DATA*/null;
     ctx.lineWidth = Math.max(1, scale * 0.08); ctx.strokeStyle = "rgba(0,0,0,0.55)"; ctx.stroke();
     // scoreboard
     setText("shotClock", Math.ceil(lerp(a[1], b[1], k)));
+    if (FULLGAME && a.length > 26) setText("gameClock", periodName(p.period) + " " + clockText(lerp(a[26], b[26], k)));
+    updateLineups(p, i);
     let score = p.start_score, call = null;
     for (const e of p.events) { if (e[0] <= i) { score = [e[2], e[3]]; call = e; } }
     setText("homePts", score[0]);
@@ -326,8 +395,10 @@ window.GAME = /*GAME_DATA*/null;
       const head = document.createElement("li");
       head.className = "poss";
       head.innerHTML = `<span class="when">#${q + 1}</span><span></span>`;
-      head.lastChild.textContent = `${G[p.offense].abbr} ball · ${G.away.abbr} ${p.end_score[1]}, ${G.home.abbr} ${p.end_score[0]}`;
-      if (q === poss) head.lastChild.textContent = `${G[p.offense].abbr} ball`;
+      const when = FULLGAME && p.frames[0].length > 26 ? `${periodName(p.period)} ${clockText(p.frames[0][26])} · ` : "";
+      head.lastChild.textContent = `${when}${G[p.offense].abbr} ball · ${G.away.abbr} ${p.end_score[1]}, ${G.home.abbr} ${p.end_score[0]}`;
+      if (q === poss) head.lastChild.textContent = `${when}${G[p.offense].abbr} ball`;
+      if (p.transition) { const bd = document.createElement("span"); bd.className = "badge"; bd.textContent = "transition"; head.lastChild.appendChild(bd); }
       log.appendChild(head);
       const evs = q < poss ? p.events : p.events.filter((e) => e[0] <= i);
       evs.forEach((e, idx) => {
@@ -351,6 +422,8 @@ window.GAME = /*GAME_DATA*/null;
     poss = Math.max(0, Math.min(P.length - 1, n)); t = 0; holdUntil = 0; logKey = "";
     $("scrub").value = poss;
     $("possLabel").textContent = `${poss + 1} / ${P.length}`;
+    document.querySelectorAll("#periods button").forEach((el) =>
+      el.setAttribute("aria-pressed", String(+el.dataset.period === P[poss].period)));
     drawFrame();
   }
   function tick(ts) {
@@ -380,21 +453,75 @@ window.GAME = /*GAME_DATA*/null;
   $("homeAbbr").textContent = G.home.abbr; $("homeName").textContent = G.home.name;
   $("awayAbbr").textContent = G.away.abbr; $("awayName").textContent = G.away.name;
   const lineups = $("lineups");
-  for (const side of ["away", "home"]) {
-    const col = document.createElement("div");
-    const h = document.createElement("h3"); h.className = side + "-h"; h.textContent = G[side].abbr;
-    const ol = document.createElement("ol");
-    for (const pl of G[side].players) {
-      const li = document.createElement("li");
-      li.innerHTML = '<span class="num"></span><span class="pos"></span><span></span>';
-      li.children[0].textContent = "#" + (pl.num ?? "");
-      li.children[1].textContent = pl.pos;
-      li.children[2].textContent = pl.name;
-      li.title = `${pl.name}, ability ${pl.ca}`;
-      ol.appendChild(li);
+  let lineupKey = "";
+  function updateLineups(p, i) {
+    const key = lineupAt(p, i).join(",");
+    if (key === lineupKey) return;
+    lineupKey = key;
+    lineups.textContent = "";
+    const order = onFloor(p, i);
+    for (const side of ["away", "home"]) {
+      const col = document.createElement("div");
+      const h = document.createElement("h3"); h.className = side + "-h"; h.textContent = G[side].abbr;
+      const ol = document.createElement("ol");
+      for (const pl of order.filter((o) => o.side === side)) {
+        const li = document.createElement("li");
+        li.innerHTML = '<span class="num"></span><span class="pos"></span><span></span>';
+        li.children[0].textContent = "#" + (pl.num ?? "");
+        li.children[1].textContent = pl.pos;
+        li.children[2].textContent = pl.name;
+        li.title = `${pl.name}, ability ${pl.ca}`;
+        ol.appendChild(li);
+      }
+      col.append(h, ol);
+      lineups.appendChild(col);
     }
-    col.append(h, ol);
-    lineups.appendChild(col);
+  }
+  if (FULLGAME) {
+    for (const n of [...new Set(P.map((p) => p.period))]) {
+      const btn = document.createElement("button");
+      btn.type = "button"; btn.dataset.period = n; btn.textContent = periodName(n);
+      btn.addEventListener("click", () => goTo(P.findIndex((p) => p.period === n)));
+      $("periods").appendChild(btn);
+    }
+    $("about").innerHTML = "<strong>Full game.</strong> Four quarters with transition, substitutions, " +
+      "fatigue and fouls. Every position comes from the simulation, ten updates a second; the camera pulls " +
+      "back while the teams run the floor.";
+  }
+  if (G.box) {
+    $("boxCard").hidden = false;
+    const cols = [["MIN", (r) => Math.round(r.min)], ["PTS", (r) => r.pts], ["REB", (r) => r.orb + r.drb],
+      ["AST", (r) => r.ast], ["STL", (r) => r.stl], ["BLK", (r) => r.blk], ["TO", (r) => r.tov],
+      ["PF", (r) => r.pf], ["FG", (r) => r.fgm + "-" + r.fga], ["3P", (r) => r.tpm + "-" + r.tpa],
+      ["FT", (r) => r.ftm + "-" + r.fta], ["+/-", (r) => (r.pm > 0 ? "+" : "") + r.pm]];
+    const table = document.createElement("table"); table.className = "box";
+    const head = document.createElement("thead");
+    head.innerHTML = "<tr><th>Player</th>" + cols.map(([c]) => `<th>${c}</th>`).join("") + "</tr>";
+    table.appendChild(head);
+    const body = document.createElement("tbody");
+    for (const side of ["away", "home"]) {
+      if (!G.box[side] || G.box[side].length === 0 || G.box[side][0].min === undefined) continue;
+      const tr = document.createElement("tr"); tr.className = "team";
+      const td = document.createElement("td");
+      const final = G.final ? (side === "home" ? G.final[0] : G.final[1]) : "";
+      td.textContent = `${G[side].abbr} ${final}`; td.colSpan = cols.length + 1;
+      tr.appendChild(td); body.appendChild(tr);
+      for (const r of G.box[side]) {
+        const row = document.createElement("tr");
+        const name = document.createElement("td"); name.textContent = (r.starter ? "* " : "") + r.name;
+        row.appendChild(name);
+        if (!r.min) {
+          row.className = "dnp";
+          const c = document.createElement("td"); c.textContent = "DNP"; c.colSpan = cols.length; c.style.textAlign = "left";
+          row.appendChild(c);
+        } else {
+          for (const [, f] of cols) { const c = document.createElement("td"); c.textContent = f(r); row.appendChild(c); }
+        }
+        body.appendChild(row);
+      }
+    }
+    table.appendChild(body);
+    if (body.children.length) $("boxScore").appendChild(table); else $("boxCard").hidden = true;
   }
   $("scrub").max = P.length - 1;
   $("scrub").addEventListener("input", (e) => goTo(+e.target.value));

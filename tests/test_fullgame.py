@@ -1,0 +1,169 @@
+"""Full spatial games: clock, overtime, fouls, substitutions, fatigue, transition, box scores."""
+import argparse
+import random
+import tempfile
+import unittest
+from pathlib import Path
+
+from hoopsim import generate_league
+from hoopsim.spatial.export import build_html
+from hoopsim.spatial.fullgame import FullGame
+
+
+def short_league(seed: int, quarter_minutes: int = 3, **rules):
+    league = generate_league(seed=seed)
+    league.rules.quarter_minutes = quarter_minutes
+    league.rules.overtime_minutes = 2
+    for k, v in rules.items():
+        setattr(league.rules, k, v)
+    return league
+
+
+class FullGameTests(unittest.TestCase):
+    """One recorded regulation-length game."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.league = generate_league(seed=5)
+        cls.game = FullGame(cls.league, 1, 2, random.Random(11), record=True)
+        cls.sim = cls.game.run()
+
+    def test_clock_and_quarters(self):
+        g, r = self.game, self.sim.result
+        self.assertGreaterEqual(g.period, 4)
+        self.assertEqual(g.period, 4 + r.overtimes)
+        game_seconds = 4 * 12 * 60 + 5 * 60 * r.overtimes
+        for box in (self.sim.box_score.home, self.sim.box_score.away):
+            self.assertEqual(len(box.period_points), g.period)
+            self.assertAlmostEqual(sum(l.seconds for l in box.lines), 5 * game_seconds, places=3)
+            self.assertGreater(box.possessions, 80)
+        self.assertNotEqual(r.home_score, r.away_score)
+
+    def test_box_score_totals_match_the_score(self):
+        r = self.sim.result
+        for box, score in ((self.sim.box_score.home, r.home_score), (self.sim.box_score.away, r.away_score)):
+            t = box.totals()
+            self.assertEqual(t.pts, score)
+            self.assertEqual(sum(box.period_points), score)
+            self.assertLessEqual(t.fgm, t.fga)
+            self.assertLessEqual(t.tpm, t.tpa)
+            self.assertLessEqual(t.ftm, t.fta)
+            self.assertGreater(t.drb, 0)
+            self.assertGreater(t.pf, 0)
+        # Plus-minus balances across the two teams.
+        pm = sum(l.plus_minus for b in (self.sim.box_score.home, self.sim.box_score.away) for l in b.lines)
+        self.assertEqual(pm, 0)
+
+    def test_substitutions_follow_the_rotation(self):
+        g = self.game
+        self.assertGreater(g.stats["substitutions"], 10)
+        for side in g.sides.values():
+            starters = [s for s in side.roster if s.starter]
+            rotation = [s for s in side.roster if not s.starter and s.target_seconds > 0]
+            unplanned = [s for s in side.roster if s.target_seconds == 0]
+            self.assertEqual(len(starters), 5)
+            avg = lambda seats: sum(s.seconds for s in seats) / max(1, len(seats))
+            self.assertGreater(avg(starters), 24 * 60)
+            self.assertGreater(avg(starters), avg(rotation))
+            self.assertTrue(all(s.seconds > 0 for s in rotation))
+            self.assertLess(sum(s.seconds for s in unplanned), 0.15 * sum(s.seconds for s in side.roster))
+            self.assertTrue(all(s.seconds <= 46 * 60 for s in side.roster))
+
+    def test_transition_follows_steals(self):
+        g = self.game
+        self.assertGreater(g.stats["transition"], 5)
+        self.assertGreater(g.stats["transition_after_steal"], 0)
+        after = [b for a, b in zip(g.possessions, g.possessions[1:])
+                 if a["result"] == "steal" and a["period"] == b["period"]]
+        self.assertTrue(after)
+        # The players start the next possession at the far end and run the floor.
+        ran = [p for p in after if max(p["frames"][0][7 + 2 * n] for n in range(10)) > 600]
+        self.assertGreaterEqual(len(ran), 0.9 * len(after))
+        self.assertGreaterEqual(sum(p["transition"] for p in after), 0.5 * len(after))
+
+    def test_export_and_quarter_filter(self):
+        data = self.game.to_dict(period=2)
+        self.assertTrue(data["possessions"])
+        self.assertTrue(all(p["period"] == 2 for p in data["possessions"]))
+        roster = {k: len(data[k]["players"]) for k in ("home", "away")}
+        for p in data["possessions"]:
+            for f in p["frames"]:
+                self.assertEqual(len(f), 6 + 20 + 1)      # + the game clock
+            for _, lineup in p["lineups"]:
+                self.assertEqual(len(set(lineup[:5])), 5)
+                self.assertTrue(all(0 <= i < roster["home"] for i in lineup[:5]))
+                self.assertTrue(all(0 <= i < roster["away"] for i in lineup[5:]))
+        page = build_html(self.game.to_dict())
+        self.assertLess(len(page), 8_000_000)
+
+
+class ShortGameTests(unittest.TestCase):
+    def test_deterministic(self):
+        def run():
+            league = short_league(7)
+            sim = FullGame(league, 3, 4, random.Random(5)).run()
+            return sim.result, sim.box_score.to_dict()
+        self.assertEqual(run(), run())
+
+    def test_overtime(self):
+        league = short_league(8, quarter_minutes=1)
+        g = FullGame(league, 1, 2, random.Random(3))
+        tip = g.jump_ball()
+        other = g.other(tip)
+        for starting in (tip, other, other, tip):
+            g.play_period(starting)
+        g.hc.score["away"] = g.hc.score["home"]                # force a tie after regulation
+        while g.hc.score["home"] == g.hc.score["away"]:
+            g.play_period(g.jump_ball())
+        self.assertGreaterEqual(g.period, 5)
+        overtime = g.period - 4
+        for side in g.sides.values():
+            self.assertAlmostEqual(sum(s.seconds for s in side.roster), 5 * (4 * 60 + 120 * overtime), places=3)
+            self.assertEqual(side.timeouts <= league.rules.timeouts_per_overtime, True)
+
+    def test_fouling_out(self):
+        league = short_league(9, quarter_minutes=6, personal_foul_limit=3)
+        g = FullGame(league, 1, 2, random.Random(4))
+        g.run()
+        fouled = [s for side in g.sides.values() for s in side.roster if g.fouled_out(s)]
+        self.assertTrue(fouled)
+        for s in fouled:
+            self.assertIsNotNone(s.fouled_out_at)
+            side = g.sides[s.side]
+            bench_left = any(not g.fouled_out(o) for o in side.roster if not o.on_court)
+            if bench_left:
+                self.assertFalse(s.on_court)
+            # Never brought back in after fouling out.
+            back = [t for t, key, inn, _ in g.sub_log if inn == s.p.id and t > s.fouled_out_at]
+            self.assertEqual(back, [])
+            self.assertEqual(g.pf(s), 3)
+
+    def test_fatigue_drains_on_court_and_recovers_on_bench(self):
+        league = short_league(10)
+        g = FullGame(league, 1, 2, random.Random(1))
+        g.period, g.clock = 1, 600.0
+        side = g.home
+        on, off = side.lineup[0], side.bench[0]
+        on.energy = off.energy = 0.6
+        g.advance(120)
+        self.assertLess(on.energy, 0.6)
+        self.assertAlmostEqual(off.energy, 0.6 + g.gt.recover_per_second * 120)
+        # Tired players are slower and shoot worse.
+        self.assertLess(on.agent.max_speed, on.base[0])
+        self.assertGreater(on.agent.fatigue_shot, 0)
+        g.rest(1.0)
+        self.assertEqual(on.energy, 1.0)
+        self.assertAlmostEqual(on.agent.max_speed, on.base[0])
+
+    def test_watch_full_game(self):
+        from hoopsim.__main__ import cmd_watch
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "q.html"
+            cmd_watch(argparse.Namespace(seed=2, possessions=6, home=None, away=None, load=None,
+                                         out=str(out), no_open=True, full=True, quarter=1))
+            self.assertTrue(out.exists())
+            self.assertGreater(out.stat().st_size, 50_000)
+
+
+if __name__ == "__main__":
+    unittest.main()

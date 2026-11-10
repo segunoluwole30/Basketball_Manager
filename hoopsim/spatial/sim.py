@@ -106,6 +106,10 @@ class Agent:
         self.ease = 3.0
         self.cut_until = -1.0
         self.last_cut = -9.0
+        # Full-game hooks (fullgame.py): make-chance penalty from fatigue, and
+        # distance run (drives energy drain).
+        self.fatigue_shot = 0.0
+        self.travelled = 0.0
 
     @property
     def pos(self) -> tuple[float, float]:
@@ -139,7 +143,10 @@ class Agent:
                 sx, sy = sx / s * limit, sy / s * limit
             self.vx += sx
             self.vy += sy
-        self.x, self.y = C.clamp((self.x + self.vx * dt, self.y + self.vy * dt))
+        self.travelled += math.hypot(self.vx, self.vy) * dt
+        # A player still in the backcourt (running up in transition) isn't pulled to half court.
+        self.x, self.y = C.clamp((self.x + self.vx * dt, self.y + self.vy * dt),
+                                 full=self.y > C.HALF_LENGTH - 0.5)
 
 
 @dataclass
@@ -259,6 +266,7 @@ class HalfCourtGame:
             prob += t.post_strength_effect * (shooter.a("strength") - defender.a("strength"))
         if lob:
             prob += t.lob_bonus + 0.01 * (shooter.a("vertical") - 10)
+        prob -= shooter.fatigue_shot
         return max(0.02, min(0.95, prob)), z
 
     def shot_value(self, shooter: Agent, p=None, contest_d=None, defender=None, moving=False,
@@ -269,7 +277,8 @@ class HalfCourtGame:
         return prob * points
 
     # ------------------------------------------------------------------ possession
-    def play_possession(self, side: str) -> None:
+    def play_possession(self, side: str, start: Optional[dict] = None) -> None:
+        """``start``: optional possession-start options (see ``apply_start``)."""
         rng, t = self.rng, self.t
         self.offense = self.agents[side]
         self.defense = self.agents["away" if side == "home" else "home"]
@@ -327,6 +336,14 @@ class HalfCourtGame:
             d.next_think = rng.uniform(0, d.reaction)
             d.helping = False
             d.stuck_until = -1.0
+        self.game_clock: Optional[float] = None
+        self.foul_at: Optional[float] = None
+        self.foul_by: Optional[Agent] = None
+        self.bonus = False
+        self.situation: Optional[dict] = None
+        self.first_shot_at: Optional[float] = None
+        if start:
+            self.apply_start(start)
         self.stats["possessions"] += 1
         self.say(f"{self.teams[side].abbreviation} bring it up: {self.holder.p.name}")
 
@@ -361,6 +378,9 @@ class HalfCourtGame:
         self.now += dt
         if self.mode != "ft":
             self.shot_clock -= dt
+            if self.game_clock is not None:
+                self.game_clock -= dt
+                self.shot_clock = min(self.shot_clock, self.game_clock)   # shot clock off
         self.offense_targets()
         self.defense_targets()
         if self.flight:
@@ -375,6 +395,8 @@ class HalfCourtGame:
         for a in self.everyone:
             a.move(dt, self.now, boost if a is self.holder else 1.0)
         self.separate()
+        if self.result is None and (self.game_clock is not None or self.foul_at is not None):
+            self.clock_hooks()
         if self.result is None and self.holder is not None and self.mode in ("probe", "drive", "setup", "post", "pullup") \
                 and self.shot_clock <= 0:
             self.credit(self.holder, "tov")
@@ -414,6 +436,8 @@ class HalfCourtGame:
                round(bx * 10), round(by * 10), round(bz * 10), holder]
         for a in self.everyone:
             row += [round(a.x * 10), round(a.y * 10)]
+        if self.game_clock is not None:
+            row.append(round(max(0.0, self.game_clock), 1))
         self.frames.append(row)
 
     # ------------------------------------------------------------------ movement goals
@@ -757,7 +781,8 @@ class HalfCourtGame:
             kind, action, feats = rng.choice(options)              # try something (training only)
         else:
             temperature = 0.03 + 0.006 * (20 - h.a("basketball_iq"))   # smarter = closer to the best option
-            scored = [(self.model.value(k, f) + self.style_bias(h, k, a), (k, a, f)) for k, a, f in options]
+            scored = [(self.model.value(k, f) + self.style_bias(h, k, a) + self.situation_bias(k, a), (k, a, f))
+                      for k, a, f in options]
             kind, action, feats = _softmax_choice(rng, scored, temperature)
         self.decisions.append((kind, feats))
         self.stats[f"choice_{kind}"] += 1
@@ -1119,6 +1144,8 @@ class HalfCourtGame:
                   released: Optional[bool] = None) -> None:
         """``released``: None to start a shot; for a jumper, the catch flag once it's released."""
         rng, t = self.rng, self.t
+        if self.first_shot_at is None:
+            self.first_shot_at = self.now
         lob = finish == "lob"
         post = self.mode == "post"
         spot = C.toward(RIM, h.pos, min(1.5, C.dist_to_rim(h.pos))) if lob else self.finish_point(h)
@@ -1346,7 +1373,7 @@ class HalfCourtGame:
         rest = defenders[3:] + attackers[3:]
         for i, a in enumerate(rest):
             a.place((-1) ** i * (10 + 3 * i), 24.0)
-        pct = max(0.35, min(0.95, self.t.free_throw + 0.018 * (shooter.a("free_throw") - 10)))
+        pct = max(0.35, min(0.95, self.t.free_throw + 0.018 * (shooter.a("free_throw") - 10) - shooter.fatigue_shot))
         made = 0
         last_missed = False
         for _ in range(n):
@@ -1377,6 +1404,87 @@ class HalfCourtGame:
             self.start_rebound(RIM, land, 0.6, edge=2.2)
         else:
             self.end("score" if made else "ft")
+
+    # ------------------------------------------------------------------ full-game hooks
+    def apply_start(self, start: dict) -> None:
+        """Possession-start options from the full-game driver (fullgame.py, transition.py):
+
+        * ``positions``: {agent: (x, y, vx, vy)}, e.g. players still running in transition
+          (y beyond half court is allowed);
+        * ``holder``, ``shot_clock``, ``guards`` (matchups: guards[offence slot] = defence slot);
+        * ``passer`` and ``caught`` (seconds ago, <= 0): the pass the holder just caught,
+          for assists and catch-and-shoot;
+        * ``game_clock``: seconds left in the period. The shot clock is off below it and
+          the possession ends at the buzzer (result "period");
+        * ``mode``: "setup", "probe" (early offence) or "drive" (attack the rim), with
+          ``decide_in`` seconds to the first decision;
+        * ``foul_at``: a non-shooting foul this many seconds in (by ``foul_by`` if given,
+          an intentional foul), two free throws if ``bonus`` else result "foul";
+        * ``situation``: clock-management preferences (see ``situation_bias``).
+        """
+        for a, (x, y, vx, vy) in start.get("positions", {}).items():
+            a.x, a.y, a.vx, a.vy = x, y, vx, vy
+            a.tx, a.ty = C.clamp((x, y))
+        if "holder" in start:
+            self.holder = start["holder"]
+        if "shot_clock" in start:
+            self.shot_clock = start["shot_clock"]
+        if "guards" in start:
+            self.guards = list(start["guards"])
+        if start.get("passer") is not None:
+            self.last_passer = start["passer"]
+            self.catch_time = start.get("caught", 0.0)
+        self.game_clock = start.get("game_clock")
+        self.foul_at = start.get("foul_at")
+        self.foul_by = start.get("foul_by")
+        self.bonus = start.get("bonus", False)
+        self.situation = start.get("situation")
+        mode = start.get("mode")
+        if mode is not None:
+            self.next_decision = start.get("decide_in", 0.0)
+            self.mode, self.mode_since = ("probe" if mode == "drive" else mode), 0.0
+            if mode == "drive":
+                self.start_drive(self.holder)
+
+    def clock_hooks(self) -> None:
+        """The period buzzer and scheduled non-shooting fouls (full games only)."""
+        if self.game_clock is not None and self.game_clock <= 1e-6 \
+                and not (self.flight and self.flight.kind == "shot"):
+            self.say("End of the period")
+            self.end("period")
+            return
+        if (self.foul_at is not None and self.now >= self.foul_at and self.holder is not None
+                and self.mode in ("setup", "probe", "drive", "post", "pullup")):
+            self.foul_at = None
+            fouler = self.foul_by
+            if fouler is None:
+                fouler = self.guarded_by(self.holder) if self.rng.random() < 0.6 else self.rng.choice(self.defense)
+            self.stats["non_shooting_fouls"] += 1
+            if self.bonus:
+                self.say(f"Foul on {fouler.p.name}: in the penalty, two shots")
+                self.free_throws(self.holder, 2, fouler)
+            else:
+                self.credit(fouler, "pf")
+                self.say(f"Foul on {fouler.p.name}")
+                self.end("foul")
+
+    def situation_bias(self, kind: str, action: tuple) -> float:
+        """Clock management from the full-game driver, in points of option value:
+        ``hold`` (milk the clock or play for the last shot while the shot clock is above
+        ``hold_until``), ``hurry`` (two-for-one, chasing) and ``three`` (need a three)."""
+        s = self.situation
+        if not s:
+            return 0.0
+        holding = self.shot_clock > s.get("hold_until", 0.0)
+        hold = s.get("hold", 0.0) if holding else 0.0
+        if kind == "hold":
+            return hold - s.get("hurry", 0.0)
+        if kind == "shoot":
+            three = s.get("three", 0.0)
+            return (three if action[1] == THREE_ZONE else -three) - hold
+        if kind in ("drive", "pnr"):
+            return -0.5 * hold
+        return 0.0
 
     # ------------------------------------------------------------------ export
     def to_dict(self) -> dict:
