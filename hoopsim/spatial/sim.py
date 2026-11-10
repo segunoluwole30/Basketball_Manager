@@ -429,9 +429,9 @@ class HalfCourtGame:
             if self.pnr and a is self.pnr["screener"]:
                 if not self.pnr["set"]:
                     a.target(self.pnr["point"])
-                elif self.now > self.pnr["set_time"] + 0.4:
+                elif self.now > self.pnr["set_time"] + 0.15:
                     side = 1 if self.pnr["point"][0] >= 0 else -1
-                    a.target((side * 2.5, 6.5))                  # roll to the rim
+                    a.target((side * 2.0, 5.5))                  # roll hard to the rim
                 continue
             if self.cutter is a:
                 if self.now > a.cut_until:
@@ -694,6 +694,10 @@ class HalfCourtGame:
                 return
             if self.charge_check(h):
                 return
+            if self.pnr and self.pnr.get("attack") and d_rim <= 15.5:
+                self.pnr["attack"] = False
+                side = 1 if h.x >= 0 else -1
+                h.target((side * 2.5, 6.0))                      # at the nail: keep going if it's there
             if now - self.mode_since > 3.5 or (now - self.mode_since > 1.0 and math.hypot(h.vx, h.vy) < 2.0):
                 h.spot = C.clamp(C.toward(RIM, h.pos, max(18.0, d_rim)))
                 h.target(h.spot)
@@ -736,7 +740,8 @@ class HalfCourtGame:
                 options.append(pull)
             options.append(("drive", ("drive",), self.drive_features(h)))
             if self.pnr is None and self.pnr_used < 3 and d_rim > 15:
-                scr = self.offense[4] if self.offense[4] is not h else self.offense[3]
+                bigs = [a for a in (self.offense[3], self.offense[4]) if a is not h]
+                scr = min(bigs, key=lambda a: C.dist(a.pos, h.pos))   # the nearer big sets it
                 options.append(("pnr", ("pnr", scr), [1.0, hold_curve(sc - 4), h.a("ball_handling") - 10.0,
                                                       scr.a("strength") - 10.0]))
             options.append(("hold", ("hold",), [1.0, hold_curve(sc), sc / 24.0]))
@@ -756,7 +761,9 @@ class HalfCourtGame:
             kind, action, feats = _softmax_choice(rng, scored, temperature)
         self.decisions.append((kind, feats))
         self.stats[f"choice_{kind}"] += 1
-        self.next_decision = now + h.reaction * rng.uniform(1.2, 2.2)
+        # Coming off a screen the handler reads the big and the roller every beat.
+        reading = self.mode == "drive" and self.pnr is not None and self.pnr["set"]
+        self.next_decision = now + h.reaction * (rng.uniform(0.5, 0.9) if reading else rng.uniform(1.2, 2.2))
         if kind == "shoot" and action[0] == "pullup":
             self.mode, self.mode_since = "pullup", now
             self.pull_point = action[2]
@@ -820,8 +827,14 @@ class HalfCourtGame:
         target = C.clamp((mate.x + mate.vx * flight, mate.y + mate.vy * flight)) if moving else mate.pos
         # Lobs go to an athletic cutter or roller heading to the rim.
         rolling = self.pnr is not None and self.pnr["set"] and mate is self.pnr["screener"]
-        lob = ((mate is self.cutter or rolling) and moving and C.dist_to_rim(target) < 7
-               and C.dist(h.pos, target) >= 12 and mate.height >= 6.75 and mate.a("vertical") >= 12)
+        # Cutters need a long, athletic target; a roller just needs to get over the
+        # drop big (a short lob), which tall or bouncy rollers can catch.
+        if rolling:
+            lob = (moving and C.dist_to_rim(target) < 9 and C.dist(h.pos, target) >= 7
+                   and (mate.height >= 6.75 or mate.a("vertical") >= 13))
+        else:
+            lob = (mate is self.cutter and moving and C.dist_to_rim(target) < 7
+                   and C.dist(h.pos, target) >= 12 and mate.height >= 6.75 and mate.a("vertical") >= 12)
         if lob:
             flight = C.dist(h.pos, target) / (self.t.pass_speed * 0.6) + 0.35
         return target, flight, lob
@@ -829,8 +842,10 @@ class HalfCourtGame:
     def finish_point(self, h: Agent) -> tuple[float, float]:
         """A catch near the rim is finished with a gather step toward it."""
         d = C.dist_to_rim(h.pos)
-        if self.mode != "post" and self.just_caught(False) and d < 8:
-            return C.toward(RIM, h.pos, max(1.5, d - 3.0))
+        # A roller or cutter catching on the move goes straight up from further out.
+        reach = 11.0 if self.catch_source in ("roll", "cut") else 8.0
+        if self.mode != "post" and self.just_caught(False) and d < reach:
+            return C.toward(RIM, h.pos, max(1.5, d - (5.0 if reach > 8 else 3.0)))
         return h.pos
 
     def post_threat(self, h: Agent) -> float:
@@ -848,6 +863,7 @@ class HalfCourtGame:
         if d > 40:
             return None
         target, flight, lob = self.pass_target(h, mate)
+        diving = mate is self.cutter or (self.pnr is not None and self.pnr["set"] and mate is self.pnr["screener"])
         risk = 0.0
         for de in self.defense:
             if lob:     # over the top: only someone at the landing spot can get it
@@ -864,8 +880,8 @@ class HalfCourtGame:
         d_target = C.dist_to_rim(target)
         if lob:
             catch_shoot = self.shot_value(mate, p=target, contest_d=contest_after, defender=guard, lob=True)
-        elif d_target < 8:
-            finish = C.toward(RIM, target, max(1.5, d_target - 3.0))
+        elif d_target < (11.0 if diving else 8.0):
+            finish = C.toward(RIM, target, max(1.5, d_target - (5.0 if diving else 3.0)))
             catch_shoot = self.shot_value(mate, p=finish, contest_d=contest_after, defender=guard)
         else:
             catch_shoot = self.shot_value(mate, p=target, contest_d=contest_after, defender=guard, catch=True)
@@ -1011,6 +1027,11 @@ class HalfCourtGame:
             on.stuck_until = self.now + max(0.2, min(1.4, hold))
             self.say(f"{h.p.name} comes off the screen")
         self.start_drive(h)
+        # Come off downhill toward the free-throw line and read the big: pull up if
+        # he drops, hit the roller if he steps up, keep going if there's a lane.
+        h.target(C.toward(RIM, h.pos, min(15.0, C.dist_to_rim(h.pos))))
+        self.pnr["attack"] = True
+        self.next_decision = self.now + 0.25
 
     def errant_chance(self, h: Agent, d: float, lob: bool) -> float:
         """Chance a pass is thrown away or fumbled: a defender's hands in the passing

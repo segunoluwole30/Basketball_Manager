@@ -322,6 +322,30 @@ realistic perimeter game makes threes the best option. The next engine work is
 drive success against help (late or bad rotations, finishing through contact,
 dump-offs), and pick-and-rolls worth running.
 
+Inside-game diagnosis and pick-and-roll rework:
+- **Drives are fine.** About 61% reach within 6 ft, and they end roughly like NBA
+  drives: ~53% in a shot by the driver, ~31% kick-outs, ~10% dump-offs. Drives
+  produce about 0.12 rim attempts per possession, as in the NBA.
+- **The missing rim attempts are everything else:** cuts, putbacks, post-ups,
+  lobs and dump-offs total ~0.06 per possession against ~0.13 in the NBA.
+- **Pick-and-rolls were genuinely bad here.** Forced-exploration tests showed
+  possessions with one scoring 0.94 points against 1.05 without, so the learned
+  values correctly avoided them. Fixes: the nearer big sets the screen, the
+  roller dives at once, the handler comes off downhill to the nail and reads the
+  big every beat, short lobs go over drop coverage, and rollers and cutters
+  finish from up to ~11 ft. The gap shrank from 0.11 to 0.05 points, but
+  pick-and-rolls are still only 5–7% of possessions.
+
+After retraining (held-out leagues): rim share 15–18% (from 11–15%), threes
+64–68%, but points per possession 1.24–1.27 and eFG .55–.58 (higher than
+targets). The pattern across several hand-tuned rounds: this defence can contain
+the ball, protect the rim, stunt, tag rollers *and* close out on every kick-out,
+which real defences can't. Each single change gets rebalanced by the learned
+decisions. The next step is **automated calibration**: a search over the few
+physics settings behind that trade-off (help timing, closeout speed, stunt depth,
+contest strength, rebounding edge, turnover rates), scoring each candidate by
+quick retraining against the half-court targets.
+
 The scoring gap is small. What's wrong is the *structure*: defenders get far
 too close on threes (the make chance is generous on contested shots to
 compensate), and possessions are short and pass-light. Fixing realistic contest
