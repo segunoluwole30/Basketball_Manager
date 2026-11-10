@@ -163,6 +163,19 @@ class MoveTests(unittest.TestCase):
         ok, _ = offer_contract(self.league, fas[1].id, self.rules.mid_level_exception, 1)
         self.assertFalse(ok)
 
+    def test_minimum_deal_keeps_the_mle(self):
+        # Regression: over the cap, a minimum contract used to use up the mid-level exception.
+        self.over_the_cap()
+        fas = [p for p in self.league.free_agents() if not p.injury]
+        cheap = min(fas, key=lambda p: p.current_ability)
+        ok, msg = offer_contract(self.league, cheap.id, self.rules.min_salary, 1)
+        self.assertTrue(ok, msg)
+        self.assertIn("minimum", msg)
+        self.assertNotIn(self.uid, self.league.mle_used)
+        ok, msg = offer_contract(self.league, fas[0].id, self.rules.mid_level_exception, 1)
+        self.assertTrue(ok, msg)
+        self.assertIn("mid-level", msg)
+
     def test_full_roster(self):
         while len(self.league.roster(self.uid)) < self.rules.max_roster:
             fa = self.league.free_agents()[-1]

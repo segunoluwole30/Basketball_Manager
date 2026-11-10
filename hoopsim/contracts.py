@@ -236,10 +236,10 @@ def payment_route(league: League, team_id: int, salary: int, season: int,
         return None
     if cap_room(league, team_id, season) >= salary:
         return "cap space"
+    if salary == rules.min_salary:
+        return "minimum"                 # always allowed; don't burn the MLE on it
     if mle_available and salary <= rules.mid_level_exception:
         return "mid-level exception"
-    if salary == rules.min_salary:
-        return "minimum"
     return None
 
 
@@ -252,6 +252,8 @@ def best_offer(league: League, team_id: int, ask: int, season: int,
         return ask, "cap space"
     if room > rules.min_salary and room >= ask * 0.8:
         return room, "cap space"
+    if ask <= rules.min_salary:
+        return rules.min_salary, "minimum"   # don't burn the MLE on a minimum player
     if mle_available and ask <= rules.mid_level_exception * 1.1:
         return min(ask, rules.mid_level_exception), "mid-level exception"
     if ask <= rules.min_salary * 1.5:
