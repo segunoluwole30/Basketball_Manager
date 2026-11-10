@@ -19,12 +19,33 @@ approximate):
   Catch-and-shoot 37.4% vs pull-up 32.9%.
 * Estimates: turnovers ~13%, FTA/FGA ~0.24, ~15.5 s per half-court possession,
   ~3 passes per possession.
+
+Full games (``--games N``, see ``fullgame.py``) are measured per team-game against
+NBA league averages for 2023-24 / 2024-25. These are from memory of
+Basketball-Reference's league-average tables (the site couldn't be reached from
+this environment), so treat them as approximate:
+* pace ~98.5-99.5 possessions per 48 minutes; ~114 points per team (offensive
+  rating ~115 per 100 possessions); ~21.7 FTA, ~19 personal fouls, ~13.5
+  turnovers (team turnovers ~13% of possessions) per team-game.
+* Transition: Cleaning the Glass puts ~15% of plays in transition (after steals,
+  defensive rebounds and some makes) at ~1.25-1.27 points per play, against
+  ~0.98 per half-court play (~1.10 per half-court possession). Synergy's
+  transition frequency is similar (~15-16% of possessions at ~1.12-1.15 points
+  per play, which excludes free throws after the play). We count a possession
+  as transition if it started with a pushed open-court phase and its first shot,
+  foul or turnover came within 8 seconds of gaining the ball.
+* Minutes: starters average ~30-36 minutes; about 6% of games go to overtime.
+Because the half-court engine's possessions are shorter than the NBA's (about
+11 s against ~15.5 s), pace runs high; per-100-possession rates are reported
+alongside per-game totals so the full-game mechanics can be judged on their own.
 """
 from __future__ import annotations
 
 import argparse
 import random
 import time
+
+from collections import Counter
 
 from ..generate import generate_league
 from .sim import DEFAULT_TUNING, HalfCourtGame, SpatialTuning
@@ -124,13 +145,142 @@ def report(stats: dict) -> int:
     return bad
 
 
+# Full games, per team-game unless noted: stat: (target, tolerance)
+FULLGAME_TARGETS = {
+    "pace": (99.0, 3.0),
+    "points": (114.0, 4.0),
+    "points_per_100": (115.0, 3.0),
+    "transition_share": (0.15, 0.02),
+    "transition_ppp": (1.26, 0.06),
+    "fta_per_100": (22.0, 3.0),
+    "pf_per_100": (19.2, 2.0),
+    "tov_per_100": (13.5, 1.5),
+    "starter_minutes": (33.0, 3.0),
+    "top_minutes": (36.0, 3.0),
+}
+
+
+def _fullgame_batch(job: tuple) -> tuple[Counter, list]:
+    """Play ``games`` full games in one league (a worker for --jobs)."""
+    from .fullgame import FullGame
+    seed, start, games = job
+    league = generate_league(seed=seed)
+    teams = sorted(league.teams)
+    total, starters = Counter(), []
+    for i in range(start, start + games):
+        home, away = teams[i % len(teams)], teams[(i + 1 + i // len(teams)) % len(teams)]
+        if home == away:
+            away = teams[(i + 2) % len(teams)]
+        game = FullGame(league, home, away, random.Random(seed * 100_003 + i))
+        sim = game.run()
+        total += game.stats
+        total["open_court_steals"] += game.hc.stats["open_court_steals"]
+        total["games"] += 1
+        total["overtime_games"] += sim.result.overtimes > 0
+        total["seconds"] += 2880 + 300 * sim.result.overtimes
+        for box in (sim.box_score.home, sim.box_score.away):
+            t = box.totals()
+            total["team_games"] += 1
+            total["possessions_total"] += box.possessions
+            total["pts"] += t.pts
+            for f in ("fga", "tpa", "fta", "orb", "drb", "ast", "stl", "blk", "tov", "pf"):
+                total[f] += getattr(t, f)
+            mins = sorted((l.minutes for l in box.lines), reverse=True)
+            starters.append(sorted((l.minutes for l in box.lines if l.starter), reverse=True))
+            total["top_scorer_pts"] += max(l.pts for l in box.lines)
+            total["players_used"] += sum(1 for m in mins if m > 0)
+            total["fouled_out"] += sum(1 for l in box.lines if l.pf >= league.rules.personal_foul_limit)
+    return total, starters
+
+
+def collect_fullgames(games: int, seed: int, jobs: int = 1) -> dict:
+    jobs = max(1, min(jobs, 2, games))                 # this machine is shared: at most two processes
+    per = -(-games // jobs)
+    work = [(seed, k * per, min(per, games - k * per)) for k in range(jobs) if games - k * per > 0]
+    start = time.time()
+    if jobs > 1:
+        from multiprocessing import Pool
+        with Pool(jobs) as pool:
+            parts = pool.map(_fullgame_batch, work)
+    else:
+        parts = [_fullgame_batch(w) for w in work]
+    s, starters = Counter(), []
+    for c, st in parts:
+        s += c
+        starters += st
+    tg = s["team_games"]
+    poss = s["possessions_total"]
+    per100 = lambda k: 100 * s[k] / poss
+    out = {
+        # NBA pace is per 48 minutes; overtime games count their extra minutes.
+        "pace": poss / tg * 2880 / (s["seconds"] / s["games"]),
+        "points": s["pts"] / tg,
+        "points_per_100": per100("pts"),
+        "transition_share": s["transition"] / poss,
+        "transition_ppp": s["transition_points"] / max(1, s["transition"]),
+        "fta_per_100": per100("fta"),
+        "pf_per_100": per100("pf"),
+        "tov_per_100": per100("tov"),
+        "starter_minutes": sum(sum(m) for m in starters) / max(1, sum(len(m) for m in starters)),
+        "top_minutes": sum(m[0] for m in starters if m) / max(1, len(starters)),
+    }
+    out["_games"] = s["games"]
+    out["_seconds_per_game"] = (time.time() - start) / s["games"] * jobs
+    out["_halfcourt_ppp"] = s["halfcourt_points"] / max(1, s["halfcourt"])
+    for k in ("fta", "pf", "tov", "fga", "tpa", "orb", "drb", "ast", "stl", "blk"):
+        out[f"_{k}_per_game"] = s[k] / tg
+    for how in ("steal", "drb", "score", "ft"):
+        n = s[f"transition_after_{how}"]
+        out[f"_transition_after_{how}"] = f"{n / tg:.1f}/game at {s[f'transition_after_{how}_pts'] / max(1, n):.2f}"
+    for adv in ("breakaway", "numbers", "none", "walk"):
+        n = s[f"adv_{adv}_n"]
+        out[f"_open_court_{adv}"] = f"{n / tg:.1f}/game at {s[f'adv_{adv}_pts'] / max(1, n):.2f}"
+    out["_open_court_steals_per_game"] = s["open_court_steals"] / tg
+    out["_seconds_per_possession"] = (s["seconds_open_court"] + s["seconds_bring_up"]
+                                      + s["seconds_half_court"]) / poss
+    out["_half_court_seconds_per_possession"] = s["seconds_half_court"] / poss
+    out["_starter_minutes_by_rank"] = ", ".join(
+        f"{sum(m[i] for m in starters if len(m) > i) / len(starters):.1f}" for i in range(5))
+    out["_players_used"] = s["players_used"] / tg
+    out["_top_scorer_points"] = s["top_scorer_pts"] / tg
+    out["_fouled_out_per_game"] = s["fouled_out"] / tg
+    out["_substitutions_per_game"] = s["substitutions"] / s["games"]
+    out["_overtime_share"] = s["overtime_games"] / s["games"]
+    out["_non_bonus_fouls_per_game"] = s["fouls_no_bonus"] / tg
+    out["_intentional_fouls_per_game"] = s["intentional_fouls"] / s["games"]
+    return out
+
+
+def report_fullgames(stats: dict) -> int:
+    print(f"{'stat (per team-game)':<24}{'sim':>8}{'target':>8}")
+    bad = 0
+    for k, (target, tol) in FULLGAME_TARGETS.items():
+        v = stats[k]
+        ok = abs(v - target) <= tol
+        bad += not ok
+        fmt = ".3f" if target < 2 else ".1f"
+        print(f"{k:<24}{v:>8{fmt}}{target:>8{fmt}}  {'ok' if ok else 'OFF'}")
+    print()
+    for k, v in stats.items():
+        if k.startswith("_"):
+            print(f"{k[1:]:<34}{v:>8.2f}" if isinstance(v, float) else f"{k[1:]:<34}  {v}")
+    print(f"\n{len(FULLGAME_TARGETS) - bad}/{len(FULLGAME_TARGETS)} within tolerance")
+    return bad
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="hoopsim.spatial.measure")
     ap.add_argument("--possessions", type=int, default=4000)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--values", choices=["learned", "heuristic"], default="learned",
                     help="decision values to use (learned falls back to heuristic if untrained)")
+    ap.add_argument("--games", type=int, default=0,
+                    help="measure this many full games (pace, scoring, transition, minutes, fouls)")
+    ap.add_argument("--jobs", type=int, default=1, help="processes for --games (at most 2)")
     args = ap.parse_args()
+    if args.games:
+        report_fullgames(collect_fullgames(args.games, args.seed, args.jobs))
+        return
     model = HEURISTIC if args.values == "heuristic" else default_model()
     print(f"Decision values: {model.meta.get('source', '?')}\n")
     report(collect(args.possessions, args.seed, model=model))

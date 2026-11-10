@@ -110,7 +110,8 @@ python -m hoopsim.spatial.measure                # compare with NBA half-court n
 ```
 
 A second, experimental engine in which every player has a position and moves ten
-times a second. It's half-court only for now: no transition and no substitutions.
+times a second. `watch` shows half-court possessions; `watch --full` plays whole
+games with transition and substitutions (see *Full games* below).
 `watch` writes a self-contained page (`hoopsim_watch.html`): a to-scale court,
 players and ball, scoreboard and shot clock, commentary, play-by-play, and
 pause/speed/skip controls.
@@ -130,6 +131,75 @@ pause/speed/skip controls.
   and rebounds with box-outs.
 - **Speed**: about 1.5 ms per possession (a game in about 0.3 s), fast enough for
   whole seasons.
+
+### Full games (`fullgame.py`, `transition.py`)
+
+```bash
+python -m hoopsim watch --full                   # a whole spatial game in the viewer (~2.5 MB page)
+python -m hoopsim watch --full --quarter 4       # just the 4th quarter (5 = first overtime)
+python -m hoopsim.spatial.measure --games 60 --jobs 2   # full-game numbers against NBA averages
+```
+
+`FullGame` wraps the half-court engine in a 48-minute game and returns the season
+engine's `GameSim` (result, box score with minutes, points, shooting, rebounds,
+assists, steals, blocks, turnovers, fouls and plus-minus, play-by-play), so spatial
+games could later be stored like season games. It isn't wired into the season loop yet.
+
+- **Clock.** A period clock runs through every possession. The shot clock carries
+  over (14 after an offensive rebound or a non-shooting foul) and is off when less
+  time is left than it shows. The period ends at the buzzer, even mid-possession
+  (a shot already in the air counts). As in the NBA, the game clock keeps running
+  through the inbound after a made basket, except late in periods. Jump balls start
+  the game and each overtime, and possessions alternate between quarters.
+- **Transition** (`transition.py`). After steals, defensive rebounds and some made
+  baskets, the players run the floor at ten updates a second (the viewer's camera
+  pulls back to show it). A team pushes depending on how it got the ball, its pace
+  and whether anyone is already behind the defence. The defence turns and runs
+  back after a delay (longer for the team that just lost the ball): the deepest
+  defender takes the rim, the next stops the ball, and the rest pick up the most
+  dangerous men. Handlers throw ahead, drop the ball off to the rim runner when the
+  last defender commits, and kick out to open shooters. Then the half-court engine
+  takes over from those positions with the shot clock running and scrambled
+  matchups: a clear lane starts as a drive, an advantage as an immediate decision,
+  and no advantage flows into the half-court offence against a defence that isn't
+  set yet. Ahead passes can be picked off, and a team out of time heaves from
+  where it is.
+- **Fouls.** Shooting fouls and charges come from the half-court engine.
+  Non-shooting fouls happen during possessions. The bonus starts with the 5th team
+  foul of a period (or the 2nd in its last two minutes), and players foul out at 6.
+- **Fatigue and substitutions.** Energy drains with how far a player runs (and
+  faster against a press) and recovers on the bench, at period breaks and in
+  timeouts. Tired players are slower, react later and shoot worse. Substitutions
+  happen at dead balls (after made baskets only late in games) and use the season
+  engine's logic: the rotation plan from `lineup.plan_rotation` (or the coach's
+  minutes), fatigue, foul trouble, and the best players in close games and the
+  bench in blowouts. Fouled-out players leave at once.
+- **End of game.** Trailing teams foul to stop the clock and call a late timeout to
+  advance the ball. Leading teams milk the shot clock and dribble out the end. Teams
+  hold for the last shot of a quarter, go two-for-one, and look for a three when
+  down three. These are passed to the half-court decisions as small value biases.
+
+Measured over 60 games (seed 0; per team-game, NBA figures approximate):
+
+| | Sim | NBA |
+|---|---|---|
+| Transition share of possessions | 15.0% | ~15% |
+| Transition points per possession | 1.21 (1.28 in another 60-game run) | ~1.25 |
+| ... breakaways / numbers / no advantage | 1.46 / 1.31 / 1.20 | |
+| FTA per 100 possessions | 24.0 | ~22 |
+| Personal fouls per 100 possessions | 18.1 | ~19 |
+| Starters' minutes (by rank) | 33.6, 31.8, 30.5, 28.6, 24.9 | ~30–36 |
+| Pace | 129 | ~99 |
+| Points per team | 155 (120 per 100) | ~114 (115 per 100) |
+| Turnovers per 100 possessions | 11.0 | ~13.5 |
+
+Transition, fouls and minutes behave on their own terms. Pace and points come
+from the half-court engine: its possessions use about 5.8 s of game clock after
+the bring-up, against about 11 s in the NBA, so teams get ~130 possessions a game.
+Points per possession and turnovers inherit the half-court calibration too (being
+tuned separately). The scoring leader averages ~40 points at that pace, and teams
+use about 11 players a game because high scores make blowouts (garbage time) common.
+Full games take about 0.65 s each.
 
 ### Learned decision values (`values.py`, `train.py`)
 
