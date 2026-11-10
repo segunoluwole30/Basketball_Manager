@@ -684,6 +684,9 @@ class League:
     history: list[dict] = field(default_factory=list)      # one summary per finished season
     user_team_id: Optional[int] = None                     # the team you manage
     mle_used: list[int] = field(default_factory=list)       # teams that used the MLE this league year
+    offseason: Optional[dict] = None                        # an offseason in progress (season.py)
+    last_offseason: Optional[dict] = None                   # the last finished offseason's report
+    inbox: list[dict] = field(default_factory=list)         # news for the user (web interface)
 
     # -- id allocation ------------------------------------------------------
     def next_player_id(self) -> int:
