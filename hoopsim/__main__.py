@@ -6,6 +6,7 @@
     python -m hoopsim career [--seasons 10] [--seed N] [--load league.db] [--out league.db]
     python -m hoopsim play   [--team ABBR] [--load save.db]   # manage a team yourself
     python -m hoopsim watch  [--home ABBR --away ABBR] [--possessions 40]   # spatial prototype in a browser
+    python -m hoopsim web    [--load save.db] [--port 8000]   # play as GM in your browser
 """
 from __future__ import annotations
 
@@ -295,7 +296,22 @@ def main() -> None:
     watch.add_argument("--out", default="hoopsim_watch.html")
     watch.add_argument("--no-open", action="store_true", help="don't open the browser")
 
+    web = sub.add_parser("web", help="play as general manager in your browser")
+    web.add_argument("--load", help="open a saved game")
+    web.add_argument("--save", help="default file to save to (default: the loaded file or hoopsim_save.db)")
+    web.add_argument("--port", type=int, default=8000)
+    web.add_argument("--host", default="127.0.0.1")
+    web.add_argument("--no-open", action="store_true", help="don't open the browser")
+
     args = ap.parse_args()
+    if args.cmd == "web":
+        try:
+            from .web.app import serve
+        except ImportError as e:
+            raise SystemExit(f"the web interface needs extra packages ({e.name} is missing): "
+                             "pip install -r requirements-web.txt")
+        serve(load=args.load, port=args.port, host=args.host, open_browser=not args.no_open, save=args.save)
+        return
     if args.cmd == "watch":
         cmd_watch(args)
         return

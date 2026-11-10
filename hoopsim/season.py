@@ -185,6 +185,7 @@ OFFSEASON_STEPS = ["options", "resign", "draft", "free_agency", "trades", "cuts"
 STEP_TITLES = {
     "options": "Team options", "resign": "Re-signing", "draft": "Draft",
     "free_agency": "Free agency", "trades": "Trade offers", "cuts": "Roster cuts",
+    "trade_offer": "Trade offer",
 }
 
 
