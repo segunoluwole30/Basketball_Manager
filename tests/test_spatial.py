@@ -297,7 +297,7 @@ class ContestAndMovementTests(unittest.TestCase):
         g = HalfCourtGame(self.league, 1, 2, random.Random(2), record=False)
         g.play_possession("home")
         h = g.offense[0]
-        h.place(0.0, 15.0)
+        h.place(3.0, 15.0)              # driving at the right elbow, ~12 ft from the wing defender
         g.holder, g.mode = h, "drive"
         for i, a in enumerate(g.offense[1:], 1):
             a.place(*[(19.0, 22.0), (-19.0, 22.0), (-22.6, 4.5), (5.0, 4.0)][i - 1])

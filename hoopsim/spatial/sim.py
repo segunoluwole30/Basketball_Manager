@@ -31,6 +31,7 @@ from ..lineup import plan_rotation
 from ..models import League, Player
 from . import court as C
 from .court import CLOSE_ZONE, MID_ZONE, RIM, RIM_ZONE, THREE_ZONE
+from .params import DEFAULT_PARAMS, SpatialParams
 from .values import DecisionModel, default_model, hold_curve
 
 ZONES = (RIM_ZONE, CLOSE_ZONE, MID_ZONE, THREE_ZONE)
@@ -47,11 +48,9 @@ class SpatialTuning:
     shooting_foul: dict = field(default_factory=lambda: {RIM_ZONE: 0.42, CLOSE_ZONE: 0.20, MID_ZONE: 0.06, THREE_ZONE: 0.025})
     block_base: dict = field(default_factory=lambda: {RIM_ZONE: 0.14, CLOSE_ZONE: 0.09, MID_ZONE: 0.02, THREE_ZONE: 0.01})
     free_throw: float = 0.775
-    dribble_turnover_per_sec: float = 0.045   # with a defender in your face
-    pass_steal_scale: float = 0.20
+    # dribble_turnover_per_sec, pass_steal_scale, errant_pass, defensive_rebound_edge
+    # and the help trigger distance live in SpatialParams (params.py).
     pass_speed: float = 40.0                  # ft/s
-    defensive_rebound_edge: float = 4.6
-    help_trigger_distance: float = 22.0       # drive this close to the rim draws help
     charge_chance: float = 0.25               # a help defender set in the driver's path
     charge_on_ball: float = 0.015             # the man guarding him, beaten to the spot and set
     travel_per_sec: float = 0.012             # driving or backing down: travels, carries, push-offs
@@ -69,8 +68,6 @@ class SpatialTuning:
     release_dribble: float = 0.36
     # Help defenders swipe at the ball when a driver comes through their reach.
     dig_per_sec: float = 0.35
-    # Passes thrown away or fumbled (not picked off): more under ball pressure and on long passes.
-    errant_pass: float = 0.006
 
 
 DEFAULT_TUNING = SpatialTuning()
@@ -184,11 +181,12 @@ class HalfCourtGame:
     def __init__(self, league: League, home_id: int, away_id: int, rng: random.Random,
                  tuning: SpatialTuning = DEFAULT_TUNING, record: bool = True,
                  model: Optional[DecisionModel] = None, explore: float = 0.0,
-                 recorder: Optional[dict] = None):
+                 recorder: Optional[dict] = None, params: Optional[SpatialParams] = None):
         """``model`` values the ball handler's options (default: learned values if
         trained, else hand-written). ``explore`` is the chance of a random option and
         ``recorder`` collects (features, possession points) per option, for training."""
         self.league, self.rng, self.t, self.record = league, rng, tuning, record
+        self.p = params or DEFAULT_PARAMS      # calibrated defence and shot-model settings
         self.model = model or default_model()
         self.explore = explore
         self.recorder = recorder
@@ -248,13 +246,15 @@ class HalfCourtGame:
                  THREE_ZONE: "three_point"}[z]
         per_point = t.three_skill_per_point if z == THREE_ZONE else t.skill_per_point
         prob = t.make_open[z] + per_point * (shooter.a(skill) - 10)
+        prob += self.p.rim_make_adj if z == RIM_ZONE else self.p.three_make_adj if z == THREE_ZONE else 0.0
         prob += 0.003 * (shooter.a("composure") - 10)
         if defender is None:
             defender, contest_d = self.nearest_defender(p)
         level = max(0.0, min(1.0, (6.0 - contest_d) / 5.0))     # 1 = in his face, 0 = 6+ ft away
         d_skill = defender.a("interior_defense" if z in (RIM_ZONE, CLOSE_ZONE) else "perimeter_defense")
         quality = 1 + 0.03 * (d_skill - 10) + 0.06 * (defender.height - shooter.height)
-        prob -= t.contest_max[z] * level * max(0.4, quality)
+        scale = self.p.contest_inside if z in (RIM_ZONE, CLOSE_ZONE) else self.p.contest_outside
+        prob -= t.contest_max[z] * scale * level * max(0.4, quality)
         d_rim = C.dist_to_rim(p)
         if d_rim > 25:
             prob -= 0.015 * (d_rim - 25)                         # deep threes
@@ -328,12 +328,13 @@ class HalfCourtGame:
         self.cutter: Optional[Agent] = None
         self.post: Optional[dict] = None
         self.catch_source: Optional[str] = None
+        self.closing: set = set()              # defenders closing out on a catch
         for i, d in enumerate(self.defense):
             man = self.offense[i]
             gx, gy = C.toward(man.pos, RIM, 4.0)
             d.place(gx, gy)
             d.ease = 6.0
-            d.next_think = rng.uniform(0, d.reaction)
+            d.next_think = rng.uniform(0, d.reaction * self.p.reaction_scale)
             d.helping = False
             d.stuck_until = -1.0
         self.game_clock: Optional[float] = None
@@ -393,7 +394,8 @@ class HalfCourtGame:
             self.take_shot(self.holder, r["moving"], released=r["catch"])
         boost = 1.08 if self.mode == "drive" else 0.35 if self.mode == "post" else 1.0
         for a in self.everyone:
-            a.move(dt, self.now, boost if a is self.holder else 1.0)
+            a.move(dt, self.now, boost if a is self.holder else
+                   self.p.closeout_speed if a in self.closing else 1.0)
         self.separate()
         if self.result is None and (self.game_clock is not None or self.foul_at is not None):
             self.clock_hooks()
@@ -545,7 +547,7 @@ class HalfCourtGame:
             if a is self.holder:
                 continue
             dr = C.dist_to_rim(a.pos)
-            if dr > 9 or C.dist(self.guarded_by(a).pos, a.pos) < 4:
+            if dr > self.p.tag_zone or C.dist(self.guarded_by(a).pos, a.pos) < self.p.tag_lost:
                 continue
             if best is None or dr < C.dist_to_rim(best.pos):
                 best = a
@@ -559,9 +561,9 @@ class HalfCourtGame:
             return None
         def cost(d):
             return (C.dist(d.pos, threat.pos) - (2 if d.slot >= 3 else 0)
-                    + (8 if self.man_of(d).a("three_point") >= 14 else 0))
+                    + (self.p.help_shooter_penalty if self.man_of(d).a("three_point") >= 14 else 0))
         best = min(cands, key=cost)
-        return best if C.dist(best.pos, threat.pos) < 15 else None
+        return best if C.dist(best.pos, threat.pos) < self.p.tag_range else None
 
     def choose_doubler(self, h: Agent) -> Optional[Agent]:
         on = self.guarded_by(h)
@@ -578,7 +580,7 @@ class HalfCourtGame:
         ball = self.flight.position(now)[:2] if self.flight else (self.holder.pos if self.holder else RIM)
         driving = self.mode == "drive" and self.holder is not None
         helper = None
-        help_at = self.t.help_trigger_distance + (4.0 if self.scheme == "zone" else 0.0)
+        help_at = self.p.help_trigger + (4.0 if self.scheme == "zone" else 0.0)
         if driving and C.dist_to_rim(self.holder.pos) < help_at:
             helper = self.choose_helper()
         # A perimeter defender stunts at a drive (a step toward the ball), which
@@ -596,7 +598,8 @@ class HalfCourtGame:
             d.helping = d is helper or d is tagger or d is doubler or d is stunter
             if now < d.next_think:
                 continue
-            d.next_think = now + d.reaction
+            d.next_think = now + d.reaction * self.p.reaction_scale
+            self.closing.discard(d)
             if self.mode == "rebound":
                 continue
             man = self.man_of(d)
@@ -605,13 +608,13 @@ class HalfCourtGame:
                 # Get a hand up: lunge in as far as the shooting motion allows, but
                 # contests end at hand's length, not body to body.
                 gap = C.dist(d.pos, self.holder.pos)
-                d.target(C.toward(self.holder.pos, d.pos, max(2.5, gap - 2.5)))
+                d.target(C.toward(self.holder.pos, d.pos, max(self.p.contest_reach, gap - 2.5)))
             elif d is stunter:
-                d.target(C.toward(self.holder.pos, d.pos, 4.5))
+                d.target(C.toward(self.holder.pos, d.pos, self.p.stunt_distance))
             elif d is helper:
                 # Meet the driver between him and the rim.
                 d_rim = C.dist_to_rim(self.holder.pos)
-                d.target(C.toward(RIM, self.holder.pos, max(3.0, min(6.0, d_rim - 2.5))))
+                d.target(C.toward(RIM, self.holder.pos, max(3.0, min(self.p.help_depth, d_rim - 2.5))))
             elif d is doubler and self.holder is not None:
                 d.target(C.toward(self.holder.pos, (0.0, 22.0), 2.0))   # double from the top side
             elif d is tagger and threat is not None:
@@ -620,10 +623,11 @@ class HalfCourtGame:
                     and self.holder is not None and not self.pnr.get("switch"):
                 # Drop coverage: don't follow the screener out. Wait at the nail
                 # (between ball and rim), then sink to protect the rim once he comes off it.
-                depth = 9.0 if self.pnr["set"] else 14.0
+                depth = self.p.drop_depth if self.pnr["set"] else 14.0
                 d.target(C.toward(RIM, self.holder.pos, min(depth, C.dist_to_rim(self.holder.pos) - 2)))
             elif self.flight and self.flight.kind == "pass" and self.flight.data.get("to") is man:
                 d.target(C.toward(self.flight.end, RIM, self.closeout_gap(man)))   # close out on the catch
+                self.closing.add(d)
             elif man is self.holder:
                 # About 3.5 ft off a perimeter ball handler: closer on shooters,
                 # more room for non-shooters (and far from the basket).
@@ -639,11 +643,12 @@ class HalfCourtGame:
             else:
                 pass_dist = C.dist(man.pos, ball)
                 # One pass away: stay close. Far side: sink into the paint to help.
-                sag = 0.08 if pass_dist < 22 else min(0.55, 0.10 + 0.025 * (pass_dist - 22))
+                sag = (self.p.sag_near if pass_dist < 22 else
+                       min(self.p.sag_max, self.p.sag_near + 0.02 + self.p.sag_slope * (pass_dist - 22)))
                 if self.scheme == "zone":
                     sag = max(sag, 0.22)                         # a zone packs the paint
                 if man.a("three_point") >= 13:
-                    sag *= 0.75                                  # shade toward shooters
+                    sag *= self.p.shooter_sag                    # shade toward shooters
                 mx, my = man.pos
                 tx = mx + (RIM[0] - mx) * sag + (ball[0] - mx) * 0.08
                 ty = my + (RIM[1] - my) * sag + (ball[1] - my) * 0.08
@@ -654,7 +659,8 @@ class HalfCourtGame:
         slide with a drive), more room for non-shooters so they can't drive past."""
         if C.dist_to_rim(man.pos) < 20:
             return 2.5
-        return max(2.8, min(5.5, 3.5 - 0.25 * (man.a("three_point") - 11)))
+        p = self.p
+        return max(p.closeout_min, min(p.closeout_max, p.closeout_base - p.closeout_slope * (man.a("three_point") - 11)))
 
     def choose_stunter(self, exclude: Optional[Agent]) -> Optional[Agent]:
         """The nearest perimeter defender to a drive (not the on-ball or rim help)."""
@@ -664,7 +670,7 @@ class HalfCourtGame:
         if not cands:
             return None
         best = min(cands, key=lambda d: C.dist(d.pos, self.holder.pos))
-        return best if C.dist(best.pos, self.holder.pos) < 16 else None
+        return best if C.dist(best.pos, self.holder.pos) < self.p.stunt_range else None
 
     def choose_helper(self) -> Optional[Agent]:
         h = self.holder
@@ -676,7 +682,8 @@ class HalfCourtGame:
         # but don't leave a great shooter.
         def cost(d):
             man = self.man_of(d)
-            return C.dist_to_rim(d.pos) - (3 if d.slot >= 3 else 0) + (8 if man.a("three_point") >= 14 else 0)
+            return (C.dist_to_rim(d.pos) - (3 if d.slot >= 3 else 0)
+                    + (self.p.help_shooter_penalty if man.a("three_point") >= 14 else 0))
         return min(candidates, key=cost)
 
     # ------------------------------------------------------------------ decisions
@@ -901,7 +908,8 @@ class HalfCourtGame:
                     risk += 0.25 * (2.5 - lane) / 2.5
         risk += self.errant_chance(h, d, lob)
         guard = self.guarded_by(mate)
-        contest_after = max(0.0, C.dist(guard.pos, target) - guard.max_speed * max(0.0, flight - guard.reaction))
+        contest_after = max(0.0, C.dist(guard.pos, target) - guard.max_speed * self.p.closeout_speed
+                            * max(0.0, flight - guard.reaction * self.p.reaction_scale))
         d_target = C.dist_to_rim(target)
         if lob:
             catch_shoot = self.shot_value(mate, p=target, contest_d=contest_after, defender=guard, lob=True)
@@ -925,7 +933,7 @@ class HalfCourtGame:
         dd = C.dist(h.pos, on.pos)
         if dd >= 3.5 or self.now < on.stuck_until:
             return False
-        rate = (self.t.dribble_turnover_per_sec
+        rate = (self.p.dribble_turnover_per_sec
                 * math.exp(0.15 * (on.a("stealing") - 10) - 0.15 * (h.a("ball_handling") - 10))
                 * (3.5 - dd) / 2.5 * (1.6 if self.scheme == "press" else 1.0))
         if self.rng.random() < rate * self.t.dt:
@@ -1064,7 +1072,7 @@ class HalfCourtGame:
         on = self.guarded_by(h)
         gap = C.dist(on.pos, h.pos)
         pressure = 0.0 if self.now < on.stuck_until else max(0.0, (3.5 - gap) / 2.0) * math.exp(0.1 * (on.a("stealing") - 10))
-        return (self.t.errant_pass * math.exp(-0.1 * (h.a("passing") - 10) - 0.05 * (h.a("vision") - 10))
+        return (self.p.errant_pass * math.exp(-0.1 * (h.a("passing") - 10) - 0.05 * (h.a("vision") - 10))
                 * (1 + 1.5 * pressure) * (1 + max(0.0, d - 20) / 15) * (1.5 if lob else 1.0))
 
     def throw_pass(self, h: Agent, mate: Agent) -> None:
@@ -1077,7 +1085,7 @@ class HalfCourtGame:
         for de in ([] if lob else self.defense):
             lane = C.point_segment_distance(de.pos, h.pos, target)
             if lane < 2.0 and C.dist(de.pos, h.pos) > 1.5:
-                p = (self.t.pass_steal_scale * (1.4 if self.scheme == "press" else 1.0)
+                p = (self.p.pass_steal_scale * (1.4 if self.scheme == "press" else 1.0)
                      * math.exp(0.12 * (de.a("stealing") - 10))
                      * (2.0 - lane) / 2.0 * (1.3 if d > 25 else 1.0))
                 if self.rng.random() < p:
@@ -1101,7 +1109,7 @@ class HalfCourtGame:
             self.say(f"{h.p.name} throws the lob to {mate.p.name}")
         # The receiver's defender reads the pass and breaks on it (half his usual reaction).
         guard = self.guarded_by(mate)
-        guard.next_think = min(guard.next_think, self.now + guard.reaction * 0.5)
+        guard.next_think = min(guard.next_think, self.now + guard.reaction * self.p.reaction_scale * self.p.pass_read)
         self.holder = None
         self.mode = "pass"
         self.passes += 1
@@ -1138,7 +1146,7 @@ class HalfCourtGame:
         h.target(h.pos)
         for d in self.defense:              # the shot motion is a cue: defenders nearby react quickly
             if C.dist(d.pos, h.pos) < 12:
-                d.next_think = min(d.next_think, self.now + d.reaction * 0.5)
+                d.next_think = min(d.next_think, self.now + d.reaction * self.p.reaction_scale * 0.5)
 
     def take_shot(self, h: Agent, moving: bool, finish: Optional[str] = None,
                   released: Optional[bool] = None) -> None:
@@ -1183,7 +1191,7 @@ class HalfCourtGame:
                 land = C.clamp((h.x + rng.uniform(-6, 6), h.y + rng.uniform(2, 8)))
                 self.start_rebound(h.pos, land, 0.6)
                 return
-        fouled = rng.random() < t.shooting_foul[z] * (0.3 + 0.7 * level)
+        fouled = rng.random() < t.shooting_foul[z] * self.p.foul_scale * (0.3 + 0.7 * level)
         if fouled:
             prob *= 0.45
         made = rng.random() < prob
@@ -1336,7 +1344,7 @@ class HalfCourtGame:
             attr = "defensive_rebounding" if a in self.defense else "offensive_rebounding"
             w = math.exp(0.25 * (a.a(attr) - 10) + (a.p.physique.height_cm - 203) / 24) / (1 + dd * dd / 6)
             if a in self.defense:
-                w *= self.t.defensive_rebound_edge * f.data.get("edge", 1.0)
+                w *= self.p.defensive_rebound_edge * f.data.get("edge", 1.0)
             candidates.append((w, a))
         if not candidates:                                   # nobody near: closest gets it
             a = min(self.everyone, key=lambda q: C.dist(q.pos, land))

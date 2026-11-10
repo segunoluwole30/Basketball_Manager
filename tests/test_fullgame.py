@@ -73,8 +73,11 @@ class FullGameTests(unittest.TestCase):
         g = self.game
         self.assertGreater(g.stats["transition"], 5)
         self.assertGreater(g.stats["transition_after_steal"], 0)
+        # Half-court steals only: an intercepted ahead pass already happens at the
+        # stealing team's end, so there is no floor to run.
         after = [b for a, b in zip(g.possessions, g.possessions[1:])
-                 if a["result"] == "steal" and a["period"] == b["period"]]
+                 if a["result"] == "steal" and a["period"] == b["period"]
+                 and not any("ahead pass" in e[1] for e in a["events"])]
         self.assertTrue(after)
         # The players start the next possession at the far end and run the floor.
         ran = [p for p in after if max(p["frames"][0][7 + 2 * n] for n in range(10)) > 600]

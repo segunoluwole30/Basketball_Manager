@@ -179,26 +179,25 @@ games could later be stored like season games. It isn't wired into the season lo
   hold for the last shot of a quarter, go two-for-one, and look for a three when
   down three. These are passed to the half-court decisions as small value biases.
 
-Measured over 60 games (seed 0; per team-game, NBA figures approximate):
+Measured over 60 games (seed 0; per team-game, NBA figures approximate), with the
+calibrated half-court defence:
 
 | | Sim | NBA |
 |---|---|---|
-| Transition share of possessions | 15.0% | ~15% |
-| Transition points per possession | 1.21 (1.28 in another 60-game run) | ~1.25 |
-| ... breakaways / numbers / no advantage | 1.46 / 1.31 / 1.20 | |
-| FTA per 100 possessions | 24.0 | ~22 |
-| Personal fouls per 100 possessions | 18.1 | ~19 |
-| Starters' minutes (by rank) | 33.6, 31.8, 30.5, 28.6, 24.9 | ~30–36 |
-| Pace | 129 | ~99 |
-| Points per team | 155 (120 per 100) | ~114 (115 per 100) |
-| Turnovers per 100 possessions | 11.0 | ~13.5 |
+| Transition share of possessions | 14.9% | ~15% |
+| Transition points per possession | 1.23 | ~1.25 |
+| FTA per 100 possessions | 27.1 | ~22 |
+| Personal fouls per 100 possessions | 19.3 | ~19 |
+| Starters' minutes (by rank) | 34.4, 32.6, 30.5, 28.2, 23.4 | ~30–36 |
+| Pace | 135 | ~99 |
+| Points per team | 152 (113 per 100) | ~114 (115 per 100) |
+| Turnovers per 100 possessions | 10.2 | ~13.5 |
 
-Transition, fouls and minutes behave on their own terms. Pace and points come
-from the half-court engine: its possessions use about 5.8 s of game clock after
-the bring-up, against about 11 s in the NBA, so teams get ~130 possessions a game.
-Points per possession and turnovers inherit the half-court calibration too (being
-tuned separately). The scoring leader averages ~40 points at that pace, and teams
-use about 11 players a game because high scores make blowouts (garbage time) common.
+Points per 100 possessions, transition, fouls and minutes are about right. Pace is
+far too high: half-court possessions use about 5.3 s of game clock after the
+bring-up, against about 11 s in the NBA, so teams get ~135 possessions a game and
+the scoring leader averages ~40 points. Teams use about 11 players a game because
+high totals make blowouts (garbage time) common.
 Full games take about 0.65 s each.
 
 ### Learned decision values (`values.py`, `train.py`)
@@ -420,6 +419,111 @@ The scoring gap is small. What's wrong is the *structure*: defenders get far
 too close on threes (the make chance is generous on contested shots to
 compensate), and possessions are short and pass-light. Fixing realistic contest
 distances and ball movement comes before tuning the totals.
+
+### Automated calibration (`params.py`, `calibrate.py`)
+
+```bash
+python -m hoopsim.spatial.calibrate --log calibration.jsonl     # ~45 min on 3 cores
+python -m hoopsim.spatial.calibrate --log calibration.jsonl --resume
+python -m hoopsim.spatial.measure --params calibrated_params.json
+```
+
+The settings behind the rim-versus-arc trade-off now live in one dataclass,
+`SpatialParams`. It covers help timing and depth, defender reaction, stunt and
+tag distances, drop depth, sag, closeout gap and speed, contest reach and
+strength, finishing and three-point adjustments, foul rate, turnover rates and
+the rebounding edge. `HalfCourtGame(params=None)` uses the defaults.
+`LEGACY_PARAMS` holds the hand-set values from before calibration, and a test
+checks that they still play exactly as before.
+
+A candidate can't be judged with decision values trained for different physics,
+because the offence would keep taking the shots that used to be good. So each
+candidate is retrained (3 rounds × 6,000 possessions, warm-started from the
+saved values) on the training leagues 100–102 and then measured there on 9,000
+possessions. Its score is the weighted mean of ((sim − target) / tolerance)².
+Points per possession, eFG, the shot mix and 3P% carry the most weight. Seconds
+and passes carry little, because these settings barely move them.
+
+The search runs in three phases:
+1. **Noise:** the defaults are evaluated with 6 different seeds.
+2. **Sample:** 90 Latin-hypercube samples over 28 parameters.
+3. **Refine:** a (1+3) evolution strategy. Mutants that beat the incumbent are
+   re-run with a fresh seed and must still win on the mean.
+
+It uses 3 worker processes. Every evaluation is logged to JSONL, and the search
+resumes from that log. The held-out leagues 0–2 are never used during the search.
+
+**Noise:** for the old defaults, the score is 6.90 ± 1.19 (sd across seeds).
+Per metric the sd is: points per possession .010, eFG .007, rim share .019,
+three share .038 (the retrained policy wobbles), 3P% .004.
+
+**Result:** the Latin-hypercube phase found the basin, with the best sample
+scoring 1.54 against the defaults' 6.9. Refinement accepted one step (mean 1.16
+over two seeds), and then 20 generations brought nothing beyond noise. The
+values were then fully retrained (`train.py` defaults) and measured on the
+held-out leagues:
+
+| held-out seed 0 / 1 / 2 | before | after | target |
+|---|---|---|---|
+| points per possession | 1.19 / 1.24 / 1.25 | 1.17 / 1.19 / 1.16 | 1.10 ± .04 |
+| eFG | .528 / .543 / .566 | .515 / .536 / .521 | .527 |
+| rim share | .17 / .15 / .15 | .26 / .28 / .31 | .28 |
+| close share | .13 / .10 / .10 | .23 / .20 / .23 | .23 |
+| mid share | .06 / .08 / .07 | .06 / .10 / .07 | .07 |
+| three share | .65 / .68 / .69 | .46 / .42 / .40 | .42 |
+| FG% rim | .66 / .64 / .67 | .62 / .64 / .63 | .64 |
+| 3P% | .350 / .363 / .382 | .360 / .380 / .342 | .362 |
+| threes within 2 ft | .06 / .13 / .06 | .02 / .04 / .05 | .02 |
+| wide-open threes | .18 / .19 / .20 | .21 / .26 / .24 | .44 |
+| turnovers | .086 / .083 / .082 | .073 / .077 / .084 | .13 |
+| offensive rebounds | .26 / .28 / .24 | .22 / .21 / .20 | .27 |
+| FTA / FGA | .16 / .14 / .14 | .24 / .23 / .25 | .24 |
+| assists per make | .58 / .70 / .68 | .42 / .53 / .51 | .60 |
+| passes per possession | 1.2 / 1.4 / 1.3 | 0.9 / 1.1 / 1.1 | 3.2 |
+| seconds per possession | 11.3 / 11.3 / 11.2 | 11.2 / 11.3 / 11.3 | 15.5 |
+| within tolerance (of 18) | 8 / 7 / 6 | 9 / 11 / 10 | |
+| weighted score | 4.0 / 6.2 / 6.7 | — | 0 |
+
+The search also raised the foul rate ×1.28. That pushed FTA/FGA to .32–.37 and
+caused foul trouble in full games, so `foul_scale` is held at 1 and the values were
+retrained. The "after" column is that final configuration.
+
+**What changed:**
+- **Later, shallower help.** The help trigger went from 22 to 16.5 ft and tag
+  range from 15 to 8.3 ft. The stunt stops 7.6 ft from the driver instead of
+  4.5, and help leaves shooters more readily (penalty 8 → 3.6).
+- **Slower reactions** (×1.3).
+- **Heavier contests on jumpers.** The contest penalty is ×1.6, contests at
+  release reach to 1.65 ft, and an open three is two points harder to make.
+- Three times as many errant passes (the foul increase was reverted, see above).
+
+The shot mix, eFG and contest tightness are now in range.
+
+**Still off:** the search fixed the shot mix mostly by making threes *worse*,
+not by making the rim *available*.
+- 3P% is about on target (.34–.38), but only because open threes were made two
+  points harder.
+- Wide-open threes stayed at ~20% (target 44%). In this engine an open three
+  is the best shot, so the learned policy takes every one it gets, and only
+  contested or harder threes keep the share at 42%.
+- Points per possession are still ~1.17 with an on-target eFG. The excess
+  comes from too few turnovers (7–8%, target 13%).
+- Turnovers resist tuning: tripling errant passes just made the offence pass
+  less (0.9–1.1 per possession, assists .42–.53).
+- Rim attempts now come ~75–80% from drives. Cuts, putbacks and post-ups have
+  shrunk, and offensive rebounds are low (.20–.22).
+
+**Bounds and mechanisms:**
+- Only `contest_reach` ended near a bound (1.65 in 1.5–4.5).
+- The mechanisms the search couldn't fix are structural: ball movement (the
+  pass value), free-throw rate independent of rim volume, and the open-three
+  premium.
+- Suggested next changes:
+  - Make passing reduce defensive organisation, for example rotations that
+    compound after each swing, so passes create open threes instead of the
+    defence always recovering.
+  - Model fouls on drives separately from the shot.
+  - Hold `foul_scale` at 1 in a follow-up search.
 
 ## Simulation commands
 

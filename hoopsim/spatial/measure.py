@@ -44,10 +44,13 @@ from __future__ import annotations
 import argparse
 import random
 import time
+from collections import Counter
+from typing import Optional
 
 from collections import Counter
 
 from ..generate import generate_league
+from .params import SpatialParams
 from .sim import DEFAULT_TUNING, HalfCourtGame, SpatialTuning
 from .values import HEURISTIC, DecisionModel, default_model
 
@@ -77,21 +80,38 @@ TARGETS = {
 }
 
 
-def collect(possessions: int, seed: int, tuning: SpatialTuning = DEFAULT_TUNING,
-            model: DecisionModel = None) -> dict:
-    league = generate_league(seed=seed)
-    rng = random.Random(seed)
-    teams = sorted(league.teams)
-    pairs = [(teams[i], teams[(i + 1) % len(teams)]) for i in range(len(teams))]
-    per_pair = max(2, possessions // len(pairs))
-    total = None
+def play(possessions: int, seeds, tuning: SpatialTuning = DEFAULT_TUNING,
+         model: DecisionModel = None, params: Optional[SpatialParams] = None,
+         rng_seed: Optional[int] = None) -> tuple[Counter, float]:
+    """Play ``possessions`` spread over every team pairing in each league seed.
+    Returns the summed stats and the seconds it took. The game RNG is seeded with
+    ``rng_seed`` (default: the first league seed)."""
+    seeds = list(seeds)
+    rng = random.Random(seeds[0] if rng_seed is None else rng_seed)
+    total = Counter()
     start = time.time()
-    for home, away in pairs:
-        game = HalfCourtGame(league, home, away, rng, tuning, record=False, model=model)
-        game.play(per_pair)
-        total = game.stats if total is None else total + game.stats
-    elapsed = time.time() - start
-    s = total
+    per_league = possessions // len(seeds)
+    for seed in seeds:
+        league = generate_league(seed=seed)
+        teams = sorted(league.teams)
+        pairs = [(teams[i], teams[(i + 1) % len(teams)]) for i in range(len(teams))]
+        per_pair = max(2, per_league // len(pairs))
+        for home, away in pairs:
+            game = HalfCourtGame(league, home, away, rng, tuning, record=False, model=model,
+                                 params=params)
+            game.play(per_pair)
+            total += game.stats
+    return total, time.time() - start
+
+
+def collect(possessions: int, seed: int, tuning: SpatialTuning = DEFAULT_TUNING,
+            model: DecisionModel = None, params: Optional[SpatialParams] = None) -> dict:
+    stats, elapsed = play(possessions, [seed], tuning, model, params)
+    return summarize(stats, elapsed)
+
+
+def summarize(s: Counter, elapsed: float = 0.0) -> dict:
+    """Turn summed possession stats into the measured rates (see ``TARGETS``)."""
     n = s["possessions"]
     fga = sum(s[f"fga_{z}"] for z in ZONES)
     fgm = sum(s[f"fgm_{z}"] for z in ZONES)
@@ -114,7 +134,7 @@ def collect(possessions: int, seed: int, tuning: SpatialTuning = DEFAULT_TUNING,
         out[f"share_{z}"] = s[f"fga_{z}"] / max(1, fga)
         out[f"fg_{z}"] = s[f"fgm_{z}"] / max(1, s[f"fga_{z}"])
     out["_possessions"] = n
-    out["_ms_per_possession"] = 1000 * elapsed / n
+    out["_ms_per_possession"] = 1000 * elapsed / max(1, n)
     for k in ("passes", "drives", "pnr", "blocks", "steals"):
         out[f"_{k}_per_possession"] = s[k] / n
     out["_stalled"] = s["end_stalled"]
@@ -277,13 +297,15 @@ def main() -> None:
     ap.add_argument("--games", type=int, default=0,
                     help="measure this many full games (pace, scoring, transition, minutes, fouls)")
     ap.add_argument("--jobs", type=int, default=1, help="processes for --games (at most 2)")
+    ap.add_argument("--params", help="JSON file of SpatialParams to use instead of the defaults")
     args = ap.parse_args()
     if args.games:
         report_fullgames(collect_fullgames(args.games, args.seed, args.jobs))
         return
     model = HEURISTIC if args.values == "heuristic" else default_model()
+    params = SpatialParams.load(args.params) if args.params else None
     print(f"Decision values: {model.meta.get('source', '?')}\n")
-    report(collect(args.possessions, args.seed, model=model))
+    report(collect(args.possessions, args.seed, model=model, params=params))
 
 
 if __name__ == "__main__":

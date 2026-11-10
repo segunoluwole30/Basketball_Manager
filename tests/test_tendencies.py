@@ -99,11 +99,14 @@ class SpatialTests(unittest.TestCase):
                 lg.teams[1].tactics.defensive_scheme = s
             return setup
         # A pressing defence multiplies the opponent's turnover risk, so test against a
-        # team that handles the ball enough to show it (league 7), with a big sample.
-        man = self.run_game(scheme(DefensiveScheme.MAN), n=2400, league_seed=7)
-        press = self.run_game(scheme(DefensiveScheme.PRESS), n=2400, league_seed=7)
+        # team that handles the ball enough to show it (league 7). One 2,400-possession
+        # game gives a press/man ratio anywhere from 1.2 to 1.7 (the offence adapts by
+        # passing less), so pool three games per scheme: ~1.4 expected, sd ~0.1.
         away_tov = lambda g: sum(g.box[id(a)]["tov"] for a in g.agents["away"])
-        self.assertGreater(away_tov(press), away_tov(man) * 1.3)
+        def tov(s):
+            return sum(away_tov(self.run_game(scheme(s), n=2400, seed=seed, league_seed=7))
+                       for seed in (5, 6, 7))
+        self.assertGreater(tov(DefensiveScheme.PRESS), tov(DefensiveScheme.MAN) * 1.15)
 
     def test_mid_range_tendency_creates_mid_range_shots(self):
         def mids(level):
