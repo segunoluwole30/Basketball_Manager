@@ -1,3 +1,5 @@
 __pycache__/
 *.db
 hoopsim_watch.html
+node_modules/
+web/dist/
