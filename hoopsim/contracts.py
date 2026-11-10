@@ -68,8 +68,10 @@ def team_strength(league: League, team_id: int) -> float:
 # --------------------------------------------------------------------------
 # Options
 # --------------------------------------------------------------------------
-def resolve_options(league: League, season: int) -> list[str]:
-    """Decide options on contracts whose final (option) year is ``season``."""
+def resolve_options(league: League, season: int, manager=None) -> list[str]:
+    """Decide options on contracts whose final (option) year is ``season``.
+
+    Team options on the user's team are the ``manager``'s call."""
     log = []
     for p in list(league.players.values()):
         c = p.contract
@@ -77,6 +79,15 @@ def resolve_options(league: League, season: int) -> list[str]:
             continue
         fair = asking_salary(p, league, 1)
         team = league.teams[p.team_id].abbreviation
+        if (c.option is ContractOption.TEAM and manager is not None
+                and p.team_id == league.user_team_id):
+            if manager.exercise_team_option(league, p, fair):
+                c.option = None
+                log.append(f"{team} exercise team option on {p.name}")
+            else:
+                log.append(f"{team} decline team option on {p.name}")
+                league.release(p.id)
+            continue
         if c.option is ContractOption.TEAM and c.salary > fair * 1.25:
             log.append(f"{team} decline team option on {p.name}")
             league.release(p.id)
@@ -91,12 +102,19 @@ def resolve_options(league: League, season: int) -> list[str]:
 # --------------------------------------------------------------------------
 # Re-signing
 # --------------------------------------------------------------------------
-def willing_to_resign(p: Player, league: League, rng: random.Random) -> bool:
+def resign_chance(p: Player, league: League, salary: int = 0, ask: int = 0) -> float:
+    """Chance a player re-signs with his own team; paying over his ask helps."""
     h = p.hidden
     win = team_strength(league, p.team_id) - 105       # roughly: is this a good team?
     chance = (0.55 + 0.02 * (h.loyalty - 10) + 0.008 * (p.morale - 50)
               + 0.01 * win * (h.ambition / 10))
-    return rng.random() < max(0.05, min(0.95, chance))
+    if ask:
+        chance += 1.5 * (salary / ask - 1)
+    return max(0.05, min(0.95, chance))
+
+
+def willing_to_resign(p: Player, league: League, rng: random.Random) -> bool:
+    return rng.random() < resign_chance(p, league)
 
 
 def team_wants_to_keep(p: Player, league: League, salary: int, season: int) -> bool:
@@ -113,12 +131,14 @@ def team_wants_to_keep(p: Player, league: League, salary: int, season: int) -> b
     return payroll <= allowance
 
 
-def resign_or_release(league: League, season: int, rng: random.Random) -> tuple[list[str], list[int]]:
+def resign_or_release(league: League, season: int, rng: random.Random,
+                      manager=None) -> tuple[list[str], list[int]]:
     """For contracts that ended before ``season``: re-sign or let walk.
 
     Returns (log lines, ids of players who became free agents).
     """
     log, walked = [], []
+    user_expiring = []
     for p in sorted(league.players.values(), key=lambda q: -q.current_ability):
         c = p.contract
         if p.team_id is None or not c or c.expires_season >= season:
@@ -126,10 +146,30 @@ def resign_or_release(league: League, season: int, rng: random.Random) -> tuple[
         team = league.teams[p.team_id].abbreviation
         years = contract_length(p, league, rng)
         salary = asking_salary(p, league, years)
+        if manager is not None and p.team_id == league.user_team_id:
+            user_expiring.append((p, salary, years))
+            continue
         if team_wants_to_keep(p, league, salary, season) and willing_to_resign(p, league, rng):
             p.contract = Contract(salary, season + years - 1)
             log.append(f"{team} re-sign {p.name}: {years}y ${salary / 1e6:.1f}M")
         else:
+            league.release(p.id)
+            walked.append(p.id)
+    if user_expiring:
+        offers = manager.resign(league, user_expiring)
+        for p, ask, _ in user_expiring:
+            team = league.teams[p.team_id].abbreviation
+            offer = offers.get(p.id)
+            if offer is None:
+                log.append(f"{team} let {p.name} walk")
+            else:
+                salary, years = offer
+                salary = min(salary, max_contract(league))
+                if salary >= ask * 0.9 and rng.random() < resign_chance(p, league, salary, ask):
+                    p.contract = Contract(salary, season + max(1, min(5, years)) - 1)
+                    log.append(f"{team} re-sign {p.name}: {years}y ${salary / 1e6:.1f}M")
+                    continue
+                log.append(f"{p.name} turns down {team}'s offer (asked ${ask / 1e6:.1f}M)")
             league.release(p.id)
             walked.append(p.id)
     return log, walked
@@ -147,6 +187,21 @@ def rookie_contract(pick: int, league: League, season: int) -> Contract:
 
 def cap_room(league: League, team_id: int, season: int) -> int:
     return league.rules.salary_cap - payroll_for(league, team_id, season)
+
+
+def payment_route(league: League, team_id: int, salary: int, season: int,
+                  mle_available: bool) -> Optional[str]:
+    """How a team could legally pay ``salary`` to a new signing, or None if it can't."""
+    rules = league.rules
+    if salary < rules.min_salary or salary > max_contract(league):
+        return None
+    if cap_room(league, team_id, season) >= salary:
+        return "cap space"
+    if mle_available and salary <= rules.mid_level_exception:
+        return "mid-level exception"
+    if salary == rules.min_salary:
+        return "minimum"
+    return None
 
 
 def best_offer(league: League, team_id: int, ask: int, season: int,

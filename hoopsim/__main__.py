@@ -4,6 +4,7 @@
     python -m hoopsim game   [--seed N] [--pbp]          # one game: box score (+ play-by-play)
     python -m hoopsim season [--seed N] [--out league.db] # season + playoffs, awards, leaders
     python -m hoopsim career [--seasons 10] [--seed N] [--load league.db] [--out league.db]
+    python -m hoopsim play   [--team ABBR] [--load save.db]   # manage a team yourself
 """
 from __future__ import annotations
 
@@ -241,7 +242,18 @@ def main() -> None:
     career.add_argument("--load", help="continue a saved league instead of generating one")
     career.add_argument("--out", help="save the league afterwards")
 
+    play = sub.add_parser("play", help="be the general manager of one team")
+    play.add_argument("--team", help="team abbreviation (otherwise you'll be asked)")
+    play.add_argument("--seed", type=int, default=None)
+    play.add_argument("--teams", type=int, default=12)
+    play.add_argument("--load", help="continue a saved game")
+    play.add_argument("--out", help="file to save to (default hoopsim_save.db)")
+
     args = ap.parse_args()
+    if args.cmd == "play":
+        from .play import start
+        start(args)
+        return
     if args.cmd is None:  # bare `python -m hoopsim` behaves like `new`
         args = ap.parse_args(["new"])
     {"new": cmd_new, "game": cmd_game, "season": cmd_season, "career": cmd_career}[args.cmd](args)

@@ -17,7 +17,7 @@ from .draft import draft_order, run_draft
 from .engine import play_day
 from .generate import generate_schedule
 from .lineup import auto_lineup, lineup_is_usable
-from .market import ai_trades, fill_rosters, run_free_agency, trim_rosters
+from .market import ai_offers_to_user, ai_trades, fill_rosters, run_free_agency, trim_rosters
 from .models import League, Phase
 from .playoffs import play_playoffs, start_playoffs, team_records
 from .stats import awards, career_line, game_score, season_totals, update_morale
@@ -46,16 +46,21 @@ def _needs_new_lineup(league: League, team_id: int) -> bool:
 
 
 def refresh_lineups(league: League) -> None:
-    for tid in league.teams:
+    """AI coaches re-plan when needed. A user team with auto-lineup off keeps its
+    choices; if they become unusable (injury) the engine covers that game only."""
+    for tid, team in league.teams.items():
+        if not team.auto_lineup:
+            continue
         if _needs_new_lineup(league, tid):
             auto_lineup(league, tid)
 
 
 def play_regular_season(league: League, rng: random.Random,
-                        days: Optional[int] = None) -> list[str]:
+                        days: Optional[int] = None, manager=None) -> list[str]:
     """Play the remaining regular season (or just the next ``days`` days).
 
-    Returns notable events (trades at the deadline)."""
+    Returns notable events (trades at the deadline). ``manager`` answers trade
+    offers made to the user's team."""
     if league.phase is not Phase.REGULAR_SEASON:
         raise ValueError(f"not in the regular season ({league.phase.value})")
     all_days = sorted({g.day for g in league.games.values()
@@ -72,6 +77,7 @@ def play_regular_season(league: League, rng: random.Random,
             update_morale(league, season_totals(league))
         if day == deadline:
             events += [f"Deadline {line}" for line in ai_trades(league, rng, attempts=200, max_trades=3)]
+            events += [f"Deadline {line}" for line in ai_offers_to_user(league, rng, manager)]
     return events
 
 
@@ -135,8 +141,17 @@ def finish_season(league: League) -> dict:
     return summary
 
 
-def play_full_season(league: League, rng: random.Random) -> dict:
-    events = play_regular_season(league, rng)
+def trade_deadline_day(league: League) -> Optional[int]:
+    days = sorted({g.day for g in league.games.values() if g.season == league.season and not g.playoff})
+    return days[int(len(days) * 0.6)] if days else None
+
+
+def regular_season_over(league: League) -> bool:
+    return all(g.played for g in league.games.values() if g.season == league.season and not g.playoff)
+
+
+def play_full_season(league: League, rng: random.Random, manager=None) -> dict:
+    events = play_regular_season(league, rng, manager=manager)
     start_playoffs(league)
     play_playoffs(league, rng)
     summary = finish_season(league)
@@ -148,9 +163,12 @@ def play_full_season(league: League, rng: random.Random) -> dict:
 # --------------------------------------------------------------------------
 # Offseason
 # --------------------------------------------------------------------------
-def run_offseason(league: League, rng: random.Random) -> dict:
+def run_offseason(league: League, rng: random.Random, manager=None) -> dict:
     """Retirements, development, options, re-signing, draft, free agency, trades and a
-    new schedule. Returns a report of everything that happened."""
+    new schedule. Returns a report of everything that happened.
+
+    Decisions for the user's team go to ``manager`` (see manager.py); without one,
+    the AI runs every team."""
     if league.phase is not Phase.OFFSEASON:
         raise ValueError("finish the season first")
     old = league.season
@@ -164,7 +182,8 @@ def run_offseason(league: League, rng: random.Random) -> dict:
     new = old + 1
     league.season = new
     league.current_date = date(new, 7, 1)
-    report: dict = {"season": new, "retired": [], "development": {}}
+    report: dict = {"season": new, "retired": [], "development": {}, "notes": []}
+    league.mle_used = []                                   # new league year
 
     # Retirements and summer development
     for p in list(league.players.values()):
@@ -184,12 +203,13 @@ def run_offseason(league: League, rng: random.Random) -> dict:
                 p.injury = None
         p.morale = 50 + (p.morale - 50) * 0.5
 
-    report["options"] = resolve_options(league, new)
-    report["resigned"], walked = resign_or_release(league, new, rng)
-    report["draft"] = run_draft(league, rng, order, new)
-    report["free_agency"] = run_free_agency(league, rng, new)
+    report["options"] = resolve_options(league, new, manager)
+    report["resigned"], walked = resign_or_release(league, new, rng, manager)
+    report["draft"] = run_draft(league, rng, order, new, manager)
+    report["free_agency"] = run_free_agency(league, rng, new, manager=manager)
     report["trades"] = ai_trades(league, rng, attempts=300, max_trades=4)
-    report["waived"] = trim_rosters(league)
+    report["trades"] += ai_offers_to_user(league, rng, manager)
+    report["waived"] = trim_rosters(league, manager)
     report["free_agency"] += fill_rosters(league, rng, new)
     _prune_free_agents(league)
 
@@ -198,8 +218,13 @@ def run_offseason(league: League, rng: random.Random) -> dict:
     league.playoffs = []
     league.current_date = season_start(new)
     generate_schedule(league, rng)
-    for tid in league.teams:
-        auto_lineup(league, tid)
+    for tid, team in league.teams.items():
+        if team.auto_lineup:
+            auto_lineup(league, tid)
+        elif not lineup_is_usable(league, tid):
+            auto_lineup(league, tid)
+            report["notes"].append("Your old lineup no longer works (players left), so your "
+                                   "assistant set a new one. Change it any time.")
     league.phase = Phase.REGULAR_SEASON
     report["problems"] = league.validate()
     return report

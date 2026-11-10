@@ -15,12 +15,13 @@ _LOTTERY_WEIGHTS = [14, 14, 14, 12.5, 10.5, 9, 7.5, 6, 4.5, 3, 2, 1.5, 1, 0.5]
 def generate_draft_class(league: League, rng: random.Random, size: int) -> list[Player]:
     """Mostly 19-22-year-olds; a few have star potential, most won't stick."""
     prospects = []
-    for _ in range(size):
+    first_id = league.next_player_id()
+    for i in range(size):
         age = rng.choices([19, 20, 21, 22], [35, 30, 20, 15])[0]
         potential = int(max(45, min(195, rng.gauss(89, 27.5))))
-        p = generate_player(rng, league.next_player_id() + len(prospects), league.current_date,
-                            age=age, potential=potential)
-        prospects.append(p)
+        # Ids are final: every prospect joins the league (drafted or not).
+        prospects.append(generate_player(rng, first_id + i, league.current_date,
+                                         age=age, potential=potential))
     return prospects
 
 
@@ -46,8 +47,11 @@ def _scouted_value(p: Player, rng: random.Random) -> float:
     return 0.35 * p.current_ability + 0.65 * (p.potential_ability + rng.gauss(0, 15))
 
 
-def run_draft(league: League, rng: random.Random, order: list[int], season: int) -> list[str]:
-    """Draft ``rules.draft_rounds`` rounds; picks get rookie-scale deals for ``season``."""
+def run_draft(league: League, rng: random.Random, order: list[int], season: int,
+              manager=None) -> list[str]:
+    """Draft ``rules.draft_rounds`` rounds; picks get rookie-scale deals for ``season``.
+
+    The user's picks are made by ``manager.draft_pick``."""
     rounds = league.rules.draft_rounds
     prospects = generate_draft_class(league, rng, len(order) * rounds + len(order) // 2)
     board = {i: _scouted_value(p, rng) for i, p in enumerate(prospects)}
@@ -56,11 +60,15 @@ def run_draft(league: League, rng: random.Random, order: list[int], season: int)
     for rnd in range(rounds):
         for team_id in order:
             pick += 1
-            # Every team scouts differently: re-roll a little noise per pick.
-            idx = max(board, key=lambda i: board[i] + rng.gauss(0, 4))
+            if manager is not None and team_id == league.user_team_id:
+                available = [prospects[i] for i in board]
+                picked = manager.draft_pick(league, pick, available)
+                idx = next(i for i in board if prospects[i] is picked)
+            else:
+                # Every team scouts differently: re-roll a little noise per pick.
+                idx = max(board, key=lambda i: board[i] + rng.gauss(0, 4))
             del board[idx]
             choice = prospects[idx]
-            choice.id = league.next_player_id()
             choice.team_id = team_id
             choice.draft_year, choice.draft_pick = season, pick
             used = {q.jersey_number for q in league.roster(team_id)}
@@ -72,7 +80,6 @@ def run_draft(league: League, rng: random.Random, order: list[int], season: int)
     # Undrafted prospects become free agents.
     for idx in board:
         p = prospects[idx]
-        p.id = league.next_player_id()
         p.draft_year = season
         league.add_player(p)
     return log

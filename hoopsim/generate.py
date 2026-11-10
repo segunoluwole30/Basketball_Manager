@@ -254,7 +254,7 @@ def generate_league(*, seed: int = 0, num_teams: int = 12, season: int = 2026,
     if not 2 <= num_teams <= len(TEAM_NAMES):
         raise ValueError(f"num_teams must be 2-{len(TEAM_NAMES)}")
     rng = random.Random(seed)
-    league = League(name=name, season=season, current_date=date(season, 10, 1))
+    league = League(name=name, season=season, current_date=date(season, 10, 20))  # opening day
     if not league.rules.min_roster <= roster_size <= league.rules.max_roster:
         raise ValueError("roster_size outside league roster limits")
 

@@ -380,6 +380,7 @@ class Team:
     reputation: int = 50           # 1-100: attracts free agents, sponsors
     budget: int = 0                # spending money in league currency
     arena_capacity: int = 18000
+    auto_lineup: bool = True       # let the coach (AI) set starters and minutes
 
     @property
     def full_name(self) -> str:
@@ -647,6 +648,8 @@ class League:
     phase: Phase = Phase.REGULAR_SEASON
     playoffs: list[Series] = field(default_factory=list)   # current season's bracket
     history: list[dict] = field(default_factory=list)      # one summary per finished season
+    user_team_id: Optional[int] = None                     # the team you manage
+    mle_used: list[int] = field(default_factory=list)       # teams that used the MLE this league year
 
     # -- id allocation ------------------------------------------------------
     def next_player_id(self) -> int:

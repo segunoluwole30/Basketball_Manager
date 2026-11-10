@@ -74,6 +74,8 @@ def save_league(league: League, path: str | Path) -> None:
                 "phase": league.phase.value,
                 "playoffs": json.dumps([s.to_dict() for s in league.playoffs]),
                 "history": json.dumps(league.history),
+                "user_team_id": json.dumps(league.user_team_id),
+                "mle_used": json.dumps(league.mle_used),
             }
             conn.executemany("INSERT INTO meta VALUES (?, ?)", meta.items())
             conn.executemany(
@@ -111,6 +113,8 @@ def load_league(path: str | Path) -> League:
             phase=Phase(meta.get("phase", Phase.REGULAR_SEASON.value)),
             playoffs=[Series.from_dict(s) for s in json.loads(meta.get("playoffs", "[]"))],
             history=json.loads(meta.get("history", "[]")),
+            user_team_id=json.loads(meta.get("user_team_id", "null")),
+            mle_used=json.loads(meta.get("mle_used", "[]")),
         )
         for (data,) in conn.execute("SELECT data FROM teams ORDER BY id"):
             league.add_team(Team.from_dict(json.loads(data)))

@@ -4,7 +4,8 @@ from __future__ import annotations
 import random
 
 from .contracts import (
-    asking_salary, best_offer, contract_length, payroll_for, player_value, team_strength,
+    asking_salary, best_offer, contract_length, payment_route, payroll_for, player_value,
+    team_strength,
 )
 from .lineup import auto_lineup
 from .models import Contract, League, Player
@@ -28,60 +29,79 @@ def _choose_jersey(league: League, team_id: int, rng: random.Random) -> int:
     return rng.choice([n for n in range(100) if n not in used])
 
 
-def run_free_agency(league: League, rng: random.Random, season: int, rounds: int = 8) -> list[str]:
-    """Rounds of offers. Each round every team bids on its best affordable target;
-    each player takes his best offer (money first, then team quality), if it
-    meets his falling asking price. Then teams fill to the minimum roster."""
+def run_free_agency(league: League, rng: random.Random, season: int, rounds: int = 8,
+                    manager=None) -> list[str]:
+    """Rounds of offers. Each round every AI team bids on its best affordable target
+    and the user (via ``manager``) may bid on several. Each player takes his best
+    offer (money first, then team quality) if it meets his falling asking price.
+    Then teams fill to the minimum roster."""
     log = []
-    mle_used: set[int] = set()
+    user = league.user_team_id if manager is not None else None
     ask_discount = 1.0
-    for _ in range(rounds):
+    for rnd in range(rounds):
         pool = [p for p in league.free_agents() if not p.injury or p.injury.games_remaining < 20]
         if not pool:
             break
         values = {p.id: player_value(p, league, 2) for p in pool}
         pool.sort(key=lambda p: -values[p.id])
-        offers: dict[int, list[tuple[int, int, str]]] = {}
-        teams = list(league.teams)
+        # Each player's preferred length and asking salary this round.
+        terms: dict[int, tuple[int, int]] = {}
+        for p in pool:
+            years = contract_length(p, league, rng)
+            terms[p.id] = (years, int(asking_salary(p, league, years) * ask_discount))
+        offers: dict[int, list[tuple[int, int, str, int]]] = {}
+        teams = [t for t in league.teams if t != user]
         rng.shuffle(teams)
         for tid in teams:
             if len(league.roster(tid)) >= league.rules.max_roster:
                 continue
             need = _roster_need(league, tid)
             for p in pool[:40]:
-                years = contract_length(p, league, rng)
-                ask = int(asking_salary(p, league, years) * ask_discount)
+                years, ask = terms[p.id]
                 if need <= 0 and _upgrade_margin(league, tid, values[p.id]) < 5:
                     continue
-                salary, how = best_offer(league, tid, ask, season, tid not in mle_used)
+                salary, how = best_offer(league, tid, ask, season, tid not in league.mle_used)
                 if salary is None:
                     continue
-                offers.setdefault(p.id, []).append((tid, salary, how))
-                break                                  # one bid per team per round
+                offers.setdefault(p.id, []).append((tid, salary, how, years))
+                break                                  # one bid per AI team per round
+        if user is not None and len(league.roster(user)) < league.rules.max_roster:
+            for pid, salary, years in manager.free_agency(league, pool, terms, rnd + 1):
+                how = payment_route(league, user, salary, season, user not in league.mle_used)
+                if pid in terms and how:
+                    offers.setdefault(pid, []).append((user, salary, how, max(1, min(5, years))))
         for p in pool:
             bids = offers.get(p.id)
             if not bids:
                 continue
-            years = contract_length(p, league, rng)
-            ask = int(asking_salary(p, league, years) * ask_discount)
+            _, ask = terms[p.id]
 
             def appeal(bid):
-                tid, salary, _ = bid
+                tid, salary, _, _ = bid
                 return salary * (1 + 0.006 * (team_strength(league, tid) - 100) * p.hidden.ambition / 10)
 
-            tid, salary, how = max(bids, key=appeal)
+            tid, salary, how, years = max(bids, key=appeal)
+            user_bid = any(b[0] == user for b in bids)
             if salary < ask * 0.85 or len(league.roster(tid)) >= league.rules.max_roster:
+                if user_bid:
+                    log.append(f"{p.name} turns down your offer (asking ${ask / 1e6:.1f}M)")
                 continue
             # The cap may have moved since the bid: re-check.
-            salary2, how2 = best_offer(league, tid, salary, season, tid not in mle_used)
+            if tid == user:
+                how2 = payment_route(league, tid, salary, season, tid not in league.mle_used)
+                salary2 = salary if how2 else None
+            else:
+                salary2, how2 = best_offer(league, tid, salary, season, tid not in league.mle_used)
             if salary2 is None:
                 continue
             if how2 == "mid-level exception":
-                mle_used.add(tid)
+                league.mle_used.append(tid)
             p.jersey_number = _choose_jersey(league, tid, rng)
             league.sign(p.id, tid, Contract(salary2, season + years - 1))
             log.append(f"{league.teams[tid].abbreviation} sign {p.name} "
                        f"(CA {p.current_ability}, {p.age(league.current_date)}): {years}y ${salary2 / 1e6:.1f}M via {how2}")
+            if user_bid and tid != user:
+                log.append(f"{p.name} chose {league.teams[tid].abbreviation} over your offer")
         ask_discount *= 0.9                            # unsigned players lower their sights
     log += fill_rosters(league, rng, season)
     return log
@@ -102,8 +122,9 @@ def fill_rosters(league: League, rng: random.Random, season: int) -> list[str]:
     return log
 
 
-def trim_rosters(league: League) -> list[str]:
-    """Teams over the maximum waive their least valuable players (cheapest first on ties)."""
+def trim_rosters(league: League, manager=None) -> list[str]:
+    """Teams over the maximum waive their least valuable players (cheapest first on ties).
+    The user's waivers are the ``manager``'s call."""
     log = []
     for tid in league.teams:
         roster = league.roster(tid)
@@ -112,7 +133,13 @@ def trim_rosters(league: League) -> list[str]:
             continue
         keep_score = sorted(roster, key=lambda p: (player_value(p, league, 3),
                                                    p.contract.salary if p.contract else 0))
-        for p in keep_score[:excess]:
+        to_waive = keep_score[:excess]
+        if manager is not None and tid == league.user_team_id:
+            chosen = manager.choose_waivers(league, excess)
+            ids = {p.id for p in roster}
+            if len(set(chosen)) == excess and set(chosen) <= ids:
+                to_waive = [league.players[pid] for pid in chosen]
+        for p in to_waive:
             log.append(f"{league.teams[tid].abbreviation} waive {p.name}")
             league.release(p.id)
     return log
@@ -163,7 +190,7 @@ def ai_trades(league: League, rng: random.Random, attempts: int = 300,
     """Random 1-for-1 and 2-for-1 proposals; done when both teams' value rises."""
     log = []
     season = league.season
-    team_ids = list(league.teams)
+    team_ids = [t for t in league.teams if t != league.user_team_id]   # never trade for the user
     for _ in range(attempts):
         if len(log) >= max_trades:
             break
@@ -187,4 +214,82 @@ def ai_trades(league: League, rng: random.Random, attempts: int = 300,
             ta, tb = league.teams[a].abbreviation, league.teams[b].abbreviation
             log.append(f"TRADE: {ta} send {', '.join(p.name for p in a_out)} to {tb} "
                        f"for {', '.join(p.name for p in b_out)}")
+    return log
+
+
+# --------------------------------------------------------------------------
+# Trades involving the user's team
+# --------------------------------------------------------------------------
+def evaluate_trade(league: League, user_out: list[int], other: int,
+                   other_out: list[int]) -> tuple[bool, str]:
+    """Would AI team ``other`` accept? Checks ownership, roster limits and salary
+    matching, then whether the deal improves the AI team by its own priorities."""
+    user = league.user_team_id
+    if user is None or other == user or other not in league.teams:
+        return False, "pick another team"
+    if not user_out and not other_out:
+        return False, "the trade is empty"
+    for pid in user_out:
+        if pid not in league.players or league.players[pid].team_id != user:
+            return False, f"player {pid} isn't on your team"
+    for pid in other_out:
+        if pid not in league.players or league.players[pid].team_id != other:
+            return False, f"player {pid} isn't on {league.teams[other].abbreviation}"
+    ru, ro = league.roster(user), league.roster(other)
+    uo = [league.players[p] for p in user_out]
+    oo = [league.players[p] for p in other_out]
+    rules = league.rules
+    for size, who in ((len(ru) - len(uo) + len(oo), "your"), (len(ro) - len(oo) + len(uo), "their")):
+        if size > rules.max_roster:
+            return False, f"{who} roster would be over {rules.max_roster}"
+        if size < rules.min_roster - 2:
+            return False, f"{who} roster would be too short"
+    if not _salaries_match(league, uo, oo, league.season, user, other):
+        return False, "salaries don't match (over-the-cap teams can take back at most 125% + $100k)"
+    new_o = [p for p in ro if p.id not in set(other_out)] + uo
+    gain = _trade_gain(league, other, ro, new_o)
+    if gain <= 2:
+        return False, f"{league.teams[other].abbreviation} say no: it doesn't help them"
+    return True, "accepted"
+
+
+def execute_user_trade(league: League, user_out: list[int], other: int, other_out: list[int]) -> None:
+    league.trade(league.user_team_id, user_out, other, other_out)
+    auto_lineup(league, other)
+    if league.teams[league.user_team_id].auto_lineup:
+        auto_lineup(league, league.user_team_id)
+
+
+def ai_offers_to_user(league: League, rng: random.Random, manager, attempts: int = 150,
+                      max_offers: int = 2) -> list[str]:
+    """AI teams pitch trades they like and think the user might take."""
+    user = league.user_team_id
+    if user is None or manager is None:
+        return []
+    log, offered = [], 0
+    others = [t for t in league.teams if t != user]
+    for _ in range(attempts):
+        if offered >= max_offers:
+            break
+        b = rng.choice(others)
+        ru, rb = league.roster(user), league.roster(b)
+        user_out = [rng.choice(ru[:10])]
+        b_out = rng.sample(rb[:12], rng.choice([1, 1, 2]))
+        ok, _ = evaluate_trade(league, [p.id for p in user_out], b, [p.id for p in b_out])
+        if not ok:
+            continue
+        # Only pitch deals the user's side could plausibly like.
+        out_ids = {p.id for p in user_out}
+        new_u = [p for p in ru if p.id not in out_ids] + b_out
+        if _trade_gain(league, user, ru, new_u) < -5:
+            continue
+        offered += 1
+        offer = {"team_id": b, "you_give": [p.id for p in user_out], "you_get": [p.id for p in b_out]}
+        names_out = ", ".join(p.name for p in user_out)
+        names_in = ", ".join(p.name for p in b_out)
+        if manager.respond_to_trade(league, offer):
+            execute_user_trade(league, offer["you_give"], b, offer["you_get"])
+            log.append(f"TRADE: you send {names_out} to {league.teams[b].abbreviation} for {names_in}")
+        else:
+            log.append(f"You turned down {league.teams[b].abbreviation}'s offer of {names_in} for {names_out}")
     return log

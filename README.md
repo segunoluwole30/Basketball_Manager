@@ -3,6 +3,46 @@
 A basketball league simulator in the spirit of management sims. Pure Python 3.10+,
 no dependencies.
 
+## Play
+
+```bash
+python -m hoopsim play                  # new league: pick a team
+python -m hoopsim play --team HCM       # new league as the Harbor City Mariners
+python -m hoopsim play --load my.db     # carry on a saved game
+```
+
+You're the general manager. During the season:
+
+| Command | What it does |
+|---|---|
+| `sim [N]`, `week`, `deadline`, `end` | play N days, a week, to the trade deadline, or the rest of the season |
+| `next` | after the regular season: playoffs, awards, then the offseason |
+| `roster [ABBR]`, `player ID` | ratings, scouted potential, contracts, injuries, morale; full scouting report |
+| `lineup`, `start A B C D E`, `minutes ID=MIN`, `auto on/off` | set the starting five (PG..C) and minute targets, or let your assistant |
+| `tactics pace=16 three=14 defense=zone focus=perimeter crash=8 depth=9` | team tactics |
+| `fa`, `sign ID SALARY YEARS`, `release ID` | free agents and what they want; sign (salary in $M) or waive |
+| `trade 12,15 for ABBR 40` | propose a trade; the other team decides by its own priorities |
+| `finances`, `standings`, `leaders`, `schedule`, `results`, `history`, `save` | |
+
+In the offseason you're asked about each decision for your team: team options,
+re-signing (paying over the ask helps), draft picks from your scouts' board,
+free-agent bids each round (weaker teams have to outbid stronger ones), trade
+offers from AI teams, and roster cuts. Answer `auto` to hand any of them to
+your assistant.
+
+You never see everything. Potential is shown as your scouts' estimate with a
+range. The range narrows as a player ages and builds a track record, and it's
+tighter for your own players. Hidden attributes show up as scouting notes
+("injury prone", "big-game player", "lazy in practice"). Past 29, potential
+just reads "peaked".
+
+The AI never makes your team's decisions. Everything goes through a `Manager`
+(`hoopsim/manager.py`): the CLI asks you, and `AIManager` is the autopilot.
+The only exception is a roster below the league minimum, which gets
+minimum-salary fills. Tests use a manager that refuses everything to prove it.
+
+## Simulation commands
+
 ```bash
 python -m hoopsim new --seed 1 --teams 12 --out league.db   # generate, save, print summary
 python -m hoopsim game --seed 1 --pbp                       # one game: play-by-play + box score
