@@ -160,3 +160,46 @@ class InsideGameTests(unittest.TestCase):
             a = names[name]
             self.assertGreaterEqual(a.slot, 3)
             self.assertGreaterEqual((a.a("close_range") + a.a("strength")) / 2, 11)
+
+
+def frozen_scene(seed: int = 5):
+    """A game paused mid-possession: offence spread along y=30, each defender 4.5 ft
+    off his man toward the rim, the second player holding the ball."""
+    league = generate_league(seed=41)
+    g = HalfCourtGame(league, 1, 2, random.Random(seed), record=False)
+    g.play(1)
+    g.result, g.points, g.flight = None, 0, None
+    h = g.offense[1]
+    g.holder, g.mode, g.mode_since, g.now, g.shot_clock = h, "probe", 0.0, 10.0, 12.0
+    g.pnr = g.post = g.cutter = None
+    g.next_decision = 99.0
+    for i, a in enumerate(g.offense):
+        a.place(0.0, 30.0) if a is h else a.place(-20 + 10 * i, 30.0)
+    for i, d in enumerate(g.defense):
+        d.place(*C.toward(g.offense[i].pos, C.RIM, 4.5))
+        d.next_think = 0.0
+    return g, h
+
+
+class DefenceTests(unittest.TestCase):
+    def test_jumpers_are_contested_at_release(self):
+        g, h = frozen_scene()
+        g.catch_time = g.now - 0.2
+        guard = g.guarded_by(h)
+        start = C.dist(guard.pos, h.pos)
+        g.take_shot(h, moving=False)
+        self.assertEqual(g.mode, "release")            # the shooting motion takes time...
+        self.assertIsNone(g.flight)
+        steps = 0
+        while g.flight is None and steps < 10:
+            g.step()
+            steps += 1
+        self.assertEqual(g.flight.kind, "shot")         # ...then it goes up
+        self.assertGreaterEqual(steps, 2)
+        self.assertLess(C.dist(guard.pos, h.pos), start - 1.0)   # and his man closed out meanwhile
+
+    def test_closeouts_depend_on_the_shooter(self):
+        g, h = frozen_scene()
+        shooter, non_shooter = sorted(g.offense, key=lambda a: a.a("three_point"))[::-1][0::4]
+        self.assertGreater(shooter.a("three_point"), non_shooter.a("three_point"))
+        self.assertLess(g.closeout_gap(shooter), g.closeout_gap(non_shooter))

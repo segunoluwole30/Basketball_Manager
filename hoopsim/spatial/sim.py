@@ -61,6 +61,10 @@ class SpatialTuning:
     # Style: points of option value per tendency point away from 10 (a 20 tendency = +0.12).
     tendency_weight: float = 0.025
     off_dribble_penalty: float = 0.035
+    # Jump shots take time to get off (catch to release / gather and rise); the
+    # contest is judged where the defenders are at release, not at the decision.
+    release_catch: float = 0.30
+    release_dribble: float = 0.36
 
 
 DEFAULT_TUNING = SpatialTuning()
@@ -357,6 +361,10 @@ class HalfCourtGame:
             self.advance_flight()
         elif self.holder is not None and self.mode in ("setup", "probe", "drive", "post", "pullup"):
             self.handler_logic()
+        elif self.mode == "release" and self.now >= self.release["at"] - 1e-9:
+            r = self.release
+            self.mode = r["mode"]
+            self.take_shot(self.holder, r["moving"], released=r["catch"])
         boost = 1.08 if self.mode == "drive" else 0.35 if self.mode == "post" else 1.0
         for a in self.everyone:
             a.move(dt, self.now, boost if a is self.holder else 1.0)
@@ -557,7 +565,10 @@ class HalfCourtGame:
             if self.mode == "rebound":
                 continue
             man = self.man_of(d)
-            if d is helper:
+            if self.mode == "release" and self.holder is not None and (
+                    man is self.holder or C.dist(d.pos, self.holder.pos) < 8):
+                d.target(C.toward(self.holder.pos, d.pos, 1.2))   # get a hand up
+            elif d is helper:
                 # Meet the driver between him and the rim.
                 d_rim = C.dist_to_rim(self.holder.pos)
                 d.target(C.toward(RIM, self.holder.pos, max(3.0, min(6.0, d_rim - 2.5))))
@@ -572,11 +583,13 @@ class HalfCourtGame:
                 depth = 9.0 if self.pnr["set"] else 14.0
                 d.target(C.toward(RIM, self.holder.pos, min(depth, C.dist_to_rim(self.holder.pos) - 2)))
             elif self.flight and self.flight.kind == "pass" and self.flight.data.get("to") is man:
-                d.target(C.toward(man.pos, RIM, 3.0))             # close out on the catch
+                d.target(C.toward(self.flight.end, RIM, self.closeout_gap(man)))   # close out on the catch
             elif man is self.holder:
                 # Press up on shooters out to 30 ft; give non-shooters room out there.
                 deep = C.dist_to_rim(man.pos)
-                gap = 3.0 if deep < 27 else 5.0
+                gap = max(2.0, self.closeout_gap(man)) if deep >= 22 else 3.0   # up on shooters
+                if deep >= 27:
+                    gap += 2.0
                 gap += {"zone": 1.0, "press": -0.8}.get(self.scheme, 0.0)   # zones sit back, presses get up
                 # Anticipate: play where he's going, not where he was.
                 lead = 0.45 if self.mode == "drive" else 0.2
@@ -594,6 +607,13 @@ class HalfCourtGame:
                 tx = mx + (RIM[0] - mx) * sag + (ball[0] - mx) * 0.08
                 ty = my + (RIM[1] - my) * sag + (ball[1] - my) * 0.08
                 d.target((tx, ty))
+
+    def closeout_gap(self, man: Agent) -> float:
+        """How close to get on a closeout: run shooters off the line (arrive at arm's
+        length, hand up), give non-shooters room so they can't drive past."""
+        if C.dist_to_rim(man.pos) < 20:
+            return 2.5
+        return max(1.5, min(5.0, 3.0 - 0.35 * (man.a("three_point") - 11)))
 
     def choose_helper(self) -> Optional[Agent]:
         h = self.holder
@@ -670,9 +690,11 @@ class HalfCourtGame:
             # Judge the contest by where the nearest defender will be at release.
             spot = self.finish_point(h)
             closer, dd = self.nearest_defender(spot)
-            predicted = max(0.0, dd - self.closing_speed(closer, h) * 0.35)
+            catch = self.just_caught(moving)
+            rt = self.release_time(h, catch) if C.zone(spot) in (MID_ZONE, THREE_ZONE) else 0.0
+            predicted = max(0.0, dd - self.closing_speed(closer, h) * (0.35 + rt))
             ep = self.shot_value(h, p=spot, contest_d=predicted, defender=closer, moving=moving,
-                                 catch=self.just_caught(moving), post=self.mode == "post")
+                                 catch=catch, post=self.mode == "post")
             options.append(("shoot", ("shoot", C.zone(spot)), [1.0, ep, float(C.is_three(spot)), float(moving),
                                                    max(0.0, 6.0 - sc) / 6.0]))
         if self.mode == "post":
@@ -952,14 +974,35 @@ class HalfCourtGame:
                     return
         self.take_shot(mate, moving=False, finish="lob")
 
-    def take_shot(self, h: Agent, moving: bool, finish: Optional[str] = None) -> None:
+    def release_time(self, h: Agent, catch: bool) -> float:
+        """Seconds from deciding to shoot a jumper to letting it go; good shooters are quicker."""
+        base = self.t.release_catch if catch else self.t.release_dribble
+        return max(0.15, base - 0.008 * (h.a("three_point") - 10))
+
+    def begin_release(self, h: Agent, moving: bool) -> None:
+        """Start the shooting motion; the shot goes up (and is contested) at release."""
+        catch = self.just_caught(moving)
+        self.release = {"mode": self.mode, "moving": moving, "catch": catch,
+                        "at": self.now + self.release_time(h, catch)}
+        self.mode = "release"
+        h.target(h.pos)
+        for d in self.defense:              # the shot motion is a cue: defenders nearby react quickly
+            if C.dist(d.pos, h.pos) < 12:
+                d.next_think = min(d.next_think, self.now + d.reaction * 0.5)
+
+    def take_shot(self, h: Agent, moving: bool, finish: Optional[str] = None,
+                  released: Optional[bool] = None) -> None:
+        """``released``: None to start a shot; for a jumper, the catch flag once it's released."""
         rng, t = self.rng, self.t
         lob = finish == "lob"
         post = self.mode == "post"
         spot = C.toward(RIM, h.pos, min(1.5, C.dist_to_rim(h.pos))) if lob else self.finish_point(h)
+        if released is None and not lob and not post and C.zone(spot) in (MID_ZONE, THREE_ZONE):
+            self.begin_release(h, moving)
+            return
+        catch = released if released is not None else (None if lob else self.just_caught(moving))
         defender, dd = self.nearest_defender(spot)
-        prob, z = self.make_prob(h, spot, dd, defender, moving,
-                                 None if lob else self.just_caught(moving), post=post, lob=lob)
+        prob, z = self.make_prob(h, spot, dd, defender, moving, catch, post=post, lob=lob)
         points = 3 if z == THREE_ZONE else 2
         level = max(0.0, min(1.0, (6.0 - dd) / 5.0))
         shot_d = C.dist_to_rim(spot)
@@ -974,7 +1017,7 @@ class HalfCourtGame:
         source = ("lob" if lob else "post" if post else "putback" if self.now - self.orb_time < 2.0
                   else "drive" if self.mode == "drive"
                   else (self.catch_source or ("dunker" if C.dist_to_rim(h.pos) < 8 else "catch"))
-                  if self.just_caught(moving) else "other")
+                  if (catch if released is not None else self.just_caught(moving)) else "other")
         # Block?
         if dd < 4.0:
             closeness = max(0.0, min(1.0, (4.0 - dd) / 2.5))
@@ -997,7 +1040,8 @@ class HalfCourtGame:
             bucket = "tight" if dd < 2 else "close" if dd < 4 else "open" if dd < 6 else "wide"
             self.stats[f"contest_{z}_{bucket}"] += 1
             ctx = ("drive" if self.mode == "drive" else "putback" if self.now - self.orb_time < 2.0
-                   else "catch" if self.now - self.catch_time < 1.0 else "other")
+                   else "catch" if (catch if released is not None else self.now - self.catch_time < 1.0)
+                   else "other")
             self.stats[f"ctx_{z}_{ctx}"] += 1
             self.stats[f"ctxwide_{z}_{ctx}"] += bucket == "wide"
             self.stats[f"shot_clock_{z}"] += self.shot_clock
