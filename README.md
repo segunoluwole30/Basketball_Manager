@@ -84,13 +84,14 @@ pause/speed/skip controls.
   pick-and-roll, or hold. Each option is scored by expected points from the current
   positions, and smarter players pick the best option more reliably.
 - **Defence**: man-to-man with reaction delays set by basketball IQ. On-ball
-  defenders anticipate drives. Off-ball defenders stay close one pass away and sink
-  from the weak side. A rim protector meets drivers, bigs play drop coverage on
-  pick-and-rolls (or switch, per tactics), and screens physically hold defenders.
+  defenders anticipate drives and play up on shooters. Off-ball defenders stay close
+  one pass away and sink from the weak side. Closeouts depend on the shooter. A rim
+  protector meets drivers, help defenders dig at the ball, bigs play drop coverage
+  on pick-and-rolls (or switch, per tactics), and screens physically hold defenders.
 - **Outcomes**: make chance comes from distance, the shooter's rating and the
-  nearest defender's distance, height and quality. The same positions drive blocks,
-  shooting fouls, steals in passing lanes, dribble turnovers, charges and
-  rebounds with box-outs.
+  nearest defender's distance, height and quality *at release*. The same positions
+  drive blocks, shooting fouls, steals in passing lanes, dribble turnovers, charges
+  and rebounds with box-outs.
 - **Speed**: about 1.5 ms per possession (a game in about 0.3 s), fast enough for
   whole seasons.
 
@@ -150,8 +151,8 @@ mid-range specialists take it and most players don't.
   chance, and strong post players draw double-teams that open kick-outs.
 - **Defence:** a "tagger" picks up open cutters and rollers in the paint.
 
-Held-out leagues (3,000 possessions each, learned values), with the numbers
-before the inside game in brackets:
+When the inside game was added, held-out leagues (3,000 possessions each, learned
+values) gave these numbers, with the numbers before it in brackets:
 - **Shot mix:** threes 51–65% of shots (68–78%; NBA ~41%), rim 18–28% (7–13%;
   NBA ~30%).
 - **Rim shots come from:** drives ~55%, cuts ~14%, putbacks ~13%, post-ups ~9%,
@@ -161,6 +162,69 @@ before the inside game in brackets:
   stats are within tolerance (was 5–7).
 - **Still off:** 1.23–1.27 points per possession (target ~0.98), turnovers ~8%
   (target 13%), almost no mid-range, and possessions a little short.
+
+### Defence
+
+Every option was worth too much (a three about 1.1 points, a possession about
+1.25), so the defence was too weak. Instrumenting it showed where:
+- **Jumpers had no release.** A shot went up the instant the handler chose it, and
+  the contest was judged from where defenders stood at that moment, so a closeout
+  had no time to arrive. Now a mid-range or three-point jumper takes about 0.3 s to
+  get off (a little longer off the dribble, quicker for good shooters). The shooting
+  motion cues nearby defenders to get a hand up. The make chance, blocks and fouls
+  use their positions at release.
+- **Closeouts ignored the shooter.** A closing defender stopped 3 ft from everyone,
+  and on the ball backed off to 3 ft, so a catch-and-shoot three from a swing pass
+  was the best shot in the game (about 1.24 points). Now defenders run good shooters
+  off the line (arm's length, about 1.5–2 ft) and give poor shooters room so they
+  can't drive by.
+- **A tight contest barely hurt a three.** NBA tracking puts very tightly contested
+  threes about ten points below wide-open ones. The engine took off seven. The full
+  contest now takes ten, and a wide-open three is a point better.
+- **Missing turnovers.** Help defenders now dig at drivers who come within reach.
+  Passes can be thrown away or fumbled without a steal: more often with a hand in
+  the passing window, on long or lob passes, and from poor passers. This chance is
+  part of the pass's risk, so decisions account for it. Any defender with his feet
+  set in the driver's path can take a charge, once per drive (it used to be only
+  help defenders, with a fresh chance every tick). Drivers and post players
+  sometimes travel or commit offensive fouls.
+
+Held-out leagues 0–2 (3,000 possessions each, values retrained after each change):
+
+| stat | before | after | NBA target |
+|---|---|---|---|
+| points per possession | 1.27–1.31 | 1.15–1.20 | ~0.98 |
+| turnovers | 6–7% | 8–10% | ~13% |
+| threes, share of shots | 63–67% | 57–58% | ~41% |
+| rim, share of shots | 16–19% | 18–21% | ~30% |
+| mid-range, share of shots | 3–6% | 5–8% | ~13% |
+| 3P% | 37–39% | 31–36% | ~36% |
+| assists per make | 0.51–0.65 | 0.44–0.60 | ~0.60 |
+| stats within tolerance | 6–7 of 14 | 5–7 of 14 | |
+
+Lost-ball and offensive-foul turnovers are now near NBA rates (per 100
+possessions: digs ~1.2, charges ~0.7, travels and offensive fouls ~0.5).
+
+- **Tried and dropped:**
+  - Letting defenders intercept passes in flight and cheat into passing lanes.
+    Turnovers barely moved: the offence stopped passing (0.5–0.8 passes per
+    possession) and assists fell out of range.
+  - Top-locking great shooters, with backdoor cuts as the counter. Not better.
+  - Making passes past the on-ball defender safer. It brought more passes and
+    assists, but threes rose to 62–65%.
+- **Training noise:** retraining the same physics with different training seeds
+  moves held-out points per possession by up to ±0.03. Treat smaller differences
+  as noise.
+- **Still off:**
+  - Points per possession are about 1.18. With the targets' FG% by zone, offensive
+    rebounds and free-throw rate, ~1.10 is about the floor (0.98 is a half-court
+    number, but those FG% are close to full-game ones).
+  - Turnovers are ~9%. About 5% of passes are turned over, against ~2–3% in the
+    NBA, so the offence makes too few passes (~0.8 per possession) and possessions
+    are short (~10.8 s).
+  - Each turnover risk added to drives pushed shots back toward threes. Threes are
+    still ~57% of shots, because cuts, rolls and lobs make few rim shots. That gap
+    is on the offensive side.
 
 ## Simulation commands
 

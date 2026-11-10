@@ -160,3 +160,99 @@ class InsideGameTests(unittest.TestCase):
             a = names[name]
             self.assertGreaterEqual(a.slot, 3)
             self.assertGreaterEqual((a.a("close_range") + a.a("strength")) / 2, 11)
+
+
+def frozen_scene(seed: int = 5):
+    """A game paused mid-possession: offence spread along y=30, each defender 4.5 ft
+    off his man toward the rim, the second player holding the ball."""
+    league = generate_league(seed=41)
+    g = HalfCourtGame(league, 1, 2, random.Random(seed), record=False)
+    g.play(1)
+    g.result, g.points, g.flight = None, 0, None
+    h = g.offense[1]
+    g.holder, g.mode, g.mode_since, g.now, g.shot_clock = h, "probe", 0.0, 10.0, 12.0
+    g.pnr = g.post = g.cutter = None
+    g.next_decision = 99.0
+    for i, a in enumerate(g.offense):
+        a.place(0.0, 30.0) if a is h else a.place(-20 + 10 * i, 30.0)
+    for i, d in enumerate(g.defense):
+        d.place(*C.toward(g.offense[i].pos, C.RIM, 4.5))
+        d.next_think = 0.0
+    return g, h
+
+
+class DefenceTests(unittest.TestCase):
+    def test_jumpers_are_contested_at_release(self):
+        g, h = frozen_scene()
+        g.catch_time = g.now - 0.2
+        guard = g.guarded_by(h)
+        start = C.dist(guard.pos, h.pos)
+        g.take_shot(h, moving=False)
+        self.assertEqual(g.mode, "release")            # the shooting motion takes time...
+        self.assertIsNone(g.flight)
+        steps = 0
+        while g.flight is None and steps < 10:
+            g.step()
+            steps += 1
+        self.assertEqual(g.flight.kind, "shot")         # ...then it goes up
+        self.assertGreaterEqual(steps, 2)
+        self.assertLess(C.dist(guard.pos, h.pos), start - 1.0)   # and his man closed out meanwhile
+
+    def test_closeouts_depend_on_the_shooter(self):
+        g, h = frozen_scene()
+        shooter, non_shooter = sorted(g.offense, key=lambda a: a.a("three_point"))[::-1][0::4]
+        self.assertGreater(shooter.a("three_point"), non_shooter.a("three_point"))
+        self.assertLess(g.closeout_gap(shooter), g.closeout_gap(non_shooter))
+
+    def test_help_defenders_dig_at_drives(self):
+        g, h = frozen_scene()
+        on = g.guarded_by(h)
+        helper = next(d for d in g.defense if d is not on)
+        def strips(near: bool, trials: int = 300) -> int:
+            n = 0
+            for _ in range(trials):
+                g.result = None
+                helper.place(h.x + (1.0 if near else 9.0), h.y)
+                helper.stuck_until = -1.0
+                n += g.dig(h)
+            return n
+        self.assertEqual(strips(near=False), 0)
+        self.assertGreater(strips(near=True), 3)
+
+    def test_errant_passes_under_pressure(self):
+        g, h = frozen_scene()
+        on = g.guarded_by(h)
+        on.stuck_until = -1.0
+        on.place(h.x, h.y - 1.5)
+        pressured = g.errant_chance(h, 20.0, lob=False)
+        on.place(h.x, h.y - 8.0)
+        free = g.errant_chance(h, 20.0, lob=False)
+        self.assertGreater(pressured, free)
+        self.assertGreater(g.errant_chance(h, 35.0, lob=False), free)    # long passes are riskier
+        self.assertLess(free, 0.05)
+
+    def test_charges_need_a_defender_set_in_front(self):
+        g, h = frozen_scene()
+        on = g.guarded_by(h)
+        g.mode = "drive"
+        def charges(in_front: bool, trials: int = 1500) -> int:
+            n = 0
+            for _ in range(trials):
+                g.result, g.charge_tried = None, []
+                spot = C.toward(h.pos, C.RIM, 1.5) if in_front else C.toward(h.pos, C.RIM, -1.5)
+                on.place(*spot)
+                n += g.charge_check(h)
+            return n
+        self.assertEqual(charges(in_front=False), 0)
+        self.assertGreater(charges(in_front=True), 5)
+
+    def test_travels_on_drives_happen_rarely(self):
+        g, _ = frozen_scene()
+        g.mode = "drive"
+        h = min(g.offense, key=lambda a: a.a("ball_handling"))
+        n = 0
+        for _ in range(10000):                       # 1,000 seconds of driving
+            g.result = None
+            n += g.travel_check(h)
+        self.assertGreater(n, 3)
+        self.assertLess(n, 200)
