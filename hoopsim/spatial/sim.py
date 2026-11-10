@@ -40,8 +40,8 @@ ZONES = (RIM_ZONE, CLOSE_ZONE, MID_ZONE, THREE_ZONE)
 class SpatialTuning:
     dt: float = 0.1
     # Make chance for an average shooter, wide open / fully contested reduction.
-    make_open: dict = field(default_factory=lambda: {RIM_ZONE: 0.78, CLOSE_ZONE: 0.52, MID_ZONE: 0.47, THREE_ZONE: 0.355})
-    contest_max: dict = field(default_factory=lambda: {RIM_ZONE: 0.20, CLOSE_ZONE: 0.15, MID_ZONE: 0.13, THREE_ZONE: 0.07})
+    make_open: dict = field(default_factory=lambda: {RIM_ZONE: 0.78, CLOSE_ZONE: 0.52, MID_ZONE: 0.47, THREE_ZONE: 0.365})
+    contest_max: dict = field(default_factory=lambda: {RIM_ZONE: 0.20, CLOSE_ZONE: 0.15, MID_ZONE: 0.13, THREE_ZONE: 0.10})
     skill_per_point: float = 0.009
     three_skill_per_point: float = 0.013     # shooting ability matters most from deep
     shooting_foul: dict = field(default_factory=lambda: {RIM_ZONE: 0.42, CLOSE_ZONE: 0.20, MID_ZONE: 0.06, THREE_ZONE: 0.025})
