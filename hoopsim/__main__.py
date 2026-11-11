@@ -109,7 +109,7 @@ def cmd_game(args) -> None:
     game = league.games[1]
     sim = play_game(league, game.id, rng, record_pbp=args.pbp)
     home, away = league.teams[game.home_team_id], league.teams[game.away_team_id]
-    if args.pbp and league.rules.match_engine == "spatial":
+    if args.pbp and league.plays_spatial(game):
         print("(spatial games record movement, not text: watch one with `python -m hoopsim watch --full`)\n")
     elif args.pbp:
         for e in sim.play_by_play:
@@ -288,25 +288,25 @@ def main() -> None:
     sub = ap.add_subparsers(dest="cmd")
 
     new = sub.add_parser("new", help="generate and save a league")
-    new.add_argument("--engine", choices=["statistical", "spatial"], help="match engine: statistical (fast, default) or spatial (players on a court, ~0.7 s a game)")
+    new.add_argument("--engine", choices=["statistical", "spatial", "hybrid"], help="match engine: statistical (fast, default), spatial (players on a court, ~0.7 s a game) or hybrid (spatial for your team's games only)")
     new.add_argument("--seed", type=int, default=0)
     new.add_argument("--teams", type=int, default=12)
     new.add_argument("--out", default="league.db")
     new.add_argument("--team", help="team abbreviation to show (default: first team)")
 
     game = sub.add_parser("game", help="simulate one game and print the box score")
-    game.add_argument("--engine", choices=["statistical", "spatial"], help="match engine: statistical (fast, default) or spatial (players on a court, ~0.7 s a game)")
+    game.add_argument("--engine", choices=["statistical", "spatial", "hybrid"], help="match engine: statistical (fast, default), spatial (players on a court, ~0.7 s a game) or hybrid (spatial for your team's games only)")
     game.add_argument("--seed", type=int, default=0)
     game.add_argument("--pbp", action="store_true", help="print the play-by-play")
 
     season = sub.add_parser("season", help="simulate a full season with playoffs and awards")
-    season.add_argument("--engine", choices=["statistical", "spatial"], help="match engine: statistical (fast, default) or spatial (players on a court, ~0.7 s a game)")
+    season.add_argument("--engine", choices=["statistical", "spatial", "hybrid"], help="match engine: statistical (fast, default), spatial (players on a court, ~0.7 s a game) or hybrid (spatial for your team's games only)")
     season.add_argument("--seed", type=int, default=0)
     season.add_argument("--teams", type=int, default=12)
     season.add_argument("--out", help="save the finished season to this file")
 
     career = sub.add_parser("career", help="simulate many seasons (draft, free agency, ageing...)")
-    career.add_argument("--engine", choices=["statistical", "spatial"], help="match engine: statistical (fast, default) or spatial (players on a court, ~0.7 s a game)")
+    career.add_argument("--engine", choices=["statistical", "spatial", "hybrid"], help="match engine: statistical (fast, default), spatial (players on a court, ~0.7 s a game) or hybrid (spatial for your team's games only)")
     career.add_argument("--seasons", type=int, default=10)
     career.add_argument("--seed", type=int, default=0)
     career.add_argument("--teams", type=int, default=12)
@@ -314,7 +314,7 @@ def main() -> None:
     career.add_argument("--out", help="save the league afterwards")
 
     play = sub.add_parser("play", help="be the general manager of one team")
-    play.add_argument("--engine", choices=["statistical", "spatial"], help="match engine: statistical (fast, default) or spatial (players on a court, ~0.7 s a game)")
+    play.add_argument("--engine", choices=["statistical", "spatial", "hybrid"], help="match engine: statistical (fast, default), spatial (players on a court, ~0.7 s a game) or hybrid (spatial for your team's games only)")
     play.add_argument("--team", help="team abbreviation (otherwise you'll be asked)")
     play.add_argument("--seed", type=int, default=None)
     play.add_argument("--teams", type=int, default=12)

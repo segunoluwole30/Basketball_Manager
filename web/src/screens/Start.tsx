@@ -46,7 +46,7 @@ export function Start({ onDone, onCancel }: { onDone: () => void; onCancel?: () 
   const [teams, setTeams] = useState<any[] | null>(null);
   const [seed, setSeed] = useState("");
   const [count, setCount] = useState(12);
-  const [engine, setEngine] = useState("statistical");
+  const [engine, setEngine] = useState("hybrid");
   const [loading, setLoading] = useState(false);
   const create = async () => {
     setLoading(true);
@@ -75,8 +75,9 @@ export function Start({ onDone, onCancel }: { onDone: () => void; onCancel?: () 
               </label>
               <label>Match engine
                 <select value={engine} onChange={(e) => setEngine(e.target.value)}>
-                  <option value="statistical">Statistical (fast)</option>
-                  <option value="spatial">Spatial: players on a court (~0.7 s a game)</option>
+                  <option value="hybrid">Hybrid: watch and coach your games, the rest fast</option>
+                  <option value="statistical">Statistical: fastest, no watching</option>
+                  <option value="spatial">Spatial: every game on a court (~0.7 s a game)</option>
                 </select>
               </label>
               <label>Seed <span className="muted small">(optional, for a repeatable league)</span>

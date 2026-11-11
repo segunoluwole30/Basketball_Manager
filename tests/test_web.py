@@ -391,6 +391,18 @@ class WebMatchEngineTests(unittest.TestCase):
         # Every game scheduled that day was played.
         self.assertTrue(all(x.played for x in lg.games.values() if x.playoff and x.day == g.day))
 
+    def test_live_on_the_hybrid_engine(self):
+        choices = self.post("/api/new", {"seed": 7, "num_teams": 4, "match_engine": "hybrid"})["teams"]
+        short_season(self.session, games=4)
+        me = choices[0]["id"]
+        self.post("/api/new/team", {"team_id": me})
+        lg = self.session.league
+        r = self.post("/api/live/start")
+        self.post("/api/live/finish")
+        self.assertIn(r["game_id"], lg.replays)
+        others = [g for g in lg.games.values() if g.played and me not in (g.home_team_id, g.away_team_id)]
+        self.assertTrue(all(g.id not in lg.replays for g in others))
+
     def test_live_needs_the_spatial_engine(self):
         choices = self.post("/api/new", {"seed": 7, "num_teams": 4})["teams"]
         self.post("/api/new/team", {"team_id": choices[0]["id"]})

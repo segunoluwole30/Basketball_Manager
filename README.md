@@ -66,18 +66,25 @@ minimum-salary fills. Tests use a manager that refuses everything to prove it.
 
 ## Choosing the match engine
 
-Every league plays its games on one of two engines (`rules.match_engine`, saved
-with the league):
+Every league plays its games on one of three engines (`rules.match_engine`,
+saved with the league):
 
-- **statistical** (default): fast (a few milliseconds a game). It is calibrated to
-  17 NBA per-team-game stats.
-- **spatial**: the full spatial game, with ten players on a court, set plays,
-  transition, fatigue and substitutions. It takes about 0.7 s a game, so a
-  12-team, 82-game season (492 games) takes about 6 minutes and a 30-team season
-  about 15.
+- **statistical** (the command-line default): fast, a few milliseconds a game.
+  It is calibrated to 17 NBA per-team-game stats. Nothing to watch.
+- **spatial**: every game is a full spatial game, with ten players on a court, set
+  plays, transition, fatigue and substitutions. It takes about 0.7 s a game, so a
+  12-team, 82-game season takes about 6 minutes and a 30-team season about 15.
+- **hybrid** (the browser's default): your team's games are spatial, so you can
+  watch or coach any of them, and everyone else's are statistical. A 12-team
+  season with playoffs takes about 2 minutes (statistical: ~13 s). League-wide
+  numbers stay on the calibrated engine. Your team's games run a little faster
+  (pace ~103 vs ~99) with fewer threes, so its stats are slightly off the rest of
+  the league's until the spatial engine closes those gaps. Without a user team
+  (`season`, `career`), hybrid plays everything statistically.
 
 ```bash
-python -m hoopsim play --engine spatial       # new game (or switch a loaded one) on the spatial engine
+python -m hoopsim play --engine hybrid        # new game (or switch a loaded one): your games spatial
+python -m hoopsim play --engine spatial       # ... or every game spatial
 python -m hoopsim season --engine spatial --teams 8
 python -m hoopsim game --engine spatial
 ```
@@ -94,7 +101,7 @@ Differences on the spatial engine, for now (`spatial/season_game.py`):
 - `game --pbp` has no text play-by-play. Watch the game instead
   (`python -m hoopsim watch --full`).
 
-**Watching your games.** On the spatial engine, your team's games record their
+**Watching your games.** On the spatial or hybrid engine, your team's games record their
 movement. In the browser, recorded games show a **watch** link next to **box**
 (on Home → Recent results, and on League → Schedule). It opens the match viewer
 for the whole game, with quarter buttons and the box score. A replay is about
@@ -103,7 +110,7 @@ for the whole game, with quarter buttons and the box score. A replay is about
 teams' games, and statistical-engine games, aren't recorded. Replaying them on
 the spatial engine wouldn't reproduce the result in the standings.
 
-**Watching live.** On the spatial engine, the top bar has a **▶ Watch next game**
+**Watching live.** On the spatial or hybrid engine, the top bar has a **▶ Watch**
 button, in the regular season and in the playoffs. It plays on to your next
 game, including the rest of that day's games, then opens the game full screen
 over the app, so the record, inbox and standings behind it can't spoil the

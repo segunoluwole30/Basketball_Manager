@@ -912,8 +912,8 @@ class GameSession:
             return self.live_header()
         lg = self._me()
         me = lg.user_team_id
-        if lg.rules.match_engine != "spatial":
-            raise UserError("live matches need the spatial match engine (choose it when starting a new game)")
+        if not lg.rules.user_games_spatial:
+            raise UserError("live matches need the spatial or hybrid match engine (choose it when starting a new game)")
         mine = lambda g: me in (g.home_team_id, g.away_team_id)
         from ..spatial.live import LiveMatch
         if lg.phase is Phase.REGULAR_SEASON and not regular_season_over(lg):
@@ -1019,8 +1019,8 @@ class GameSession:
         watched live. Needs the spatial engine; stops early for a trade offer."""
         lg = self._me()
         me = lg.user_team_id
-        if lg.rules.match_engine != "spatial":
-            raise UserError("watching live needs the spatial match engine (choose it when starting a new game)")
+        if not lg.rules.user_games_spatial:
+            raise UserError("watching live needs the spatial or hybrid match engine (choose it when starting a new game)")
         mine = lambda g: me in (g.home_team_id, g.away_team_id)
         before = {g.id for g in lg.games.values() if g.played and mine(g)}
         if lg.phase is Phase.REGULAR_SEASON and not regular_season_over(lg):

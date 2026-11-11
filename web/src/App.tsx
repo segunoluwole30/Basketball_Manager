@@ -43,7 +43,7 @@ function SimControls({ go, onLive }: { go: (r: string) => void; onLive: (url: st
       r.started ? undefined : r.stopped_for === "offers" ? "A trade offer arrived first: check your inbox." : "No game to coach.");
     if (r?.started) onLive(r.url);
   };
-  const live = state.match_engine === "spatial" && (state.live_game ? (
+  const live = (state.match_engine === "spatial" || state.match_engine === "hybrid") && (state.live_game ? (
     <button className="btn btn-primary" onClick={() => onLive("/api/live/page")}>Resume live game</button>
   ) : (
     <>

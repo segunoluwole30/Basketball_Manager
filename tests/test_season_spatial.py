@@ -97,3 +97,45 @@ class ReplayTests(unittest.TestCase):
         g = next(g for g in league.games.values() if 1 in (g.home_team_id, g.away_team_id))
         play_game(league, g.id, random.Random(0))
         self.assertEqual(league.replays, {})
+
+
+class HybridTests(unittest.TestCase):
+    def league(self):
+        league = generate_league(seed=4, num_teams=4)
+        league.rules.match_engine = "hybrid"
+        league.user_team_id = 1
+        return league
+
+    def test_only_the_users_games_are_spatial(self):
+        league = self.league()
+        mine = next(g for g in league.games.values() if 1 in (g.home_team_id, g.away_team_id))
+        other = next(g for g in league.games.values() if 1 not in (g.home_team_id, g.away_team_id))
+        self.assertTrue(league.plays_spatial(mine))
+        self.assertFalse(league.plays_spatial(other))
+        self.assertTrue(league.rules.user_games_spatial)
+        play_game(league, mine.id, random.Random(0))
+        play_game(league, other.id, random.Random(0))
+        self.assertIn(mine.id, league.replays)                  # recorded: watchable
+        self.assertNotIn(other.id, league.replays)
+        self.assertTrue(other.played and mine.played)
+
+    def test_without_a_user_team_everything_is_statistical(self):
+        league = self.league()
+        league.user_team_id = None
+        g = next(iter(league.games.values()))
+        self.assertFalse(league.plays_spatial(g))
+
+    def test_hybrid_season_is_fast(self):
+        import time
+        league = self.league()
+        for gid in [g.id for g in league.games.values() if g.day > 12]:
+            del league.games[gid]
+        league.rules.playoff_series_length = 1
+        t = time.time()
+        play_full_season(league, random.Random(1))
+        mine = [g for g in league.games.values() if 1 in (g.home_team_id, g.away_team_id)]
+        others = [g for g in league.games.values() if 1 not in (g.home_team_id, g.away_team_id)]
+        self.assertTrue(all(g.played for g in league.games.values()))
+        self.assertTrue(others)
+        # Only the user's games cost ~1 s each; the rest are near-instant.
+        self.assertLess(time.time() - t, 2.0 * len(mine) + 5)

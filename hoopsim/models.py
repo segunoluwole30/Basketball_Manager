@@ -589,7 +589,7 @@ class Game:
 # --------------------------------------------------------------------------
 # League
 # --------------------------------------------------------------------------
-MATCH_ENGINES = ("statistical", "spatial")
+MATCH_ENGINES = ("statistical", "spatial", "hybrid")
 
 
 @dataclass
@@ -611,11 +611,18 @@ class LeagueRules:
     playoff_series_length: int = 7
     draft_rounds: int = 2
     mid_level_exception: int = 12_500_000   # one signing per offseason for teams over the cap
-    match_engine: str = "statistical"        # "statistical" (fast) or "spatial" (players on a court)
+    # "statistical" (fast), "spatial" (players on a court) or "hybrid" (spatial for the
+    # user's team's games, statistical for the rest)
+    match_engine: str = "statistical"
 
     def __post_init__(self) -> None:
         if self.match_engine not in MATCH_ENGINES:
             raise ValueError(f"match_engine must be one of {', '.join(MATCH_ENGINES)}")
+
+    @property
+    def user_games_spatial(self) -> bool:
+        """Are the user's team's games played (and watchable) on the spatial engine?"""
+        return self.match_engine in ("spatial", "hybrid")
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -705,6 +712,12 @@ class League:
         return max(self.games, default=0) + 1
 
     # -- queries ------------------------------------------------------------
+    def plays_spatial(self, game: "Game") -> bool:
+        """Is ``game`` played on the spatial engine (see ``LeagueRules.match_engine``)?"""
+        e = self.rules.match_engine
+        return e == "spatial" or (e == "hybrid" and self.user_team_id is not None
+                                  and self.user_team_id in (game.home_team_id, game.away_team_id))
+
     def roster(self, team_id: int) -> list[Player]:
         return sorted((p for p in self.players.values() if p.team_id == team_id),
                       key=lambda p: p.current_ability, reverse=True)
