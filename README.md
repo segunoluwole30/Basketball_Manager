@@ -140,9 +140,41 @@ your decisions change what happens next. The **Coach** panel has:
   ("injured") and can't be picked; a queued sub involving him is dropped.
 - **Auto subs.** On, your bench coach keeps running the rotation. Off, only
   forced changes (foul-outs and injuries) are made for you.
+- **Play out of a timeout.** Pick a set before you call the timeout (or while it's
+  pending): swing, hand-off, down screen or pick-and-roll, with an optional
+  target (the screener in the pick-and-roll, the shooter coming off the down
+  screen). Your team runs it on its next half-court possession, end of game or
+  not, if at least 10 seconds are left on the shot clock; the play-by-play says
+  "Out of the timeout". A timeout taken on a live ball (after a rebound or steal)
+  now means an inbound, not a fast break.
+- **Shouts.** Touchline instructions that tilt your players' close calls: a small
+  bonus or penalty on the learned option values (`HalfCourtGame.shout_bias`), not
+  new values. Offence: *Attack rim*, *Threes*, *Feed post*, *Slow down* (use the
+  shot clock, walk it up), *Push pace* (early shots, run after rebounds and
+  makes) and *Get the ball to* a player. Defence: *Pressure* (closer on the ball:
+  more strips, a few more reach-ins), *Protect paint* (sag in: fewer layups, more
+  threes against) and *Foul now* (foul at once whenever you trail in the 4th or
+  overtime, through the same intentional-foul path as the bench coach). One shout
+  per group (rim/threes/post, slow/push, pressure/paint); a new one replaces the
+  old. A shout lasts until you cancel it, or for your next 3, 5 or 10 possessions at
+  that end (*Foul now* counts the fouls). Active shouts show as tags with a ×.
+  Over three games each, against the same games without it: *Attack rim* took the
+  rim share of shots from 45% to 54%, *Threes* the three share from 15% to 20%,
+  *Slow down* raised seconds per possession from 14.2 to 16.1 and *Push pace*
+  lowered it to 12.0, *Feed post* raised post-ups by about 30%, *Pressure* cut the
+  handler's cushion by about 0.8 ft and raised strips by about 45%, and *Protect
+  paint* raised the opponent's three share from 45% to 56%.
+- **End of game.** Overrule the bench coach's late-game calls for your team: hold
+  for the last shot, go two-for-one, and foul to stop the clock (when trailing in
+  the last 45 seconds), each *Bench coach* (the default), *On* or *Off*.
 - **Match tactics.** Pace, three-point rate, crashing the glass, offensive focus and
   defensive scheme, for this game only. Your saved tactics come back afterwards.
 - **Sim to end.** Your bench coach finishes the game.
+
+Commands are JSON posted to `/api/live/command`: `timeout` (optional `play`,
+`target`), `ato`, `sub`, `cancel_subs`, `auto_subs`, `tactics`, `shout` (`shout`,
+optional `possessions`, `player`), `cancel_shout` and `endgame` (`last_shot`,
+`two_for_one`, `foul`: `auto`, `on` or `off`). Bad ones get a 400 with the reason.
 
 Timeouts, substitutions and injuries from both benches show in the play-by-play. While a
 game is live, the rest of the app waits: no sims, deals or saves. **Back to the

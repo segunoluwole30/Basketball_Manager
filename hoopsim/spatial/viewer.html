@@ -168,6 +168,16 @@ aside { display: grid; gap: 16px; min-width: 0; }
 .coach label.t output { text-align: right; font-variant-numeric: tabular-nums; }
 .coach select { font: inherit; font-size: 13px; padding: 6px; border-radius: 6px; border: 1px solid var(--rule); background: var(--panel); color: var(--ink); }
 .coach details summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+.coach .sub-h { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: -4px; }
+.coach .shouts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.coach .shouts button { padding: 7px 4px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.coach button[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+.coach .row select { flex: 1 1 0; min-width: 0; }
+.coach .chips { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; }
+.coach .stag { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 8px; border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.coach .stag button { padding: 2px 6px; font-size: 12px; border: 0; background: transparent; }
+.coach .stag.d { background: color-mix(in srgb, var(--home) 16%, transparent); }
 .waiting { opacity: 0.6; }
 </style>
 
@@ -651,6 +661,8 @@ window.GAME = /*GAME_DATA*/null;
   }
   let selected = null;
   const coach = $("coach");
+  // Choices made before they're sent (the play for the next timeout, how long a shout lasts).
+  const pick = { play: "", target: "", lasts: "" };
   function coachMsg(text, err) {
     const el = $("coachMsg"); if (!el) return;
     el.textContent = text; el.classList.toggle("err", !!err);
@@ -672,14 +684,18 @@ window.GAME = /*GAME_DATA*/null;
     coachKey = key;
     const st = liveState, me = st[st.user_side], m = st.manager, keepMsg = $("coachMsg") ? $("coachMsg").textContent : "";
     const keepErr = $("coachMsg") && $("coachMsg").classList.contains("err");
-    const open = coach.querySelector("details") && coach.querySelector("details").open;
+    const openSet = new Set([...coach.querySelectorAll("details[open]")].map((d) => d.dataset.k));
     coach.textContent = "";
     const facts = document.createElement("div"); facts.className = "facts";
     facts.innerHTML = `Timeouts <b>${me.timeouts}</b>${m.timeout_pending ? " (one called)" : ""} · Team fouls <b>${me.team_fouls}</b>`;
     const row = document.createElement("div"); row.className = "row";
     const to = document.createElement("button"); to.type = "button"; to.textContent = m.timeout_pending ? "Timeout called" : "Call timeout";
     to.disabled = m.timeout_pending || me.timeouts <= 0 || st.done;
-    to.addEventListener("click", () => command({ type: "timeout" }));
+    to.addEventListener("click", () => {
+      const body = pick.play ? { type: "timeout", play: pick.play, target: pick.target ? +pick.target : null } : { type: "timeout" };
+      pick.play = pick.target = "";                       // drawn up: it shows as the timeout's play now
+      command(body);
+    });
     const auto = document.createElement("label"); auto.className = "toggle";
     auto.innerHTML = `<input type="checkbox" ${m.auto_subs ? "checked" : ""}> Auto subs`;
     auto.firstChild.addEventListener("change", (e) => command({ type: "auto_subs", on: e.target.checked }));
@@ -731,8 +747,9 @@ window.GAME = /*GAME_DATA*/null;
       pend.appendChild(cancel);
       coach.appendChild(pend);
     }
+    renderCalls(st, me, m, openSet);
     // Match tactics
-    const tac = document.createElement("details"); tac.open = !!open;
+    const tac = document.createElement("details"); tac.dataset.k = "tac"; tac.open = openSet.has("tac");
     tac.innerHTML = "<summary>Match tactics</summary>";
     const box = document.createElement("div"); box.className = "coach"; box.style.padding = "8px 0 0";
     const t = st.tactics;
@@ -758,11 +775,129 @@ window.GAME = /*GAME_DATA*/null;
     coach.appendChild(msg);
   }
 
+  // Touchline shouts, the play out of a timeout and the end-of-game calls.
+  const SHOUTS = [["attack_rim", "Attack rim", "Attack the rim"], ["threes", "Threes", "Look for threes"],
+    ["post", "Feed post", "Feed the post"], ["slow", "Slow down", "Slow it down: use the clock, walk it up"],
+    ["push", "Push pace", "Push the pace: run, take early shots"]];
+  const D_SHOUTS = [["pressure", "Pressure", "Pressure the ball: more turnovers, more reach-ins"],
+    ["paint", "Protect paint", "Protect the paint: sag in, give up threes not layups"],
+    ["foul", "Foul now", "Foul at once to stop the clock whenever you trail in the 4th or overtime"]];
+  const PLAYS = [["", "Play: none"], ["swing", "Swing"], ["handoff", "Hand-off"], ["downscreen", "Down screen"], ["pnr", "Pick-and-roll"]];
+  function el(tag, cls, text) {
+    const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e;
+  }
+  function selectEl(opts, value, onChange, label) {
+    const s = document.createElement("select"); s.setAttribute("aria-label", label);
+    for (const [v, t] of opts) { const o = el("option", null, t); o.value = v; if (String(v) === String(value)) o.selected = true; s.appendChild(o); }
+    s.addEventListener("change", (e) => onChange(e.target.value));
+    return s;
+  }
+  function renderCalls(st, me, m, openSet) {
+    const off = st.done || liveDone;
+    const usable = me.players.filter((p) => !p.injured && !p.fouled_out);
+    const roster = usable.map((p) => [p.id, `${p.num} ${p.name}`]);
+    if (pick.target && !usable.some((p) => String(p.id) === String(pick.target))) pick.target = "";
+    // Play out of the timeout: chosen before calling it, or changed while it's pending.
+    const ato = el("div", "row");
+    // While a timeout is pending the selects show (and change) its play; before, the pick for the next one.
+    const pending = m.timeout_pending;
+    const play = pending ? (m.ato ? m.ato.play : "") : pick.play;
+    const target = pending ? (m.ato && m.ato.target != null ? m.ato.target : "") : pick.target;
+    const takesTarget = (p) => p === "pnr" || p === "downscreen";
+    const targetOk = takesTarget(play);
+    const playSel = selectEl(PLAYS, play, (v) => {
+      if (pending) {
+        command(v ? { type: "ato", play: v, target: takesTarget(v) && target !== "" ? +target : null } : { type: "ato", play: null });
+      } else {
+        pick.play = v; if (!takesTarget(v)) pick.target = "";
+        renderCoach(true);
+      }
+    }, "Play out of the timeout");
+    const tgtSel = selectEl([["", play === "pnr" ? "Screener: any" : play === "downscreen" ? "Shooter: any" : "Target: —"], ...roster],
+      target, (v) => {
+        if (pending) { if (play) command({ type: "ato", play, target: v ? +v : null }); }
+        else pick.target = v;
+      }, "Target player for the play");
+    tgtSel.disabled = !targetOk || off; playSel.disabled = off;
+    tgtSel.title = "Pick-and-roll: who sets the screen. Down screen: who comes off it.";
+    ato.append(playSel, tgtSel);
+    const atoNote = el("div", "pend", m.ato_next ? `Out of the timeout: ${m.ato_next.label} (next possession)`
+      : m.ato ? `After the timeout: ${m.ato.label}` : "Pick a play, then call the timeout to run it next time down.");
+    atoNote.style.color = "var(--muted)";
+    coach.append(el("div", "sub-h", "Play out of a timeout"), ato, atoNote);
+    // Shouts.
+    const active = new Map(m.shouts.map((s) => [s.name, s]));
+    const lasts = el("div", "row");
+    const lastSel = selectEl([["", "Until cancelled"], ["3", "Next 3 possessions"], ["5", "Next 5 possessions"], ["10", "Next 10 possessions"]],
+      pick.lasts, (v) => { pick.lasts = v; }, "How long a shout lasts");
+    lastSel.disabled = off;
+    lasts.appendChild(lastSel);
+    const shout = (name, extra) => {
+      const body = { type: "shout", shout: name, ...extra };
+      if (pick.lasts) body.possessions = +pick.lasts;
+      command(body);
+    };
+    const grid = (list) => {
+      const g = el("div", "shouts");
+      for (const [name, short, title] of list) {
+        const b = el("button", null, short); b.type = "button"; b.title = title; b.disabled = off;
+        b.setAttribute("aria-pressed", active.has(name) ? "true" : "false");
+        b.addEventListener("click", () => active.has(name) ? command({ type: "cancel_shout", shout: name }) : shout(name));
+        g.appendChild(b);
+      }
+      return g;
+    };
+    const ballRow = el("div", "row");
+    const ballSel = selectEl([["", "Get the ball to…"], ...roster], active.has("ball_to") ? active.get("ball_to").player : "",
+      (v) => { if (v) shout("ball_to", { player: +v }); else if (active.has("ball_to")) command({ type: "cancel_shout", shout: "ball_to" }); },
+      "Get a player the ball");
+    ballSel.disabled = off;
+    ballRow.appendChild(ballSel);
+    coach.append(el("div", "sub-h", "Shout: offence"), grid(SHOUTS), ballRow, el("div", "sub-h", "Shout: defence"), grid(D_SHOUTS), lasts);
+    if (m.shouts.length) {
+      const chips = el("div", "chips");
+      for (const s of m.shouts) {
+        const c = el("span", "stag" + (s.end === "defense" ? " d" : ""), s.label + (s.left != null ? ` (${s.left})` : ""));
+        const x = el("button", null, "×"); x.type = "button"; x.title = "Cancel"; x.setAttribute("aria-label", `Cancel ${s.label}`);
+        x.disabled = off;
+        x.addEventListener("click", () => command({ type: "cancel_shout", shout: s.name }));
+        c.appendChild(x); chips.appendChild(c);
+      }
+      if (m.shouts.length > 1) {
+        const all = el("button", null, "Cancel all"); all.type = "button"; all.disabled = off;
+        all.style.padding = "3px 8px"; all.style.fontSize = "12px";
+        all.addEventListener("click", () => command({ type: "cancel_shout" }));
+        chips.appendChild(all);
+      }
+      coach.appendChild(chips);
+    }
+    // End of game.
+    const eg = document.createElement("details"); eg.dataset.k = "eg"; eg.open = openSet.has("eg");
+    const changed = Object.values(m.endgame).filter((v) => v !== "auto").length;
+    eg.innerHTML = `<summary>End of game${changed ? ` (${changed} set)` : ""}</summary>`;
+    const egBox = el("div", "coach"); egBox.style.padding = "8px 0 0";
+    const choice = (key, label, title) => {
+      const l = el("label", "t"); l.title = title;
+      l.appendChild(el("span", null, label));
+      const s = selectEl([["auto", "Bench coach"], ["on", "On"], ["off", "Off"]], m.endgame[key],
+        (v) => command({ type: "endgame", [key]: v }), label);
+      s.disabled = off;
+      l.append(s, el("span"));
+      return l;
+    };
+    egBox.append(choice("last_shot", "Last shot", "Hold for the last shot of a period"),
+      choice("two_for_one", "2-for-1", "Hurry to get two shots to their one before the period ends"),
+      choice("foul", "Foul late", "Foul to stop the clock when trailing in the last 45 seconds"));
+    eg.appendChild(egBox);
+    coach.appendChild(eg);
+  }
+
   async function start() {
     if (LIVE) {
       $("coachCard").hidden = false;
       $("about").innerHTML = "<strong>Live.</strong> You're on the bench. Timeouts and substitutions happen at the " +
-        "next dead ball (a timeout also when you have the ball); tactics hold for this game only.";
+        "next dead ball (a timeout also when you have the ball), with the play you pick run out of it; " +
+        "shouts tilt your players' choices until you cancel them; tactics hold for this game only.";
       $("callText").textContent = "Tip-off…";
       while (!P.length && !liveDone) { await liveFetch(); if (!P.length) await new Promise((r) => setTimeout(r, 300)); }
       if (!P.length) return;

@@ -371,6 +371,43 @@ class WebMatchEngineTests(unittest.TestCase):
         self.assertTrue(all(g.played == (g.day <= nxt.day) for g in lg.games.values()))
         self.post("/api/sim", {"mode": "day"})                               # back to normal
 
+    def test_live_shouts_plays_and_end_of_game(self):
+        self._spatial_team()
+        self.post("/api/live/start")
+        chunk = self.client.get("/api/live/next", params={"after": 0}).json()
+        st = chunk["state"]
+        mine = st[st["user_side"]]["players"]
+        star = mine[0]["id"]
+        cmd = lambda body: self.post("/api/live/command", body)
+        r = cmd({"type": "shout", "shout": "slow"})
+        self.assertIn("Slow it down", r["message"])
+        r = cmd({"type": "shout", "shout": "push", "possessions": 4})
+        self.assertIn("instead of Slow it down", r["message"])
+        cmd({"type": "shout", "shout": "ball_to", "player": star})
+        r = cmd({"type": "shout", "shout": "foul"})
+        names = [s["name"] for s in r["state"]["manager"]["shouts"]]
+        self.assertEqual(names, ["push", "ball_to", "foul"])
+        r = cmd({"type": "cancel_shout", "shout": "foul"})
+        self.assertEqual(len(r["state"]["manager"]["shouts"]), 2)
+        r = cmd({"type": "timeout", "play": "pnr", "target": mine[4]["id"]})
+        self.assertEqual(r["state"]["manager"]["ato"]["play"], "pnr")
+        r = cmd({"type": "endgame", "last_shot": "off", "two_for_one": "on"})
+        self.assertEqual(r["state"]["manager"]["endgame"]["two_for_one"], "on")
+        for body, text in (({"type": "shout", "shout": "nap"}, "unknown instruction"),
+                           ({"type": "shout", "shout": "ball_to"}, "pick one of your players"),
+                           ({"type": "ato", "play": "flex"}, "unknown play"),
+                           ({"type": "endgame", "foul": "maybe"}, "must be one of")):
+            res = self.client.post("/api/live/command", json=body)
+            self.assertEqual(res.status_code, 400, body)
+            self.assertIn(text, res.json()["detail"])
+        n = chunk["next"]
+        for _ in range(10):
+            chunk = self.client.get("/api/live/next", params={"after": n}).json()
+            n = chunk["next"]
+        match = self.session.live["match"]
+        self.assertEqual(match.fg.stats["ato_run"] + match.fg.stats["ato_missed"], 1)
+        self.post("/api/live/finish")
+
     def test_live_injuries_are_reported_once(self):
         from hoopsim.models import Injury
         me = self._spatial_team()

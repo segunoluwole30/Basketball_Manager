@@ -202,6 +202,8 @@ class HalfCourtGame:
         self.possessions: list[dict] = []      # recorded frames + events
         self.stats = Counter()
         self.box = {id(a): Counter() for a in self.everyone}
+        # A live coach's shouted instructions per side (see ``shout_bias``); empty: none.
+        self.shouts: dict = {"home": {}, "away": {}}
 
     def _starters(self, side: str) -> list[Agent]:
         team = self.teams[side]
@@ -350,6 +352,7 @@ class HalfCourtGame:
         self.foul_by: Optional[Agent] = None
         self.bonus = False
         self.situation: Optional[dict] = None
+        self.forced_entry: Optional[tuple] = None   # a called set (plays.plan), from ``start["entry"]``
         self.first_shot_at: Optional[float] = None
         if start:
             self.apply_start(start)
@@ -610,6 +613,7 @@ class HalfCourtGame:
             if threat is not None:
                 tagger = self.choose_tagger(threat, exclude=helper)
         doubler = self.post["double"] if self.mode == "post" and self.post else None
+        gap_shift, sag_shift = self.shout_defense()
         for d in self.defense:
             d.helping = d is helper or d is tagger or d is doubler or d is stunter
             if now < d.next_think:
@@ -654,6 +658,7 @@ class HalfCourtGame:
                 if deep >= 27:
                     gap += 2.0
                 gap += {"zone": 1.0, "press": -0.8}.get(self.scheme, 0.0)   # zones sit back, presses get up
+                gap += gap_shift if deep >= 22 or gap_shift < 0 else 0.0     # the coach's shout
                 # Anticipate: play where he's going, not where he was.
                 lead = 0.45 if self.mode == "drive" else 0.2
                 ahead = C.clamp((man.x + man.vx * lead, man.y + man.vy * lead))
@@ -667,6 +672,7 @@ class HalfCourtGame:
                     sag = max(sag, 0.22)                         # a zone packs the paint
                 if man.a("three_point") >= 13:
                     sag *= self.p.shooter_sag                    # shade toward shooters
+                sag += sag_shift
                 mx, my = man.pos
                 tx = mx + (RIM[0] - mx) * sag + (ball[0] - mx) * 0.08
                 ty = my + (RIM[1] - my) * sag + (ball[1] - my) * 0.08
@@ -816,7 +822,8 @@ class HalfCourtGame:
             kind, action, feats = rng.choice(options)              # try something (training only)
         else:
             temperature = 0.03 + 0.006 * (20 - h.a("basketball_iq"))   # smarter = closer to the best option
-            scored = [(self.model.value(k, f) + self.style_bias(h, k, a) + self.situation_bias(k, a), (k, a, f))
+            scored = [(self.model.value(k, f) + self.style_bias(h, k, a) + self.situation_bias(k, a)
+                       + self.shout_bias(h, k, a), (k, a, f))
                       for k, a, f in options]
             kind, action, feats = _softmax_choice(rng, scored, temperature)
         self.decisions.append((kind, feats))
@@ -1504,7 +1511,8 @@ class HalfCourtGame:
           ``decide_in`` seconds to the first decision;
         * ``foul_at``: a non-shooting foul this many seconds in (by ``foul_by`` if given,
           an intentional foul), two free throws if ``bonus`` else result "foul";
-        * ``situation``: clock-management preferences (see ``situation_bias``).
+        * ``situation``: clock-management preferences (see ``situation_bias``);
+        * ``entry``: (kind, target agent or None), a set play to run first (``plays.plan``).
         """
         for a, (x, y, vx, vy) in start.get("positions", {}).items():
             a.x, a.y, a.vx, a.vy = x, y, vx, vy
@@ -1523,6 +1531,7 @@ class HalfCourtGame:
         self.foul_by = start.get("foul_by")
         self.bonus = start.get("bonus", False)
         self.situation = start.get("situation")
+        self.forced_entry = start.get("entry")
         mode = start.get("mode")
         if mode is not None:
             self.next_decision = start.get("decide_in", 0.0)
@@ -1580,6 +1589,71 @@ class HalfCourtGame:
         if kind in ("drive", "pnr"):
             return -0.5 * hold
         return 0.0
+
+    # A live coach's shouts (fullgame.py), in points of option value. Small next to the
+    # learned values: they tilt close calls, they don't override the read.
+    SHOUTS = {
+        "attack_rim": {"drive": 0.05, "continue": 0.04, "pnr": 0.02, "inside": 0.04, "jumper": -0.05},
+        "threes": {"three": 0.06, "mid": -0.04, "inside": -0.01, "drive": -0.02},
+        "post": {"post": 0.06, "feed": 0.06, "inside": 0.02},
+        "slow": {"hold": 0.20, "early": -0.04, "hold_until": 6.0},
+        "push": {"hold": -0.10, "early": 0.03, "hold_until": 14.0},
+        "ball_to": {"pass": 0.08, "self": 0.03},
+    }
+    DEFENSE_SHOUTS = {"pressure": (-1.2, -0.03), "paint": (1.2, 0.08)}   # (on-ball gap ft, sag)
+
+    def shout_bias(self, h: Agent, kind: str, action: tuple) -> float:
+        """The offence's coach shouting from the bench (``self.shouts``): attack the rim,
+        look for threes, slow it down, push the pace, feed the post, get X the ball."""
+        s = self.shouts.get(self.side)
+        if not s:
+            return 0.0
+        b = 0.0
+        sh = self.SHOUTS
+        if kind == "shoot":
+            zone = action[1]
+            inside = zone in (RIM_ZONE, CLOSE_ZONE)
+            if "attack_rim" in s:
+                b += sh["attack_rim"]["inside"] if inside else sh["attack_rim"]["jumper"]
+            if "threes" in s:
+                b += (sh["threes"]["three"] if zone == THREE_ZONE else sh["threes"]["mid"] if zone == MID_ZONE
+                      else sh["threes"]["inside"])
+            if "post" in s and inside:
+                b += sh["post"]["inside"]
+        elif kind in ("drive", "continue", "pnr"):
+            if "attack_rim" in s:
+                b += sh["attack_rim"][kind]
+            if "threes" in s and kind == "drive":
+                b += sh["threes"]["drive"]
+        elif kind == "post" and "post" in s:
+            b += sh["post"]["post"]
+        elif kind == "pass":
+            mate = action[1]
+            if "post" in s and mate.slot >= 3 and C.dist_to_rim(mate.pos) < 11:
+                b += sh["post"]["feed"]
+            if s.get("ball_to") is mate:
+                b += sh["ball_to"]["pass"]
+        if s.get("ball_to") is h and kind in ("shoot", "drive", "post"):
+            b += sh["ball_to"]["self"]
+        for tempo in ("slow", "push"):
+            if tempo in s and self.shot_clock > sh[tempo]["hold_until"]:
+                if kind in ("hold", "reset"):
+                    b += sh[tempo]["hold"]
+                elif kind in ("shoot", "drive", "pnr"):
+                    b += sh[tempo]["early"]
+        return b
+
+    def shout_defense(self) -> tuple[float, float]:
+        """The defence's shout: (extra on-ball cushion in ft, extra sag toward the paint).
+        Pressure the ball gets up on him and stays home; protect the paint sits back."""
+        s = self.shouts.get("away" if self.side == "home" else "home")
+        if not s:
+            return 0.0, 0.0
+        gap = sag = 0.0
+        for key, (g, k) in self.DEFENSE_SHOUTS.items():
+            if key in s:
+                gap, sag = gap + g, sag + k
+        return gap, sag
 
     # ------------------------------------------------------------------ export
     def to_dict(self) -> dict:

@@ -18,6 +18,10 @@ on. When the entry is over, the learned decisions take over.
 Patience comes from the team's pace tactic: about ``entry_actions`` actions at
 pace 10, fewer for fast teams, more for slow ones. Entries are skipped on short
 clocks, in end-of-game situations and in flows out of transition.
+
+A coach can call the set instead (a play out of a timeout): ``g.forced_entry`` =
+(kind, target) makes ``plan`` run that action first, end of game or not, with the
+target as the screener of a pick-and-roll or the man coming off a down screen.
 """
 from __future__ import annotations
 
@@ -39,6 +43,8 @@ ACTION_TIMEOUT = 3.5         # an action that hasn't produced its pass by then i
 
 def plan(g: "HalfCourtGame") -> Optional[dict]:
     """At the end of the bring-up: how many entry actions to run (None for none)."""
+    if g.forced_entry is not None:
+        return _plan_forced(g)
     p = g.p
     if p.entry_actions <= 0:
         return None
@@ -55,6 +61,23 @@ def plan(g: "HalfCourtGame") -> Optional[dict]:
     g.stats["entries"] += 1
     if not start_next(g, play):
         return None
+    return play
+
+
+def _plan_forced(g: "HalfCourtGame") -> Optional[dict]:
+    """The coach's called set: that one action (if the clock allows), then the read."""
+    kind, target = g.forced_entry
+    g.forced_entry = None
+    g.stats["called_sets"] += 1
+    if g.shot_clock < MIN_CLOCK or g.holder is None:
+        return None
+    play = {"left": 1, "action": None, "done": 0, "force": (kind, target)}
+    if not start_next(g, play) or play["action"]["kind"] != kind:
+        g.play = None
+        return None
+    g.stats["called_sets_run"] += 1
+    g.stats[f"called_{kind}"] += 1
+    g.say(f"{g.teams[g.side].abbreviation} run the play they drew up")
     return play
 
 
@@ -114,6 +137,22 @@ def start_next(g: "HalfCourtGame", play: dict) -> bool:
     if (closing and screeners and g.pnr_used < 3 and C.dist_to_rim(h.pos) > 18
             and g.shot_clock >= MIN_CLOCK + 1):
         options.append(("pnr", g.p.entry_pnr))
+    force = play.pop("force", None)
+    if force is not None:                    # a called set: that action if it can be run at all
+        kind, who = force
+        who = who if who in g.offense and who is not h else None
+        if kind == "pnr":
+            screeners = [who] if who else screeners or [a for a in g.offense if a is not h]
+            ok = bool(screeners)
+        elif kind == "downscreen":
+            corners = [who] if who else corners or _perimeter(g)
+            bigs = ([a for a in g.offense if a.slot >= 3 and a is not h and a not in corners]
+                    or [a for a in g.offense if a is not h and a not in corners])
+            ok = bool(corners and bigs)
+        else:
+            ok = any(k == kind for k, _ in options)
+        if ok:
+            options = [(kind, 1.0)]
     if not options:
         return False
     kind = rng.choices([k for k, _ in options], [w for _, w in options])[0]

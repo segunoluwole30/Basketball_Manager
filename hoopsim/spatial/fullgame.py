@@ -63,6 +63,13 @@ from .transition import DEFAULT_OPEN_TUNING, DeadBallInbound, OpenCourt, OpenCou
 from .values import DecisionModel
 
 POSITIONS = list(Position)
+# A live coach (attach_manager): shouted instructions, plays out of a timeout, end of game.
+OFFENSE_SHOUTS = ("attack_rim", "threes", "slow", "push", "post", "ball_to")
+DEFENSE_SHOUTS = ("pressure", "paint", "foul")
+ATO_PLAYS = {"swing": "swing it", "handoff": "hand-off", "downscreen": "down screen",
+             "pnr": "pick-and-roll"}
+ENDGAME_AUTO = {"last_shot": "auto", "two_for_one": "auto", "foul": "auto"}
+PRESSURE_FOUL_FACTOR = 1.2
 SIDES = ("home", "away")
 BOX_FIELDS = ("fgm", "fga", "tpm", "tpa", "ftm", "fta", "orb", "drb", "ast", "stl", "blk", "tov", "pf")
 
@@ -422,7 +429,12 @@ class FullGame:
                 or (clock_at_foul <= 120 and defense.late_fouls + 1 >= 2))
 
     def should_foul(self, defense: Side, offense: Side) -> bool:
-        """Engine.py's rule: should the trailing defence foul straight away?"""
+        """Engine.py's rule: should the trailing defence foul straight away? A live
+        coach can overrule it for his team (``_coach_foul``)."""
+        if self.manager is not None and self.manager["side"] == defense.key:
+            forced = self._coach_foul(defense, offense)
+            if forced is not None:
+                return forced
         if self.period < 4 or self.clock > 45 or self.clock < 0.5:
             return False
         deficit = self.score_of(offense) - self.score_of(defense)
@@ -441,6 +453,9 @@ class FullGame:
         clock, sc = self.clock, self.rules.shot_clock_seconds
         lead = self.score_of(offense) - self.score_of(defense)
         final = self.period >= 4
+        m = self.manager
+        eg = m["endgame"] if m is not None and m["side"] == offense.key else ENDGAME_AUTO
+        last_shot, two_for_one = eg["last_shot"], eg["two_for_one"]
         if final and lead > 0:
             if clock <= sc:
                 return "run_out"               # the shot clock is off: game over
@@ -455,12 +470,19 @@ class FullGame:
                 situation["three"] = 0.15
             elif need <= 2 and clock <= 30:
                 situation["three"] = -0.1      # play for the tie
+            if last_shot == "on" and clock <= sc + 2:
+                situation.pop("hurry")         # the coach wants the last shot
+                situation.update(hold=0.35, hold_until=4.0)
             return situation
+        if last_shot == "off" and clock <= sc + 2:
+            return None                        # the coach says play normally
         if final and lead == 0 and clock <= sc + 2:
             return {"hold": 0.35, "hold_until": 4.0}         # last shot
-        if clock <= sc:
+        if clock <= sc or (last_shot == "on" and clock <= sc + 2):
             return {"hold": 0.3, "hold_until": 4.0}          # last shot of the quarter
-        if clock <= sc + 14 and not final:
+        if two_for_one == "on" and clock <= sc + 14:
+            return {"hurry": 0.25}                           # the coach wants two-for-one
+        if clock <= sc + 14 and not final and two_for_one != "off":
             return {"hurry": 0.12}                           # two-for-one
         return None
 
@@ -501,6 +523,15 @@ class FullGame:
 
         if self.late_timeout(offense, how):
             how = "advanced"                    # ball advanced to the frontcourt, defence set
+        m = self.manager
+        coached = m is not None and m["side"] == offense.key
+        if m is not None:
+            self._sync_shouts()
+        tempo = self._tempo(offense) if m is not None else None
+        ato = m["ato_next"] if coached else None   # the play drawn up in the coach's timeout
+        if coached:
+            m["ato_next"] = None
+        run_before = 0
 
         plan = None if self.should_foul(defense, offense) else self.plan(offense, defense)
         if plan == "run_out":
@@ -516,7 +547,11 @@ class FullGame:
         if live or how in ("score", "ft"):
             push = None
             if how in ("score", "ft"):
-                push = self.clock < 8 or self.rng.random() < self._push_after_make(offense)
+                push = self.clock < 8 or self.rng.random() < self._push_after_make(offense, tempo)
+            if tempo == "slow" and how != "steal" and self.clock >= 8:
+                push = False                    # the coach: walk it up
+            elif tempo == "push" and how == "drb":
+                push = self.rng.random() < 0.75
             if live or push or self.gt.inbound_walkups:     # a walk-up when not pushing
                 oc = OpenCourt(self.hc, offense.key, "score" if how in ("score", "ft") else how,
                                carrier, self.clock, self.rng, self.ot, push=push,
@@ -572,10 +607,19 @@ class FullGame:
                 start["game_clock"] = self.clock
             if situation:
                 start["situation"] = situation
+            if ato is not None and start.get("mode", "setup") == "setup":
+                start["entry"] = self._ato_entry(offense, ato)
+                run_before = self.hc.stats["called_sets_run"]
             self._schedule_foul(offense, defense, start)
             if inbound is not None:
                 start["holder"] = inbound.start["holder"]   # they foul whoever caught it
             result, info = self.segment(offense, defense, start, record)
+            if "entry" in start:
+                ran = self.hc.stats["called_sets_run"] > run_before
+                self.stats["ato_run" if ran else "ato_missed"] += 1
+                self.log(offense, f"Out of the timeout: {ATO_PLAYS[ato['play']]}"
+                         + ("" if ran else " (not run)"))
+                ato = None
             self._dead_spot = {"period": self.period, "elapsed": self.elapsed, "side": offense.key,
                                "ball": self.hc.ball_spot(), "shot_clock": self.hc.shot_clock}
             if inbound is not None and self.record and record["segments"]:
@@ -659,9 +703,11 @@ class FullGame:
         first three periods and the last two of the fourth and overtime."""
         return self.clock <= (120 if self.period >= 4 else 60)
 
-    def _push_after_make(self, offense: Side) -> float:
+    def _push_after_make(self, offense: Side, tempo: Optional[str] = None) -> float:
         base = self.ot.push_after_score
         logit = math.log(base / (1 - base)) + self.ot.pace_effect * (offense.tactics.pace - 10)
+        if tempo == "push":
+            logit += 2.0                        # the coach: push it after makes too
         return 1 / (1 + math.exp(-logit))
 
     def _set_start(self, how: str) -> dict:
@@ -699,6 +745,8 @@ class FullGame:
         rate = gt.non_shooting_foul_per_second
         if defense.tactics.defensive_scheme is DefensiveScheme.PRESS:
             rate *= gt.press_foul_factor
+        if "pressure" in self.hc.shouts[defense.key]:
+            rate *= PRESSURE_FOUL_FACTOR        # getting up on the ball costs reach-ins
         at = gt.non_shooting_foul_earliest + rng.expovariate(rate)
         if at < 24.0:                       # it only happens if the ball is still live then
             start["foul_at"] = at
@@ -874,6 +922,8 @@ class FullGame:
         while self.clock > 0:
             self._lineup_at_start = self._lineup_indices()
             how, carrier = self.possession(offense, how, carrier)
+            if self.manager is not None:
+                self._tick_shouts(offense)
             offense = self.other(offense)
             yield
             if self.clock <= 0:
@@ -882,6 +932,8 @@ class FullGame:
             if dead:
                 self.check_injuries()
             if self.manager is not None and self._manager_break(dead, offense):
+                if how in ("drb", "steal"):
+                    how, carrier = "dead", None    # a timeout kills the live ball: inbound
                 continue                       # the coach's timeout handled this break
             if dead:
                 # Stop the bleeding: timeout on an 8-0 run (saving a few for the end).
@@ -919,7 +971,11 @@ class FullGame:
     def attach_manager(self, side_key: str) -> dict:
         """Let a human coach ``side_key``: queue commands in the returned dict (or with
         the helpers below); they're applied at the next chance in the game."""
-        self.manager = {"side": side_key, "timeout": False, "subs": [], "auto_subs": True}
+        self.manager = {"side": side_key, "timeout": False, "subs": [], "auto_subs": True,
+                        "shouts": {},             # name -> {"left": possessions or None, "player": id}
+                        "ato": None,              # {"play", "target"}: the set for the timeout called
+                        "ato_next": None,         # ... the timeout was taken: run it next possession
+                        "endgame": dict(ENDGAME_AUTO)}
         return self.manager
 
     def _manager_break(self, dead: bool, next_offense: Side) -> bool:
@@ -929,8 +985,11 @@ class FullGame:
         side = self.sides[m["side"]]
         if m["timeout"] and (dead or next_offense is side):
             m["timeout"] = False
+            ato, m["ato"] = m["ato"], None
             if self.call_timeout(side, "coach's decision"):
                 side.run_against = 0
+                if ato is not None:
+                    m["ato_next"] = ato
                 self._manager_subs()
                 return True
         if dead:
@@ -953,6 +1012,67 @@ class FullGame:
         m["subs"] = []
         if changed:
             self._sync()
+
+    def _sync_shouts(self) -> None:
+        """Hand the coach's active shouts to the half-court engine ("ball_to": his
+        agent, while he's on the floor)."""
+        m = self.manager
+        side = self.sides[m["side"]]
+        active = {}
+        for name, sh in m["shouts"].items():
+            if name == "ball_to":
+                seat = side.seats.get(sh.get("player"))
+                if seat is None or not seat.on_court:
+                    continue
+                active[name] = seat.agent
+            else:
+                active[name] = True
+        self.hc.shouts[m["side"]] = active
+
+    def _tempo(self, offense: Side) -> Optional[str]:
+        """The coach's "slow it down" / "push the pace" when ``offense`` is his team."""
+        m = self.manager
+        if m["side"] != offense.key:
+            return None
+        return next((t for t in ("slow", "push") if t in m["shouts"]), None)
+
+    def _tick_shouts(self, offense: Side) -> None:
+        """Count down shouts given for a number of possessions: offensive ones on the
+        coach's possessions, defensive ones on the other team's ("foul now" only on
+        possessions it fouled on)."""
+        m = self.manager
+        mine = offense.key == m["side"]
+        for name in list(m["shouts"]):
+            sh = m["shouts"][name]
+            used = sh.pop("used", False)
+            if sh.get("left") is None or (name in OFFENSE_SHOUTS) != mine:
+                continue
+            if name == "foul" and not used:
+                continue
+            sh["left"] -= 1
+            if sh["left"] <= 0:
+                del m["shouts"][name]
+
+    def _coach_foul(self, defense: Side, offense: Side) -> Optional[bool]:
+        """The coach's say on fouling to stop the clock (None: the bench coach's rule).
+        "Foul now" fouls at once whenever his team trails in the last period; end-game
+        foul "on" fouls whenever it trails in the last 45 seconds, "off" never."""
+        m = self.manager
+        trailing = self.score_of(offense) > self.score_of(defense)
+        late = self.period >= 4 and self.clock >= 0.5
+        if "foul" in m["shouts"] and late and trailing:
+            m["shouts"]["foul"]["used"] = True
+            return True
+        setting = m["endgame"]["foul"]
+        if setting == "off":
+            return False
+        if setting == "on":
+            return late and trailing and self.clock <= 45
+        return None
+
+    def _ato_entry(self, offense: Side, ato: dict) -> tuple:
+        seat = offense.seats.get(ato.get("target")) if ato.get("target") is not None else None
+        return ato["play"], (seat.agent if seat is not None and seat.on_court else None)
 
     def lines(self, side: Side) -> list[PlayerLine]:
         out = []
