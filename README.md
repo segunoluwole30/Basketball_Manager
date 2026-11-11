@@ -115,6 +115,29 @@ for the whole game, with quarter buttons and the box score. A replay is about
 teams' games, and statistical-engine games, aren't recorded. Replaying them on
 the spatial engine wouldn't reproduce the result in the standings.
 
+**Highlights** (`spatial/highlights.py`). The viewer has Football Manager-style
+highlight modes for full games: **Key**, **Extended** and **Full**. Your choice is
+remembered between games.
+
+- **Key** (about 15–60 of ~210 possessions, more in close games): lead changes and
+  ties, the basket that completes an 8-0 run, alley-oops, and-ones, buzzer-beaters,
+  plays out of a timeout, and everything in a close finish (the last five minutes of
+  the 4th quarter or overtime, within eight).
+- **Extended** (about 85–110): key moments plus made threes, fast-break baskets,
+  baskets that take the lead, steals, blocks, charges and putbacks.
+- **Full**: every possession.
+
+Skipped possessions go by in a line ("⏩ 3 possessions: BWB +5, BWS +2"), so the
+scoreboard, clock and play-by-play stay right. **Full for close finishes** (on by
+default) shows every possession of the last two minutes of a 4th quarter or
+overtime within five. Next, Prev, the arrow keys and the quarter buttons step
+through what the mode shows; the scrub bar still reaches any possession. In a live
+game the simulation still runs every possession, so your timeouts, subs and shouts
+work as before. In Key or Extended mode it runs further ahead of what you see (up
+to about eight possessions), so a command can land a little later. Levels come
+from what each possession recorded (score, events, game clock), so they never
+change a game, and older replays get them when opened.
+
 **Watching live.** On the spatial or hybrid engine, the top bar has a **▶ Watch**
 button, in the regular season and in the playoffs. It plays on to your next
 game, including the rest of that day's games, then opens the game full screen

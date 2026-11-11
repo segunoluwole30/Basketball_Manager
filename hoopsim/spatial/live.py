@@ -95,16 +95,22 @@ class LiveMatch:
 
     def next_chunk(self, after: int, want: int = AHEAD) -> dict:
         """Recorded possessions from index ``after`` on, simulating up to ``want``
-        beyond it if needed."""
+        (1-12) beyond it if needed. Each carries its bench notes and highlight level."""
+        from .highlights import annotate
         after = max(0, int(after))
+        want = max(1, min(12, int(want)))
         guard = 0
-        while not self.done and len(self.fg.possessions) < after + want and guard < 50:
+        while not self.done and len(self.fg.possessions) < after + want and guard < 80:
             self._step()
             guard += 1
-        chunk = [dict(p, notes=self._notes(i)) for i, p in
-                 enumerate(self.fg.possessions[after:after + want], start=after)]
+        ps = self.fg.possessions
+        for i, p in enumerate(ps[:after + want]):
+            if "notes" not in p:
+                p["notes"] = self._notes(i)
+        annotate(ps)                               # highlight levels (they need the run so far)
+        chunk = [dict(p) for p in ps[after:after + want]]
         return {"possessions": chunk, "next": after + len(chunk),
-                "done": self.done and after + len(chunk) >= len(self.fg.possessions), "state": self.state()}
+                "done": self.done and after + len(chunk) >= len(ps), "state": self.state()}
 
     NOTE_WORDS = ("Sub:", "Timeout", "Start of", "fouls out", "foul to stop", "is hurt", "Out of the timeout")
 

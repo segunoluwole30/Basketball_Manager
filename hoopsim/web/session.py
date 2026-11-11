@@ -969,8 +969,8 @@ class GameSession:
         from ..spatial.export import build_html
         return build_html(self._live().header())
 
-    def live_next(self, after: int = 0) -> dict:
-        return self._live().next_chunk(after)
+    def live_next(self, after: int = 0, want: int = 2) -> dict:
+        return self._live().next_chunk(after, want)
 
     def live_command(self, cmd: dict) -> dict:
         from ..spatial.live import LiveError
@@ -1063,6 +1063,8 @@ class GameSession:
             raise UserError("no recording of that game: only your team's most recent games on the "
                             "spatial engine are kept", 404)
         data["live"] = bool(live)
+        from ..spatial.highlights import annotate
+        annotate(data.get("possessions", []))       # older replays were saved without highlight levels
         return build_html(data)
 
     def box_score(self, game_id: int) -> dict:

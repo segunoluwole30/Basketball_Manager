@@ -639,6 +639,18 @@ class WebMatchEngineTests(unittest.TestCase):
         others = [g for g in lg.games.values() if g.played and me not in (g.home_team_id, g.away_team_id)]
         self.assertTrue(all(g.id not in lg.replays for g in others))
 
+    def test_highlight_levels_in_replays_and_live_chunks(self):
+        me = self._spatial_team()
+        lg = self.session.league
+        self.post("/api/live/start")
+        chunk = self.client.get("/api/live/next", params={"after": 0, "want": 8}).json()
+        self.assertEqual(len(chunk["possessions"]), 8)                  # highlight modes ask for more
+        self.assertTrue(all("hl" in p for p in chunk["possessions"]))
+        gid = self.post("/api/live/finish")["game"]["id"]
+        page = self.client.get(f"/api/replay/{gid}").text
+        self.assertIn('"hl":', page)
+        self.assertIn('id="hlBox"', page)
+
     def test_live_needs_the_spatial_engine(self):
         choices = self.post("/api/new", {"seed": 7, "num_teams": 4})["teams"]
         self.post("/api/new/team", {"team_id": choices[0]["id"]})

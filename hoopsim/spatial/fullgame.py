@@ -1103,6 +1103,8 @@ class FullGame:
                              **{f: int(c[f]) for f in BOX_FIELDS}})
             return rows
 
+        from .highlights import annotate
+        annotate(self.possessions)                 # key / extended / routine, for the viewer
         poss = [p for p in self.possessions if period is None or p["period"] == period]
         return {"version": 2, "fullgame": True, "dt": self.hc.t.dt, "home": team("home"), "away": team("away"),
                 "possessions": poss,

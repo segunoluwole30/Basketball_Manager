@@ -259,8 +259,8 @@ def create_app(session: Optional[GameSession] = None) -> FastAPI:
         return HTMLResponse(run(game.live_page))
 
     @app.get("/api/live/next")
-    def live_next(after: int = 0):
-        return run(game.live_next, after)
+    def live_next(after: int = 0, want: int = 2):
+        return run(game.live_next, after, want)
 
     @app.post("/api/live/command")
     def live_command(body: dict = Body(...)):

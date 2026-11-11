@@ -179,6 +179,7 @@ aside { display: grid; gap: 16px; min-width: 0; }
 .coach .stag button { padding: 2px 6px; font-size: 12px; border: 0; background: transparent; }
 .coach .stag.d { background: color-mix(in srgb, var(--home) 16%, transparent); }
 .waiting { opacity: 0.6; }
+.hl { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 </style>
 
 <div class="app">
@@ -208,6 +209,14 @@ aside { display: grid; gap: 16px; min-width: 0; }
         <output id="possLabel" for="scrub">1 / 1</output></div>
       <label class="toggle"><input type="checkbox" id="names"> Names</label>
       <div class="periods" id="periods" role="group" aria-label="Jump to period"></div>
+      <div class="hl" id="hlBox" hidden>
+        <div class="seg" role="radiogroup" aria-label="Highlights">
+          <input type="radio" name="hl" id="hlKey" value="key"><label for="hlKey" title="Lead changes, runs, alley-oops, and-ones, close finishes">Key</label>
+          <input type="radio" name="hl" id="hlExt" value="extended"><label for="hlExt" title="Key moments plus threes, fast breaks, steals, blocks and putbacks">Extended</label>
+          <input type="radio" name="hl" id="hlFull" value="full" checked><label for="hlFull" title="Every possession">Full</label>
+        </div>
+        <label class="toggle" title="Show every possession in the last two minutes of a close 4th quarter or overtime"><input type="checkbox" id="hlClose" checked> Full for close finishes</label>
+      </div>
     </div>
   </div>
   <aside>
@@ -416,6 +425,7 @@ window.GAME = /*GAME_DATA*/null;
     setText("awayPts", score[1]);
     setText("callTime", (call ? (call[0] * dt).toFixed(1) : "0.0") + "s");
     setText("callText", call ? call[1] : "");
+    if (skipText && t < 2.0) setText("callText", skipText);       // what the highlights skipped
     $("homeBox").classList.toggle("off", p.offense === "home");
     $("awayBox").classList.toggle("off", p.offense === "away");
     updateLog(i);
@@ -455,10 +465,59 @@ window.GAME = /*GAME_DATA*/null;
     log.scrollTop = log.scrollHeight;
   }
 
+  // ---- highlight modes (Key / Extended / Full), as in Football Manager
+  const HL_LEVEL = { key: 2, extended: 1, full: 0 };
+  let hlMode = "full", closeFull = true, skipText = "";
+  try {
+    hlMode = localStorage.getItem("hoopsim-hl") || "full";
+    closeFull = localStorage.getItem("hoopsim-hl-close") !== "0";
+  } catch (e) {}
+  if (!(hlMode in HL_LEVEL)) hlMode = "full";
+  function closeFinish(p) {            // last two minutes, 4th quarter or overtime, within five
+    const c = p.frames[0].length > 26 ? p.frames[0][26] : null;
+    return p.period >= 4 && c !== null && c <= 120 && Math.abs(p.start_score[0] - p.start_score[1]) <= 5;
+  }
+  function shown(i) {
+    const p = P[i];
+    if (!p) return false;
+    if (hlMode === "full" || p.hl === undefined) return true;
+    if (closeFull && closeFinish(p)) return true;
+    return p.hl >= HL_LEVEL[hlMode];
+  }
+  function nextShown(i) { for (let j = i + 1; j < P.length; j++) if (shown(j)) return j; return -1; }
+  function prevShown(i) { for (let j = i - 1; j >= 0; j--) if (shown(j)) return j; return -1; }
+  function skipSummary(a, b) {         // possessions a+1 .. b-1 went by
+    if (b - a <= 1) return "";
+    const s0 = P[a].end_score, s1 = b < P.length ? P[b].start_score : P[P.length - 1].end_score;
+    return `⏩ ${b - a - 1} possession${b - a - 1 > 1 ? "s" : ""}: ${G.away.abbr} +${s1[1] - s0[1]}, ${G.home.abbr} +${s1[0] - s0[0]}`;
+  }
+  function advance() {                 // on to the next possession worth showing
+    const n = nextShown(poss);
+    if (n < 0) {
+      // Nothing left to show: in a finished game, skip to the final buzzer.
+      if ((!LIVE || liveDone) && poss < P.length - 1) {
+        const s = skipSummary(poss, P.length);
+        goTo(P.length - 1); t = duration(P[poss]); skipText = s; drawFrame();
+        return true;
+      }
+      return false;
+    }
+    const s = skipSummary(poss, n);
+    goTo(n);
+    skipText = s;
+    drawFrame();
+    return true;
+  }
+  function setHl(mode) {
+    hlMode = mode;
+    try { localStorage.setItem("hoopsim-hl", mode); } catch (e) {}
+    document.querySelectorAll('input[name="hl"]').forEach((el) => { el.checked = el.value === mode; });
+  }
+
   // ---- playback
   function duration(p) { return (p.frames.length - 1) * dt; }
   function goTo(n) {
-    poss = Math.max(0, Math.min(P.length - 1, n)); t = 0; holdUntil = 0; logKey = "";
+    poss = Math.max(0, Math.min(P.length - 1, n)); t = 0; holdUntil = 0; logKey = ""; skipText = "";
     $("scrub").value = poss;
     $("possLabel").textContent = `${poss + 1} / ${P.length}`;
     document.querySelectorAll("#periods button").forEach((el) =>
@@ -477,11 +536,11 @@ window.GAME = /*GAME_DATA*/null;
       } else if (!holdUntil) {
         holdUntil = ts + 1100 / speed;         // let the result sink in
       } else if (ts >= holdUntil) {
-        if (poss < P.length - 1) goTo(poss + 1);
+        if (advance()) { /* next highlight */ }
         else if (LIVE && !liveDone) { liveFetch(); }              // the next possession is on its way
         else { setPlaying(false); revealBox(); if (LIVE) liveFinal(); }
       }
-      if (LIVE && poss >= P.length - 2) liveFetch();
+      if (LIVE && (poss >= P.length - 2 || nextShown(poss) < 0)) liveFetch();
     }
     requestAnimationFrame(tick);
   }
@@ -524,7 +583,10 @@ window.GAME = /*GAME_DATA*/null;
     for (const n of [...new Set(P.map((p) => p.period))]) {
       const btn = document.createElement("button");
       btn.type = "button"; btn.dataset.period = n; btn.textContent = periodName(n);
-      btn.addEventListener("click", () => goTo(P.findIndex((p) => p.period === n)));
+      btn.addEventListener("click", () => {
+        const first = P.findIndex((p, i) => p.period === n && shown(i));
+        goTo(first >= 0 ? first : P.findIndex((p) => p.period === n));
+      });
       $("periods").appendChild(btn);
     }
   }
@@ -582,8 +644,19 @@ window.GAME = /*GAME_DATA*/null;
   }
   $("scrub").max = Math.max(0, P.length - 1);
   $("scrub").addEventListener("input", (e) => goTo(+e.target.value));
-  $("prev").addEventListener("click", () => goTo(t > 1.5 ? poss : poss - 1));
-  $("next").addEventListener("click", () => goTo(poss + 1));
+  if (FULLGAME) {
+    $("hlBox").hidden = false;
+    setHl(hlMode);
+    $("hlClose").checked = closeFull;
+    document.querySelectorAll('input[name="hl"]').forEach((el) =>
+      el.addEventListener("change", () => { if (el.checked) setHl(el.value); }));
+    $("hlClose").addEventListener("change", (e) => {
+      closeFull = e.target.checked;
+      try { localStorage.setItem("hoopsim-hl-close", closeFull ? "1" : "0"); } catch (err) {}
+    });
+  }
+  $("prev").addEventListener("click", () => goTo(t > 1.5 ? poss : Math.max(0, prevShown(poss))));
+  $("next").addEventListener("click", () => { if (!advance()) goTo(poss + 1); });
   $("play").addEventListener("click", () => setPlaying(!playing));
   $("names").addEventListener("change", drawFrame);
   try { $("names").checked = localStorage.getItem("hoopsim-names") === "1"; } catch (e) {}
@@ -593,8 +666,8 @@ window.GAME = /*GAME_DATA*/null;
   document.addEventListener("keydown", (e) => {
     if (e.target.matches("input[type=range]")) return;
     if (e.key === " ") { e.preventDefault(); setPlaying(!playing); }
-    else if (e.key === "ArrowRight") goTo(poss + 1);
-    else if (e.key === "ArrowLeft") goTo(poss - 1);
+    else if (e.key === "ArrowRight") { if (!advance()) goTo(poss + 1); }
+    else if (e.key === "ArrowLeft") goTo(Math.max(0, prevShown(poss)));
   });
   const redrawAll = () => { readColors(); fit(); drawFrame(); };
   window.addEventListener("resize", redrawAll);
@@ -616,7 +689,7 @@ window.GAME = /*GAME_DATA*/null;
     if (!LIVE || fetching || liveDone) return;
     fetching = true;
     try {
-      const c = await api("GET", `/api/live/next?after=${liveNext}`);
+      const c = await api("GET", `/api/live/next?after=${liveNext}&want=${hlMode === "full" ? 2 : 8}`);
       for (const p of c.possessions) {
         // Bench news (subs, timeouts) shows at the start of the possession it came before.
         if (p.notes && p.notes.length) p.events = [[0, p.notes.join(" · "), ...p.start_score], ...p.events];
@@ -902,7 +975,7 @@ window.GAME = /*GAME_DATA*/null;
       while (!P.length && !liveDone) { await liveFetch(); if (!P.length) await new Promise((r) => setTimeout(r, 300)); }
       if (!P.length) return;
     }
-    readColors(); fit(); goTo(0); setPlaying(playing);
+    readColors(); fit(); goTo(shown(0) ? 0 : Math.max(0, nextShown(0))); setPlaying(playing);
     requestAnimationFrame(tick);
   }
   start();
