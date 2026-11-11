@@ -62,7 +62,7 @@ class SpatialTuning:
     post_strength_effect: float = 0.01        # make chance per point of strength edge in the post
     # Style: points of option value per tendency point away from 10 (a 20 tendency = +0.12).
     tendency_weight: float = 0.025
-    off_dribble_penalty: float = 0.035
+    # (the off-the-dribble penalty is in SpatialParams)
     # Jump shots take time to get off (catch to release / gather and rise); the
     # contest is judged where the defenders are at release, not at the decision.
     release_catch: float = 0.30
@@ -264,7 +264,7 @@ class HalfCourtGame:
         if moving:
             prob -= 0.03
         if catch is not None and z in (MID_ZONE, THREE_ZONE):
-            prob += t.catch_shoot_bonus if catch else -t.off_dribble_penalty
+            prob += t.catch_shoot_bonus if catch else -self.p.off_dribble_penalty
         if post:
             prob += t.post_strength_effect * (shooter.a("strength") - defender.a("strength"))
         if lob:
@@ -484,6 +484,8 @@ class HalfCourtGame:
             d = self.guarded_by(a)
             if d.helping and a.a("three_point") < 12 and a.spot[1] < 22:
                 a.target((math.copysign(3.5, a.x or 1), 5.5))    # cut behind the help
+            elif (reloc := self.relocate_spot(a, d)) is not None:
+                a.target(reloc)                                  # slide to an open spot on the arc
             else:
                 a.target(a.spot)
                 self.maybe_cut(a, d)
@@ -499,6 +501,26 @@ class HalfCourtGame:
                     h.target((RIM[0] + r * math.cos(angle), RIM[1] + r * math.sin(angle)))
                 else:
                     h.target((h.spot[0] + self.rng.uniform(-4, 4), h.spot[1] + self.rng.uniform(-3, 3)))
+
+    def relocate_spot(self, a: Agent, d: Agent) -> Optional[tuple[float, float]]:
+        """A shooter whose man has left him to help on a drive doesn't stand still: he
+        slides along the arc away from his defender (drift and lift), into the
+        driver's sight line for the kick-out. None: stay on his spot."""
+        if (self.p.relocate_shooter <= 0 or self.mode != "drive" or self.holder is None
+                or not d.helping or a.a("three_point") < self.p.relocate_shooter
+                or not C.is_three(a.spot)):
+            return None
+        rx, ry = a.spot[0] - RIM[0], a.spot[1] - RIM[1]
+        ang = math.atan2(ry, rx)
+        dang = math.atan2(d.y - RIM[1], d.x - RIM[0])
+        step = math.radians(self.p.relocate_degrees)
+        ang += -step if math.sin(dang - ang) > 0 else step      # away from where his man went
+        ang = max(math.radians(2), min(math.radians(178), ang))
+        r = 24.6
+        x, y = RIM[0] + r * math.cos(ang), RIM[1] + r * math.sin(ang)
+        if abs(x) > C.CORNER_THREE_X - 0.5 and y < C.CORNER_THREE_Y + 1:
+            x = math.copysign(22.6, x)                          # the corner is straight below
+        return C.clamp((x, max(1.5, y)))
 
     def can_post(self, a: Agent) -> bool:
         """A big who can (and likes to) score on the block."""
@@ -866,7 +888,9 @@ class HalfCourtGame:
         on = self.guarded_by(h)
         # His man follows him in; he gains a little separation on the stop.
         contest = max(0.0, C.dist(on.pos, h.pos) - 0.5 + 0.02 * (h.a("speed") - on.a("speed")) * 10)
-        ep = self.shot_value(h, p=point, contest_d=contest, defender=on, moving=True, catch=False)
+        # Valued as it is shot: a set-and-rise jumper off the dribble (not on the move).
+        ep = self.shot_value(h, p=point, contest_d=contest, defender=on, catch=False,
+                             moving=self.p.pullup_on_the_move > 0)
         feats = [1.0, ep, 0.0, 1.0, max(0.0, 6.0 - self.shot_clock) / 6.0]
         return ("shoot", ("pullup", MID_ZONE, point), feats)
 
@@ -1267,13 +1291,13 @@ class HalfCourtGame:
         if fouled:
             prob *= 0.45
         made = rng.random() < prob
+        bucket = "tight" if dd < 2 else "close" if dd < 4 else "open" if dd < 6 else "wide"
+        ctx = ("drive" if self.mode == "drive" else "putback" if self.now - self.orb_time < 2.0
+               else "catch" if (catch if released is not None else self.now - self.catch_time < 1.0)
+               else "other")
         if made or not fouled:                 # a missed shot that drew a foul isn't an attempt
             self.count_attempt(h, z)
-            bucket = "tight" if dd < 2 else "close" if dd < 4 else "open" if dd < 6 else "wide"
             self.stats[f"contest_{z}_{bucket}"] += 1
-            ctx = ("drive" if self.mode == "drive" else "putback" if self.now - self.orb_time < 2.0
-                   else "catch" if (catch if released is not None else self.now - self.catch_time < 1.0)
-                   else "other")
             self.stats[f"ctx_{z}_{ctx}"] += 1
             self.stats[f"ctxwide_{z}_{ctx}"] += bucket == "wide"
             self.stats[f"shot_clock_{z}"] += self.shot_clock
@@ -1283,7 +1307,7 @@ class HalfCourtGame:
         self.flight = Flight("shot", spot, RIM, self.now, duration, apex=6 + shot_d * 0.25, z0=7.5, z1=10.0,
                              data={"shooter": h, "made": made, "points": points, "zone": z, "fouled": fouled,
                                    "defender": defender, "assisted": assisted, "passer": self.last_passer,
-                                   "shot_d": shot_d})
+                                   "shot_d": shot_d, "bucket": bucket, "ctx": ctx})
         self.holder = None
         self.mode = "shot"
         self.pnr = None
@@ -1360,6 +1384,8 @@ class HalfCourtGame:
             self.credit(shooter, "fgm")
             self.credit(shooter, "pts", d["points"])
             self.stats[f"fgm_{d['zone']}"] += 1
+            self.stats[f"contest_made_{d['zone']}_{d.get('bucket')}"] += 1
+            self.stats[f"ctx_made_{d['zone']}_{d.get('ctx')}"] += 1
             if d["zone"] == THREE_ZONE:
                 self.credit(shooter, "tpm")
             assist = ""
@@ -1379,6 +1405,7 @@ class HalfCourtGame:
             self.free_throws(shooter, n, d["defender"])
         else:
             self.say("No good")
+            self.miss_zone = d["zone"]
             # Long shots, long rebounds; often to the far side.
             r = 3.0 + self.rng.uniform(0, 1) * (2 + d["shot_d"] * 0.35)
             side = -1 if shooter.x > 0 else 1
@@ -1426,6 +1453,9 @@ class HalfCourtGame:
             a = min(self.everyone, key=lambda q: C.dist(q.pos, land))
             candidates = [(1.0, a)]
         winner = self.rng.choices([a for _, a in candidates], [w for w, _ in candidates])[0]
+        zone = getattr(self, "miss_zone", None)
+        self.miss_zone = None
+        self.stats[f"reb_{zone}_{'d' if winner in self.defense else 'o'}"] += 1
         if winner in self.defense:
             self.credit(winner, "drb")
             self.stats["drb"] += 1
@@ -1496,6 +1526,8 @@ class HalfCourtGame:
         * ``positions``: {agent: (x, y, vx, vy)}, e.g. players still running in transition
           (y beyond half court is allowed);
         * ``holder``, ``shot_clock``, ``guards`` (matchups: guards[offence slot] = defence slot);
+        * ``spots``: {agent: (x, y)} spacing spots to use instead of the set's (early
+          offence: stay in the corner or trail spot you ran to);
         * ``passer`` and ``caught`` (seconds ago, <= 0): the pass the holder just caught,
           for assists and catch-and-shoot;
         * ``game_clock``: seconds left in the period. The shot clock is off below it and
@@ -1515,6 +1547,8 @@ class HalfCourtGame:
             self.shot_clock = start["shot_clock"]
         if "guards" in start:
             self.guards = list(start["guards"])
+        for a, spot in start.get("spots", {}).items():
+            a.spot = spot
         if start.get("passer") is not None:
             self.last_passer = start["passer"]
             self.catch_time = start.get("caught", 0.0)

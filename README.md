@@ -863,6 +863,111 @@ defaults, and `entry_actions` sat at its upper bound again. The remaining
 full-game gaps (pace ~4 high, three share ~6 points low) don't respond to these
 settings. They need mechanisms.
 
+### Full-game three-point volume, part 2: who shoots, from where, and how
+
+Diagnosis (120 full games over leagues 0 and 1, per team-game, before any change):
+
+| possession type | FGA | three share | 3P% |
+|---|---|---|---|
+| set half court (walk-ups, inbounds) | 68.2 | .331 | .340 |
+| flows out of transition, no advantage | 8.8 | .154 | .364 |
+| flows, numbers / kick-out | 2.5 | .274 | .488 |
+| breakaways | 3.3 | .011 | — |
+
+| position | 3PA per 36 | 3P% | NBA-like 3PA per 36 (rough) |
+|---|---|---|---|
+| PG | 3.6 | .275 | ~6.5 |
+| SG | 6.2 | .360 | ~7 |
+| SF | 5.6 | .355 | ~6 |
+| PF | 2.8 | .325 | ~5 |
+| C | 0.5 | .184 | ~2.5 |
+
+- **The volume gap was players, not wings.** Wings already shot NBA volumes. Point
+  guards, power forwards and centres together were ~9.5 of the ~11 missing threes
+  a game. Generation made point guards worse shooters than shooting guards (mean
+  three-point rating 9.4 against 11.2), PFs averaged 8.3 and 82% of centres were
+  rated 7 or lower. The NBA has many shooting bigs and pull-up point guards.
+- **Shot quality was fine.** 45% of threes were wide open and they went in at
+  38.4% (NBA tracking ~39%). Contested threes matched the tracking numbers too.
+- **Off-the-dribble jumpers were far too hard.** Catch-and-shoot threes went in at
+  37.5% (NBA 37.4%) but off the dribble at only 27.2% (NBA ~33-34%), and off-the-dribble
+  mid-range jumpers at 30% (NBA ~40%). The intended 3-point gap had become 5.5 (a
+  +2 catch bonus and a -3.5 off-dribble penalty). On top of that, the pull-up option
+  was *valued* as a shot on the move (another -3) but *taken* as a set shot.
+- **Transition lanes were inside the arc.** Wings ran to (±21, 6), inside the 22-ft
+  corner line, and the trailer to (7, 27), 22.9 ft from the rim. Early kick-outs and
+  trail threes were long twos. In the half court the runners then left those spots
+  to re-form the set.
+- **Measurement.** Basketball-Reference estimates possessions from the box score
+  (FGA + 0.4 FTA - 1.07 ORB% x misses + TOV). The sim counts them. The counted
+  number runs ~2% higher (end-of-period possessions with no shot, and the formula's
+  FT-trip weight), so the counted points per 100 read ~2 low against the targets.
+  `measure` now also prints `pace_bref_formula` and `points_per_100_bref_formula`.
+  The targets and their keys are unchanged.
+
+Changes:
+- **Generation** (`generate.py`): the PG template's three-point offset goes from +1 to
+  +2. `STRETCH_SHARE` draws 50% of PFs and 35% of Cs as stretch bigs. Mean
+  three-point ratings are now PG 10.4, SG 11.3, SF 10.3, PF 10.7, C 6.9 (was 9.4,
+  11.2, 10.7, 8.3, 4.4).
+- **Transition lanes** (`transition.py`, `OpenCourt.assign_lanes`/`hand_over`): wings
+  fill the corners behind the arc (`CORNER_LANE`). A trailing big rated 10+ from three
+  trails to the top of the arc (`TRAIL_LANE`); others go to the elbow. After a push
+  without a breakaway, the half court keeps the runners on those spots (the new
+  `spots` start option, `OpenCourtTuning.early_spots`).
+- **Off-the-dribble jumpers** (`sim.py`): `off_dribble_penalty` moves to
+  `SpatialParams` at 0.01 (a 3-point gap to catch-and-shoot, as the NBA tracking
+  split). The pull-up is valued as it is shot (`pullup_on_the_move` = 0).
+- **Relocation** (`HalfCourtGame.relocate_spot`): when a shooter's man (three-point
+  rating 10+, `relocate_shooter`) leaves him to help on a drive, he slides 18° along
+  the arc away from him (drift/lift) instead of standing still.
+- `LEGACY_PARAMS` turns the new half-court behaviour off. With the old `generate.py`
+  it still reproduces the original pinned possessions exactly.
+- **Statistical engine** (`engine.py`): the new rating population gave it 39.5 3PA a
+  game (target 35.1). The base three mix went from 0.40 to 0.33 and the base make from
+  0.36 to 0.355. All 17 stats are back in range (3PA 35.6, 3P% .365, FG% .473,
+  points 113.4).
+
+The values were retrained after the changes. Full games, 240 per league:
+
+| | before seed 0 / 1 | after seed 0 / 1 | NBA 2025-26 |
+|---|---|---|---|
+| pace | 102.2 / 102.6 | 103.5 / 103.6 | 99.4 |
+| points per team | 114.3 / 111.2 | 113.4 / 114.1 | 115.6 |
+| points per 100 (counted) | 111.6 / 108.1 | 109.4 / 109.9 | 115.8 |
+| points per 100 (B-R formula) | 113.3 (40 games) / — | 111.5 / 112.1 | 115.8 |
+| three share | .341 / .280 | .384 / .389 | .415 |
+| 3PA per team | 29.1 / 23.8 | 33.1 / 34.2 | ~37 |
+| 3P% | ~.34 | .35 / .35 | ~.36 |
+| eFG | .550 / .535 | .554 / .545 | .546 |
+| ORB% | .248 / .240 | .210 / .237 | .260 |
+| FTA per 100 | 25.5 / 25.3 | 21.9 / 23.0 | 23.6 |
+| fouls per 100 | 20.1 / 19.9 | 18.1 / 18.6 | 20.0 |
+| turnovers per 100 | 15.8 / 16.2 | 15.8 / 15.4 | 14.6 |
+| transition share / points | .143, 1.23 / .152, 1.19 | .152, 1.22 / .156, 1.22 | .15, 1.26 |
+| starter / top minutes | 30.4, 34.1 / 30.7, 34.8 | 30.6, 34.0 / 30.5, 34.4 | 33, 36 |
+
+By position (120 games, leagues 0-1): PG 6.1, SG 6.7, SF 4.9, PF 4.7, C 1.0 threes per
+36. Flows out of transition: three share .154 → .21 (no advantage) and .27 → .41
+(numbers). Off-the-dribble threes are now ~30% of all threes at ~30-32%.
+
+What didn't work or is still off:
+- **Points didn't rise.** Threes replaced drives at about the same eFG, and drives
+  are what draw fouls and offensive rebounds: FTA per 100 fell 25.5 → 22 and ORB%
+  fell (league 0: .248 → .210). Points per 100 stay ~110 counted (~112 by the B-R
+  formula) against 115.8. The rest of the gap is fewer FGA per possession than the
+  NBA: turnovers ~1 per 100 high, and too few offensive rebounds.
+- **Offensive rebounds on threes** are ~21-22% (NBA estimates ~25%). Tried and
+  reverted: longer caroms on long misses, with the defence's box-out edge fading for
+  balls landing away from the rim. ORB% on missed threes went only .212 → .219.
+- **Pace went up ~1** (more early catch-and-shoot threes).
+- **Centres** still shoot only ~1 three per 36 (NBA ~2.5). A stretch centre rated
+  10-11 still sets up in the dunker spot unless he's 12+ (`five_out`).
+- **The half-court yardstick** (held-out league 0, starters only) now overshoots on
+  threes: share .475 (was .396, estimate .42), points per possession 1.11 (1.155),
+  ORB .18 and FTA/FGA .17 (both below estimates). The full-game numbers are real
+  data, so they decide.
+
 ## Simulation commands
 
 ```bash
@@ -905,7 +1010,10 @@ That gives one source of truth, so trades and signings can't desync.
 Players come from a position template plus height effects (taller players are
 better at boards and blocks, worse at handling and speed), scaled to hit a target CA.
 That target is PA × an age development curve, which peaks at 27. Ageing vets lose
-physical attributes first. Salaries follow a steep curve on CA. Rosters are filled
+physical attributes first. Point guards shoot threes about as well as shooting
+guards, and half of power forwards and a third of centres are drawn as stretch bigs
+(+5 three-point, +1 mid-range, -1 close range on the template; the level shift still
+lands them on their target CA). Salaries follow a steep curve on CA. Rosters are filled
 by a snake draft with noisy scouting, so there are strong and weak teams without
 absurd gaps. `auto_lineup` (in `lineup.py`) brute-forces the best starting five and
 shares out 240 minutes. The schedule is a repeated round robin with alternating

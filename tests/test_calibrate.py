@@ -33,9 +33,12 @@ class ParamsTests(unittest.TestCase):
     def test_legacy_params_reproduce_the_engine_before_calibration(self):
         # Pinned before the constants moved into SpatialParams: with the old values
         # (and the hand-written decision values) the engine plays exactly as it did.
+        # Re-pinned when player generation changed (stretch bigs, shooting point
+        # guards), which changes league 41 itself; with the old generate.py the
+        # legacy physics still gives the original pin a5958e8ac648389b / 28-18.
         g = play(LEGACY_PARAMS)
-        self.assertEqual(fingerprint(g), "a5958e8ac648389b")
-        self.assertEqual(g.score, {"home": 28, "away": 18})
+        self.assertEqual(fingerprint(g), "5ba83331e1e1b1c7")
+        self.assertEqual(g.score, {"home": 29, "away": 22})
 
     def test_params_change_behaviour(self):
         loose = DEFAULT_PARAMS.with_values(help_trigger=10.0, closeout_speed=0.7, contest_outside=0.5)

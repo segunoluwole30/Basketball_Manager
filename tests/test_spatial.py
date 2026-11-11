@@ -185,6 +185,9 @@ def frozen_scene(seed: int = 5):
 class DefenceTests(unittest.TestCase):
     def test_jumpers_are_contested_at_release(self):
         g, h = frozen_scene()
+        # A below-average shooter's slower release (~0.32 s) gives the closeout time; a
+        # great shooter's quick release beats it, as it should.
+        h.p.attributes.three_point = 7
         g.catch_time = g.now - 0.2
         guard = g.guarded_by(h)
         start = C.dist(guard.pos, h.pos)
@@ -209,7 +212,7 @@ class DefenceTests(unittest.TestCase):
         g, h = frozen_scene()
         on = g.guarded_by(h)
         helper = next(d for d in g.defense if d is not on)
-        def strips(near: bool, trials: int = 300) -> int:
+        def strips(near: bool, trials: int = 1000) -> int:     # a sure-handed driver: ~2% a trial
             n = 0
             for _ in range(trials):
                 g.result = None

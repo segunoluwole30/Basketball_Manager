@@ -37,6 +37,10 @@ from .court import RIM
 from .sim import Agent, HalfCourtGame
 
 FULL = C.FULL_LENGTH
+# Transition lanes behind the arc (x mirrored to the side): the corner (22 ft is the
+# corner three) and the trailer's spot at the top of the arc (~25 ft from the rim).
+CORNER_LANE = (22.6, 4.5)
+TRAIL_LANE = (6.0, 29.5)
 
 
 @dataclass
@@ -62,6 +66,10 @@ class OpenCourtTuning:
     ahead_open: float = 7.0         # ... and needs this much room
     ahead_steal: float = 0.08       # interception chance scale for an ahead pass
     pass_speed: float = 42.0
+    trail_shooter: int = 10         # a trailing big this good from three trails to the arc
+    # Early offence: after a push, the half court keeps the runners on their lanes
+    # (corners, trail spot) instead of re-forming the set.
+    early_spots: bool = True
     # Throw-ins after dead balls (DeadBallInbound).
     dead_inbound_delay: tuple = (1.0, 2.2)   # from the spot until the throw: the official hands it over
     inbound_settle: float = 0.6     # at the spot, the receivers get a moment to get open
@@ -201,11 +209,19 @@ class OpenCourt:
         bigs = [a for a in mates if a.slot >= 3]
         ball_side = 1 if self.holder.x >= 0 else -1
         if self.push:
+            # Wings fill the corners behind the arc, one big runs to the rim and the
+            # other trails: to the top of the arc for a trail three if he can shoot,
+            # to the elbow if he can't.
             sides = [-ball_side, ball_side]
             for a, s in zip(sorted(guards, key=lambda a: a.x * -ball_side, reverse=True), sides):
-                lanes[id(a)] = (s * 21.0, 6.0)
+                lanes[id(a)] = (s * CORNER_LANE[0], CORNER_LANE[1])
             for i, a in enumerate(sorted(bigs, key=lambda a: C.dist_to_rim(a.pos))):
-                lanes[id(a)] = (-ball_side * 3.5, 7.0) if i == 0 else (ball_side * 7.0, 27.0)
+                if i == 0:
+                    lanes[id(a)] = (-ball_side * 3.5, 7.0)
+                elif a.a("three_point") >= self.t.trail_shooter:
+                    lanes[id(a)] = (ball_side * TRAIL_LANE[0], TRAIL_LANE[1])
+                else:
+                    lanes[id(a)] = (ball_side * 7.0, 20.0)
             if len(guards) > 2:
                 for a in guards[2:]:
                     lanes[id(a)] = (ball_side * 19.0, 22.0)
@@ -486,6 +502,13 @@ class OpenCourt:
         else:
             mode, decide, r.advantage = "probe", 0.6, "none"
         everyone = self.g.everyone
+        spots = {}
+        if self.push and self.t.early_spots and r.advantage in ("none", "numbers"):
+            # Early offence: spot up where you ran to (behind the arc), don't re-form the set.
+            for a in self.offense:
+                lane = self.lanes.get(id(a))
+                if a is not h and lane is not None and C.is_three(lane):
+                    spots[a] = C.clamp(lane)
         r.start = {
             "positions": {a: (a.x, a.y, a.vx, a.vy) for a in everyone},
             "holder": h,
@@ -495,6 +518,8 @@ class OpenCourt:
             "mode": mode,
             "decide_in": decide,
         }
+        if spots:
+            r.start["spots"] = spots
         if self.last_passer is not None and self.now - self.caught_at < 2.0:
             r.start["passer"] = self.last_passer               # for the assist (and catch and shoot)
             r.start["caught"] = self.caught_at - self.now

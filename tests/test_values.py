@@ -82,7 +82,8 @@ class RecordingTests(unittest.TestCase):
             g = HalfCourtGame(league, 1, 2, random.Random(3), record=False, model=model)
             g.play(300)
             return g.stats["fga_three"]
-        shooters = DecisionModel({**HEURISTIC.weights, "shoot": [0.6, 1.0, 0.5, 0.0, 0.0]})
+        # Values that love threes (a flat shoot bias would also buy pull-up twos).
+        shooters = DecisionModel({**HEURISTIC.weights, "shoot": [0.0, 1.0, 0.5, 0.0, 0.0]})
         self.assertGreater(threes(shooters), threes(HEURISTIC))
 
 
