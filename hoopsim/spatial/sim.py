@@ -293,6 +293,7 @@ class HalfCourtGame:
         self.now = 0.0
         self.shot_clock = 24.0 - rng.uniform(3.5, 6.0)   # time used bringing it up
         self.flight: Optional[Flight] = None
+        self.last_flight: Optional[Flight] = None   # where the last ball in the air ended up
         self.holder: Optional[Agent] = self.offense[0]
         self.mode = "setup"                    # setup, probe, drive, pass, shot, rebound, ft, over
         self.mode_since = 0.0
@@ -1304,6 +1305,7 @@ class HalfCourtGame:
         if not f.done(self.now):
             return
         self.flight = None
+        self.last_flight = f
         if f.kind == "pass":
             if "steal" in f.data:
                 thief, passer = f.data["steal"], f.data["passer"]
@@ -1527,6 +1529,17 @@ class HalfCourtGame:
             self.mode, self.mode_since = ("probe" if mode == "drive" else mode), 0.0
             if mode == "drive":
                 self.start_drive(self.holder)
+
+    def ball_spot(self) -> tuple[float, float]:
+        """Where the ball is, or where it went dead: with the holder, in the air, or where
+        the last pass or shot ended up (a pass thrown out of bounds)."""
+        if self.holder is not None:
+            return self.holder.pos
+        if self.flight is not None:
+            return self.flight.position(self.now)[:2]
+        if self.last_flight is not None:
+            return self.last_flight.end
+        return RIM
 
     def clock_hooks(self) -> None:
         """The period buzzer and scheduled non-shooting fouls (full games only)."""

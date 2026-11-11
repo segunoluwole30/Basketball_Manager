@@ -272,28 +272,46 @@ games could later be stored like season games. It isn't wired into the season lo
   down three. These are passed to the half-court decisions as small value biases.
 
 Measured over 60 games (seed 0; per team-game), with everything above plus
-inbounds and walk-ups after makes, against 2025-26 Basketball-Reference league
+inbounds after makes and dead balls, against 2025-26 Basketball-Reference league
 averages (transition and minutes are estimates; sources in `measure.py`):
 
 | | Sim | NBA |
 |---|---|---|
-| Pace | 101.1 (135 before set plays) | 99.4 |
-| Points per team | 112 (110 per 100) | 115.6 (115.8 per 100) |
-| Transition share of possessions | 14.0% | ~15% (est.) |
-| Transition points per possession | 1.19 | ~1.26 (est.) |
-| Turnovers per 100 possessions | 15.2 | 14.6 |
-| Three share / eFG | .334 / .539 | .415 / .546 |
+| Pace | 101.9 (135 before set plays) | 99.4 |
+| Points per team | 111 (109 per 100) | 115.6 (115.8 per 100) |
+| Transition share of possessions | 14.7% | ~15% (est.) |
+| Transition points per possession | 1.25 | ~1.26 (est.) |
+| Turnovers per 100 possessions | 16.1 | 14.6 |
+| Three share / eFG | .341 / .536 | .415 / .546 |
 
-**Inbounds after makes.** After every made basket or made free throw, the court view
-shows the inbound: a big takes it out under the basket and the guard comes back
-for it. Then comes the walk-up (`inbound_walkups`; before, a possession the team
-didn't push jumped straight to half-court positions). The walk-up is real
-movement, so it sets the game clock. Walk-ups go at 55% of top speed (was 80%),
-and retrieving the ball and inbounding takes 1.5–2.8 s (was 1.0–1.8). A team then
-reaches the frontcourt with about 18.6 on the shot clock after a make and 16.6
-after a defensive rebound, and full-game pace is 101 (was 103). Possessions after
-dead balls (fouls, out of bounds, timeouts) still start in half-court positions.
-The scoring leader averages ~29 points, and full games take about 0.7 s each.
+**Inbounds after makes and dead balls.** After every made basket or made free
+throw, the court view shows the inbound: a big takes it out under the basket and
+the guard comes back for it. Then comes the walk-up (`inbound_walkups`; before, a
+possession the team didn't push jumped straight to half-court positions). The
+walk-up is real movement, so it sets the game clock. Walk-ups go at 55% of top
+speed (was 80%), and retrieving the ball and inbounding takes 1.5–2.8 s (was
+1.0–1.8). A team then reaches the frontcourt with about 18.6 on the shot clock
+after a make and 16.6 after a defensive rebound.
+
+After a dead ball (a non-shooting foul before the bonus, a violation, a ball out
+of bounds, a turnover that stops play), the next possession starts with a
+throw-in from where play stopped (`dead_ball_inbounds`, `DeadBallInbound` in
+`transition.py`). Nobody is teleported. The ten players start where they were,
+and the court turns around if the ball changed hands. The nearest wing or forward
+takes it out on the sideline level with the ball, no nearer the baseline than the
+free-throw line extended. A ball that went out under the basket comes in from the
+baseline. While he walks to the spot, his teammates go to their spots and the set
+defence denies them, each defender on his own man. He throws it to the most open
+man, and a defender in the passing lane can pick it off (about 0.4% of
+throw-ins; it's a turnover and a live ball). The game clock is stopped until the
+ball is touched, so the setup (about 3.8 s) is shown but uses no game time. The
+shot clock starts on the touch at 24, or at 14 or more after a foul. In the
+frontcourt the half-court offence starts on the catch. In the backcourt the
+receiver walks it up first. Out of a late timeout ("advance the ball"), the
+throw-in comes from the frontcourt sideline at the 28-ft mark. Over 240 games,
+pace is 101.8 (was 101.5), points per 100 109.7 (110.5) and turnovers per 100
+15.9 (15.9); 60-game samples move by about a point either way on chance alone.
+The scoring leader averages ~28 points, and full games take about 0.9 s each.
 
 ### Learned decision values (`values.py`, `train.py`)
 

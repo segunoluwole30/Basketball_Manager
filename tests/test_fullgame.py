@@ -3,6 +3,7 @@ import argparse
 import random
 import tempfile
 import unittest
+from collections import Counter
 from pathlib import Path
 
 from hoopsim import generate_league
@@ -272,4 +273,155 @@ class InboundTests(unittest.TestCase):
     def test_switching_walkups_off_jumps_to_the_half_court(self):
         after = self.after_makes(self.possessions(inbound_walkups=False))
         jumped = [p for p in after if not p["transition"] and p["frames"][0][3] < 500]
+        self.assertGreater(len(jumped), 0.8 * len(after))
+
+
+def frame_gap(a, b, flip=False):
+    """Largest distance (ft) any of the ten players moves between two frames; ``flip``
+    turns ``a`` into the other team's attacking frame first."""
+    gap = 0.0
+    for n in range(10):
+        x, y = a[6 + 2 * n], a[7 + 2 * n]
+        if flip:
+            x, y = -x, 940 - y
+        gap = max(gap, ((x - b[6 + 2 * n]) ** 2 + (y - b[7 + 2 * n]) ** 2) ** 0.5 / 10)
+    return gap
+
+
+def out_of_bounds(frame):
+    return any(abs(frame[6 + 2 * n]) > 250 or frame[7 + 2 * n] > 940 for n in range(10))
+
+
+def inbound_spans(p):
+    """(first frame, catch frame) of each dead-ball throw-in in a recorded possession."""
+    spans, start = [], None
+    for e in p["events"]:
+        if " inbound from " in e[1]:
+            start = e[0]
+        elif " inbounds to " in e[1] and start is not None:
+            spans.append((start, e[0]))
+            start = None
+    return spans
+
+
+class DeadBallInboundTests(unittest.TestCase):
+    """Throw-ins after dead balls: from where play stopped, clocks stopped until the touch."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.game = FullGame(generate_league(seed=5), 1, 2, random.Random(4), record=True)
+        cls.game.run()
+        ps = cls.game.possessions
+        cls.after_dead = [(a, b) for a, b in zip(ps, ps[1:]) if a["result"] == "dead" and a["period"] == b["period"]]
+
+    def test_possessions_after_dead_balls_start_where_play_stopped(self):
+        self.assertGreater(len(self.after_dead), 8)
+        for a, b in self.after_dead:
+            # No teleport: everyone starts where the last possession left him (court turned around).
+            self.assertLess(frame_gap(a["frames"][-1], b["frames"][0], flip=a["offense"] != b["offense"]), 3.0)
+            self.assertIn(" inbound from ", b["events"][0][1])
+            start, catch = inbound_spans(b)[0]
+            self.assertEqual(start, 0)
+            # The inbounder is out of bounds with the ball when he throws it in.
+            self.assertTrue(out_of_bounds(b["frames"][catch - 1]) or out_of_bounds(b["frames"][catch - 3]))
+
+    def test_foul_inbounds_continue_the_possession_without_a_jump(self):
+        spans = [(p, s) for p in self.game.possessions for s in inbound_spans(p) if s[0] > 0]
+        self.assertGreater(len(spans), 3)                 # non-shooting fouls before the bonus
+        for p, (start, catch) in spans:
+            self.assertLess(frame_gap(p["frames"][start - 1], p["frames"][start]), 3.0)
+            self.assertGreaterEqual(p["frames"][catch][1], 13.5)    # shot clock 14 or more
+
+    def test_game_clock_stopped_until_the_touch(self):
+        g = self.game
+        checked = 0
+        for p in g.possessions:
+            for start, catch in inbound_spans(p):
+                fr = p["frames"]
+                clock0, shot0 = fr[start][26], fr[start][1]
+                for row in fr[start:catch + 1]:
+                    self.assertEqual(row[26], clock0)      # game clock
+                    self.assertEqual(row[1], shot0)        # shot clock
+                if catch + 5 < len(fr) and clock0 > 1:
+                    self.assertLess(fr[catch + 5][26], clock0)   # runs once it's touched
+                checked += 1
+        self.assertGreater(checked, 10)
+        # The setup took real (shown) time but no game time: the clock still adds up.
+        self.assertGreater(g.stats["seconds_inbound_setup"], 2.0 * g.stats["inbounds"])
+        played = sum(l.seconds for l in g.result.box_score.home.lines)
+        self.assertAlmostEqual(played, 5 * (2880 + 300 * g.result.result.overtimes), places=3)
+
+    def test_inbound_steals_are_rare_but_possible(self):
+        from dataclasses import replace
+        from hoopsim.spatial.transition import DEFAULT_OPEN_TUNING
+        rare = Counter()
+        for i in range(3):
+            g = FullGame(short_league(i, quarter_minutes=6), 1, 2, random.Random(i))
+            g.run()
+            rare += g.stats
+        self.assertGreater(rare["inbounds"], 40)
+        self.assertLess(rare["inbound_steals"], 0.04 * rare["inbounds"])
+        # A defence that jumps every passing lane does pick some off: turnovers and steals.
+        steals = 0
+        for seed in (1, 2):
+            g = FullGame(generate_league(seed=seed), 1, 2, random.Random(seed), record=True,
+                         open_tuning=replace(DEFAULT_OPEN_TUNING, inbound_steal=4.0))
+            g.run()
+            self.assertEqual(g.stats["inbound_steals"], g.hc.stats["inbound_steals"])
+            stolen = [p for p in g.possessions if any("picks off the inbound pass" in e[1] for e in p["events"])]
+            self.assertEqual(len(stolen), g.stats["inbound_steals"])
+            self.assertTrue(all(p["result"] == "steal" for p in stolen))      # a live-ball turnover
+            box = g.result.box_score
+            self.assertGreaterEqual(box.home.totals().stl + box.away.totals().stl, len(stolen))
+            steals += len(stolen)
+        self.assertGreater(steals, 0)
+
+    def test_late_timeout_inbounds_from_the_frontcourt_sideline(self):
+        for seed in range(12):
+            g = FullGame(generate_league(seed=5), 1, 2, random.Random(seed), record=True)
+            it = g.iter_game()
+            next(it)                                       # a real possession: players somewhere
+            if g.possessions[-1]["result"] not in ("drb", "score", "ft"):
+                continue
+            last = g.possessions[-1]
+            offense = g.other(g.sides[last["offense"]])
+            g.period, g.clock = 4, 30.0                     # trailing by two, 30 seconds left
+            g.hc.score[offense.key] = 100
+            g.hc.score[g.other(offense).key] = 102
+            g._dead_spot = dict(g._dead_spot, period=4)
+            g.possession(offense, last["result"], None)
+            p = g.possessions[-1]
+            if not any("draw up a play" in e.text for e in g.events):
+                continue                                   # no timeout this time (20% don't)
+            self.assertIn("frontcourt after the timeout", p["events"][0][1])
+            self.assertLess(frame_gap(last["frames"][-1], p["frames"][0], flip=True), 3.0)
+            start, catch = inbound_spans(p)[0]
+            thrower = p["frames"][catch - 3]
+            self.assertTrue(any(abs(thrower[6 + 2 * n]) > 250 and 230 <= thrower[7 + 2 * n] <= 330
+                                for n in range(10)))       # on the sideline at the 28-ft mark
+            self.assertLess(p["frames"][catch][3], 470)     # caught in the frontcourt
+            self.assertEqual(p["frames"][catch][26], 30.0)  # no time off yet
+            return
+        self.fail("no late timeout in 12 tries")
+
+    def test_deterministic(self):
+        def play():
+            g = FullGame(short_league(2), 1, 2, random.Random(9), record=True)
+            g.run()
+            return g.possessions, dict(g.stats)
+        (p1, s1), (p2, s2) = play(), play()
+        self.assertGreater(s1["inbounds"], 0)
+        self.assertEqual(s1, s2)
+        self.assertEqual(p1, p2)
+
+    def test_switching_dead_ball_inbounds_off_jumps(self):
+        from dataclasses import replace
+        from hoopsim.spatial.fullgame import DEFAULT_GAME_TUNING
+        g = FullGame(generate_league(seed=5), 1, 2, random.Random(4), record=True,
+                     game_tuning=replace(DEFAULT_GAME_TUNING, dead_ball_inbounds=False))
+        g.run()
+        self.assertEqual(g.stats["inbounds"], 0)
+        ps = g.possessions
+        after = [(a, b) for a, b in zip(ps, ps[1:]) if a["result"] == "dead" and a["period"] == b["period"]]
+        jumped = [b for a, b in after if frame_gap(a["frames"][-1], b["frames"][0], flip=True) > 4.0]
         self.assertGreater(len(jumped), 0.8 * len(after))

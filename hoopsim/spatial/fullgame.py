@@ -57,8 +57,9 @@ from ..injuries import draw_injury
 from ..lineup import lineup_is_usable, plan_rotation
 from ..models import (BoxScore, DefensiveScheme, GameResult, Injury, League, Player, PlayerLine,
                       Position, TeamBox)
+from . import court as C
 from .sim import DEFAULT_TUNING, Agent, HalfCourtGame, SpatialTuning
-from .transition import DEFAULT_OPEN_TUNING, OpenCourt, OpenCourtTuning
+from .transition import DEFAULT_OPEN_TUNING, DeadBallInbound, OpenCourt, OpenCourtTuning
 from .values import DecisionModel
 
 POSITIONS = list(Position)
@@ -99,6 +100,10 @@ class GameTuning:
     # After a make the court view shows the inbound and the walk-up (open court, not
     # pushed) instead of jumping to half-court positions.
     inbound_walkups: bool = True
+    # After a dead ball (a foul away from the ball, a violation, out of bounds, a late
+    # timeout) the court view shows the throw-in from where play stopped instead of
+    # jumping to half-court positions.
+    dead_ball_inbounds: bool = True
 
 
 DEFAULT_GAME_TUNING = GameTuning()
@@ -544,6 +549,20 @@ class FullGame:
             if self.clock <= 0:
                 ending = "period"
                 break
+            inbound = None
+            if start is None:
+                inbound = self._dead_inbound(offense, how if segment == 1 else "foul_inbound", record)
+            if inbound is not None:
+                used += inbound.seconds
+                if inbound.result is not None:          # picked off, or out of time
+                    if first_action is None:
+                        first_action = used
+                    if inbound.points:
+                        self.hc.score[offense.key] += inbound.points
+                    self._after_points(offense, inbound.points)
+                    ending, carrier_next = inbound.result, inbound.carrier
+                    break
+                start = inbound.start
             if start is None:
                 start = self._set_start(how if segment == 1 else "foul_inbound")
                 bring = start.pop("_bring_up")
@@ -554,7 +573,14 @@ class FullGame:
             if situation:
                 start["situation"] = situation
             self._schedule_foul(offense, defense, start)
+            if inbound is not None:
+                start["holder"] = inbound.start["holder"]   # they foul whoever caught it
             result, info = self.segment(offense, defense, start, record)
+            self._dead_spot = {"period": self.period, "elapsed": self.elapsed, "side": offense.key,
+                               "ball": self.hc.ball_spot(), "shot_clock": self.hc.shot_clock}
+            if inbound is not None and self.record and record["segments"]:
+                seg = record["segments"][-1][0]          # the inbound already brought it in
+                seg["events"] = [e for e in seg["events"] if " bring it up: " not in e[1]]
             used_before = used
             used += info["seconds"]
             if first_action is None and info["first_action"] is not None:
@@ -572,6 +598,61 @@ class FullGame:
             break
         self._finish_possession(offense, before, open_court, first_action, record, ending)
         return ending, carrier_next
+
+    # Where the last half-court segment left the ball (for the throw-in after a dead ball).
+    _dead_spot: Optional[dict] = None
+
+    def _dead_inbound(self, offense: Side, how: str, record: dict):
+        """The throw-in after a dead ball (``how`` "dead" or "foul_inbound") or a late
+        timeout ("advanced"), from where play stopped: the players start where they are,
+        the clocks start on the touch. Returns the ``OpenCourtResult`` (``start`` for the
+        half court, or ``result`` "steal"/"period"), or None for a half-court start
+        instead (period starts, or ``dead_ball_inbounds`` off)."""
+        spot = self._dead_spot
+        if (not self.gt.dead_ball_inbounds or how not in ("dead", "foul_inbound", "advanced")
+                or spot is None or spot["period"] != self.period or spot["elapsed"] != self.elapsed):
+            return None
+        turn = spot["side"] != offense.key
+        bx, by = spot["ball"]
+        ball = (-bx, C.FULL_LENGTH - by) if turn else (bx, by)
+        sc = float(self.rules.shot_clock_seconds)
+        shot_clock = sc
+        if how == "foul_inbound":
+            shot_clock = min(sc, max(spot["shot_clock"] if spot["shot_clock"] > 0 else 0.0, 14.0))
+        where = self._inbound_spot(how, (bx, by), ball)
+        ib = DeadBallInbound(self.hc, offense.key, where, ball, self.clock, self.rng, self.ot,
+                             turn=turn, shot_clock=shot_clock, after_timeout=how == "advanced")
+        res = ib.run()
+        self.stats["inbounds"] += 1
+        self.stats["inbounds_baseline" if ib.baseline else
+                   "inbounds_frontcourt" if ib.frontcourt else "inbounds_backcourt"] += 1
+        self.stats["inbound_steals"] += res.result == "steal"
+        self.stats["seconds_bring_up"] += res.seconds
+        self.stats["seconds_inbound_setup"] += res.elapsed - res.seconds    # clock stopped
+        self.advance(res.seconds)
+        if self.record:
+            score = [self.hc.score["home"], self.hc.score["away"]]
+            record["segments"].append(({"frames": res.frames, "events": res.events, "start_score": score},
+                                       self._lineup_indices()))
+        return res
+
+    def _inbound_spot(self, how: str, ball_was: tuple[float, float],
+                      ball: tuple[float, float]) -> tuple[float, float]:
+        """Where the throw-in comes from, in the new offence's frame. ``ball_was``: where it
+        went dead in the last segment's frame, ``ball``: the same in the new frame.
+
+        Out under the basket (the ball within 6 ft of the end line): the baseline.
+        Otherwise the sideline nearest the ball, no nearer the baseline than the
+        free-throw line extended. Out of a late timeout: the frontcourt sideline at the
+        28-ft hash mark."""
+        x, y = ball
+        side = math.copysign(1.0, x) if abs(x) > 0.5 else (1.0 if self.rng.random() < 0.5 else -1.0)
+        if how == "advanced":
+            return side * 26.0, 28.0
+        if how == "dead" and ball_was[1] < 6.0 and abs(ball_was[0]) < 22.0 and y > C.HALF_LENGTH:
+            bx = side * max(4.0, min(16.0, abs(x)))         # not from behind the backboard
+            return bx, C.FULL_LENGTH + 1.5
+        return side * 26.0, max(C.FREE_THROW_Y, min(C.FULL_LENGTH - 3.0, y))
 
     def clock_stops_on_make(self) -> bool:
         """NBA: the clock stops after a made field goal only in the last minute of the
