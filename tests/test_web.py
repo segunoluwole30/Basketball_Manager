@@ -685,3 +685,55 @@ class WebMatchEngineTests(unittest.TestCase):
     def test_unknown_engine_is_refused(self):
         r = self.client.post("/api/new", json={"seed": 7, "num_teams": 4, "match_engine": "arcade"})
         self.assertGreaterEqual(r.status_code, 400)
+
+
+@unittest.skipUnless(HAVE_WEB, "fastapi/httpx not installed (pip install -r requirements-web.txt)")
+class LeagueFileAndEditorApiTests(unittest.TestCase):
+    def setUp(self):
+        from tests.test_league_file import synthetic_file
+        self.tmp = tempfile.TemporaryDirectory()
+        leagues = Path(self.tmp.name) / "leagues"
+        leagues.mkdir()
+        (leagues / "test.json").write_text(json.dumps(synthetic_file()))
+        self.session = GameSession(saves_dir=self.tmp.name, leagues_dir=str(leagues))
+        self.client = TestClient(create_app(self.session))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def ok(self, method, url, body=None):
+        r = getattr(self.client, method)(url, **({"json": body} if body is not None else {}))
+        self.assertEqual(r.status_code, 200, f"{url}: {r.text[:300]}")
+        return r.json()
+
+    def test_new_game_from_a_league_file(self):
+        files = self.ok("get", "/api/new/files")["files"]
+        self.assertEqual([f["file"] for f in files], ["test.json"])
+        teams = self.ok("post", "/api/new", {"league_file": "test.json"})["teams"]
+        self.assertEqual(sorted(t["abbr"] for t in teams), ["T0", "T1", "T2", "T3"])
+        # Only files in the leagues folder, by name: no paths.
+        for name in ("../x.json", "/etc/passwd", "missing.json"):
+            r = self.client.post("/api/new", json={"league_file": name})
+            self.assertEqual(r.status_code, 404, name)
+
+    def test_editor_end_to_end(self):
+        teams = self.ok("post", "/api/new", {"league_file": "test.json"})["teams"]
+        me = teams[0]["id"]
+        self.ok("post", "/api/new/team", {"team_id": me})
+        self.assertIsNone(self.ok("get", "/api/state")["edited"])
+        rows = self.ok("get", f"/api/editor/players?team_id={me}")["players"]
+        self.assertEqual(len(rows), 13)
+        pid = rows[-1]["id"]
+        sheet = self.ok("get", f"/api/editor/player/{pid}")
+        self.assertIn("hidden", sheet)                        # the editor shows true values
+        r = self.ok("post", f"/api/editor/player/{pid}", {"attributes": {"three_point": 20}, "last_name": "Splash"})
+        self.assertEqual(r["player"]["attributes"]["three_point"], 20)
+        self.assertEqual(self.ok("get", f"/api/player/{pid}")["name"].split()[-1], "Splash")
+        r = self.client.post(f"/api/editor/player/{pid}", json={"attributes": {"three_point": 0}})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("1-20", r.json()["detail"])
+        self.ok("post", f"/api/editor/team/{me}", {"city": "Metro", "name": "Comets"})
+        state = self.ok("get", "/api/state")
+        self.assertEqual(state["teams"][str(me)]["name"], "Metro Comets")
+        self.assertEqual(state["edited"]["count"], 2)
+        self.assertEqual(self.ok("get", "/api/editor/players?q=splash")["players"][0]["id"], pid)

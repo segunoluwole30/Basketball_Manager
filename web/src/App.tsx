@@ -10,6 +10,7 @@ import { Squad } from "./screens/Squad";
 import { Start, SaveLoad } from "./screens/Start";
 import { Stats } from "./screens/Stats";
 import { Calendar } from "./screens/Calendar";
+import { Editor } from "./screens/Editor";
 import { Tactics } from "./screens/Tactics";
 import { Transfers } from "./screens/Transfers";
 
@@ -22,6 +23,7 @@ const NAV = [
   { key: "calendar", label: "Calendar", icon: "▦" },
   { key: "stats", label: "Stats", icon: "∑" },
   { key: "offseason", label: "Offseason", icon: "☀" },
+  { key: "editor", label: "Editor", icon: "✎" },
 ];
 
 const STAGE_LABEL: Record<string, string> = {
@@ -140,6 +142,7 @@ export default function App() {
     case "league": screen = <League params={params} go={go} />; break;
     case "stats": screen = <Stats params={params} />; break;
     case "calendar": screen = <Calendar />; break;
+    case "editor": screen = <Editor key={params.get("player") ?? ""} params={params} />; break;
     case "offseason": screen = <Offseason go={go} />; break;
     default: screen = <Home go={go} />;
   }

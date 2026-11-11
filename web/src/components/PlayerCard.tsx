@@ -87,6 +87,8 @@ export function PlayerCard() {
     <div className="drawer-back" onClick={closePlayer}>
       <aside className="drawer" role="dialog" aria-label="Player card" onClick={(e) => e.stopPropagation()}>
         <button className="icon-btn drawer-close" aria-label="Close" onClick={closePlayer}>×</button>
+        <button className="btn btn-small drawer-edit" title="Open in the editor (true ratings)"
+          onClick={() => { window.location.hash = `/editor?player=${playerId}`; closePlayer(); }}>Edit</button>
         <Fetched f={{ ...f, data }} what="Loading player">
           {(p) => (
             <div className="card">

@@ -1039,6 +1039,78 @@ What didn't work or is still off:
   ORB .18 and FTA/FGA .17 (both below estimates). The full-game numbers are real
   data, so they decide.
 
+## Real leagues and the editor
+
+### League files (`hoopsim/league_file.py`)
+A league file is JSON listing teams and players with their ratings; hoopsim fills in
+ids, lineups, missing contracts and the schedule. Everything except names, team
+abbreviations and positions is optional (missing ratings are 10). The format is at the
+top of `league_file.py`.
+
+```bash
+python -m hoopsim new --league leagues/my-league.json --out league.db
+python -m hoopsim play --league leagues/my-league.json
+python -m hoopsim season --league leagues/my-league.json
+```
+
+In the web app, files in `./leagues` (or `--leagues DIR`) appear under **New game →
+League**. Files are picked by name only, never by path.
+
+### The real NBA, for personal use (`tools/build_nba_league.py`)
+`tools/build_nba_league.py --fetch` builds `leagues/nba-2026-27.json` from
+Basketball-Reference: the current 30 rosters, real conferences and divisions, contracts
+with options, and ratings derived from stats. Fetching takes about 40 pages, cached in
+`leagues/cache/`, one every 3.5 seconds, with an honest User-Agent. `leagues/` is
+gitignored. Real names and data never ship with the game. Keep the file for your own
+use.
+
+How ratings are derived:
+* **Stats:** this season (early, few games), last season and the one before, which
+  counts at half weight. They are blended by minutes. Rates are shrunk toward average by
+  sample size (attempts or minutes), so ten hot games don't make a shooter. A player who
+  missed last season through injury is judged on the season before.
+* **Shape:** each attribute gets a z-score among NBA players from the stats that show
+  it. For example: three-point % and volume, rim/short/mid accuracy by distance, assist,
+  steal, block and rebound percentages, defensive box plus/minus, size, dunk share.
+  These z-scores are then scaled to the spread of generated leagues.
+* **Level:** overall ability comes from impact (shrunk box plus/minus and minutes,
+  with salary as a prior when there are few minutes). It is mapped onto the ability
+  distribution of a generated league. A real league plays like a generated one (median
+  rostered ability 93, 90th percentile ~125), so the engines stay calibrated.
+* **Other attributes:**
+  * potential from age;
+  * tendencies from shot profile and usage;
+  * injury proneness partly from games missed;
+  * physique from the roster's height and weight;
+  * salary rules approximately 2026-27 (cap $165M, tax $201M, minimum $1.27M, MLE
+    $14.1M).
+
+Standard roster spots are capped at 15. Two-way players and extras become free
+agents, along with veterans unsigned since last season.
+
+### In-game editor (`hoopsim/editor.py`, web: **Editor**)
+Like Football Manager's editor, it shows **true** ratings, with no scouting fog. You
+can change any player's:
+* ratings, hidden ratings and tendencies (1-20 sliders);
+* potential (never below current ability);
+* name, birth date, nationality, position(s), height, wingspan, weight and jersey;
+* morale, an injury (heal it), contract (salary, end season, option) and team.
+
+You can also change a team's city, name, abbreviation and reputation.
+
+The player card has an **Edit** button. Edits go through the game's own limits, so an
+edited league is still legal:
+* roster minimum and maximum;
+* unique jersey numbers;
+* maximum salary.
+
+An invalid edit changes nothing. Moving players redoes the affected lineups. Each edit
+is logged in the save (`league.info["edited"]`), and the app shows that the editor was
+used. API:
+* `GET /api/editor/players?team_id=|free_agents=|q=`;
+* `GET`/`POST /api/editor/player/{id}`;
+* `POST /api/editor/team/{id}`.
+
 ## Simulation commands
 
 ```bash

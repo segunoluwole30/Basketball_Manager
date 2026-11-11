@@ -703,6 +703,8 @@ class League:
     last_offseason: Optional[dict] = None                   # the last finished offseason's report
     inbox: list[dict] = field(default_factory=list)         # news for the user (web interface)
     replays: dict[int, bytes] = field(default_factory=dict)  # game id -> zlib'd viewer JSON (spatial, user team)
+    # Where the league came from and whether it was edited: {"source": ..., "edited": [...]}
+    info: dict = field(default_factory=dict)
 
     # -- id allocation ------------------------------------------------------
     def next_player_id(self) -> int:

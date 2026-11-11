@@ -21,6 +21,7 @@ from ..contracts import cap_room, max_contract, payment_route, payroll_for, team
 from ..db import load_league, save_league
 from ..engine import clear_healed, play_day, store_result, tick_injuries
 from ..generate import generate_league
+from .. import editor
 from ..models import MATCH_ENGINES
 from ..lineup import POSITIONS
 from ..manager import (
@@ -83,11 +84,13 @@ class _DeferredOffers(AIManager):
 # The session
 # --------------------------------------------------------------------------
 class GameSession:
-    def __init__(self, save_path: str = "hoopsim_save.db", saves_dir: Optional[str] = None):
+    def __init__(self, save_path: str = "hoopsim_save.db", saves_dir: Optional[str] = None,
+                 leagues_dir: Optional[str] = None):
         self.league: Optional[League] = None
         self.rng = random.Random()
         self.save_path = save_path
         self.saves_dir = Path(saves_dir) if saves_dir else Path.cwd()
+        self.leagues_dir = Path(leagues_dir) if leagues_dir else Path.cwd() / "leagues"
         self.lock = threading.RLock()
         self.dirty = False
         self.live: Optional[dict] = None       # a live match in progress (live_start)
@@ -112,15 +115,62 @@ class GameSession:
         return {"ok": True, "message": message}
 
     # -- new / load / save -------------------------------------------------------
+    # -- the in-game editor ------------------------------------------------------
+    def editor_players(self, team_id: Optional[int] = None, q: str = "", free_agents: bool = False) -> dict:
+        lg = self._lg()
+        return {"players": editor.player_list(lg, team_id, q, free_agents), "edited": editor.edited(lg)}
+
+    def editor_player(self, pid: int) -> dict:
+        lg = self._lg()
+        p = lg.players.get(int(pid))
+        if p is None:
+            raise UserError("no such player", 404)
+        return editor.player_sheet(lg, p)
+
+    def editor_edit_player(self, pid: int, changes: dict) -> dict:
+        lg = self._lg()
+        try:
+            done = editor.edit_player(lg, pid, changes)
+        except editor.EditError as e:
+            raise UserError(str(e))
+        self.dirty = self.dirty or bool(done)
+        return {"ok": True, "changed": done, "player": editor.player_sheet(lg, lg.players[int(pid)]),
+                "message": f"Changed {', '.join(done)}" if done else "Nothing changed"}
+
+    def editor_edit_team(self, tid: int, changes: dict) -> dict:
+        lg = self._lg()
+        try:
+            done = editor.edit_team(lg, tid, changes)
+        except editor.EditError as e:
+            raise UserError(str(e))
+        self.dirty = self.dirty or bool(done)
+        t = lg.teams[int(tid)]
+        return {"ok": True, "changed": done, "message": f"Changed {', '.join(done)}" if done else "Nothing changed",
+                "team": {"id": t.id, "city": t.city, "name": t.name, "abbreviation": t.abbreviation,
+                         "reputation": t.reputation, "budget": t.budget, "arena_capacity": t.arena_capacity}}
+
+    def league_files(self) -> dict:
+        """League files offered under New game (the leagues folder)."""
+        from ..league_file import league_files
+        return {"folder": str(self.leagues_dir),
+                "files": league_files(self.leagues_dir) if self.leagues_dir.is_dir() else []}
+
     def new_game(self, seed: Optional[int] = None, num_teams: int = 12,
-                 match_engine: str = "statistical") -> dict:
-        if not 4 <= num_teams <= 30 or num_teams % 2:
+                 match_engine: str = "statistical", league_file: Optional[str] = None) -> dict:
+        if not league_file and (not 4 <= num_teams <= 30 or num_teams % 2):
             raise UserError("number of teams must be an even number from 4 to 30")
         seed = random.randrange(1_000_000) if seed is None else int(seed)
         try:
             if match_engine not in MATCH_ENGINES:
                 raise ValueError(f"match engine must be one of {', '.join(MATCH_ENGINES)}")
-            self.league = generate_league(seed=seed, num_teams=num_teams)
+            if league_file:
+                from ..league_file import load_league_file
+                names = {f["file"] for f in self.league_files()["files"]}
+                if league_file not in names:          # only files in the leagues folder, by name
+                    raise UserError(f"no league file {league_file!r} in {self.leagues_dir}", 404)
+                self.league = load_league_file(self.leagues_dir / league_file, seed=seed)
+            else:
+                self.league = generate_league(seed=seed, num_teams=num_teams)
             self.league.rules.match_engine = match_engine
         except ValueError as e:
             raise UserError(str(e))
@@ -203,12 +253,14 @@ class GameSession:
             return {"loaded": False}
         out: dict[str, Any] = {
             "loaded": True, "league": lg.name, "season": lg.season, "match_engine": lg.rules.match_engine,
+            "edited": editor.edited(lg), "source": lg.info.get("source"),
             "live_game": self.live["game_id"] if self.live else None,
             "season_label": f"{lg.season}-{(lg.season + 1) % 100:02d}",
             "date": lg.current_date.isoformat(), "phase": lg.phase.value,
             "user_team_id": lg.user_team_id, "save_path": self.save_path, "unsaved": self.dirty,
             "teams": {t.id: {"id": t.id, "abbr": t.abbreviation, "name": t.full_name,
-                             "conference": t.conference} for t in lg.teams.values()},
+                             "conference": t.conference, "city": t.city, "nickname": t.name,
+                             "reputation": t.reputation} for t in lg.teams.values()},
         }
         if lg.user_team_id is None:
             return out

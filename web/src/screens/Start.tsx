@@ -47,10 +47,13 @@ export function Start({ onDone, onCancel }: { onDone: () => void; onCancel?: () 
   const [seed, setSeed] = useState("");
   const [count, setCount] = useState(12);
   const [engine, setEngine] = useState("hybrid");
+  const [file, setFile] = useState("");
   const [loading, setLoading] = useState(false);
+  const files = useFetch<{ folder: string; files: { file: string; name: string; teams: number; players: number }[] }>("/api/new/files");
   const create = async () => {
     setLoading(true);
-    const r = await act(() => api.post("/api/new", { seed: seed.trim() ? parseInt(seed, 10) : null, num_teams: count, match_engine: engine }));
+    const r = await act(() => api.post("/api/new", { seed: seed.trim() ? parseInt(seed, 10) : null, num_teams: count,
+      match_engine: engine, league_file: file || null }));
     setLoading(false);
     if (r) setTeams(r.teams);
   };
@@ -68,11 +71,23 @@ export function Start({ onDone, onCancel }: { onDone: () => void; onCancel?: () 
         <div className="start-grid">
           <Panel title="New game">
             <form className="form" onSubmit={(e) => { e.preventDefault(); create(); }}>
-              <label>Teams
-                <select value={count} onChange={(e) => setCount(+e.target.value)}>
-                  {[8, 10, 12, 14, 16, 20, 24, 30].map((n) => <option key={n} value={n}>{n} teams</option>)}
-                </select>
-              </label>
+              {!!files.data?.files.length && (
+                <label>League
+                  <select value={file} onChange={(e) => setFile(e.target.value)}>
+                    <option value="">Generated: fictional players</option>
+                    {files.data.files.map((f) => (
+                      <option key={f.file} value={f.file}>{f.name} ({f.teams} teams, {f.players} players)</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {!file && (
+                <label>Teams
+                  <select value={count} onChange={(e) => setCount(+e.target.value)}>
+                    {[8, 10, 12, 14, 16, 20, 24, 30].map((n) => <option key={n} value={n}>{n} teams</option>)}
+                  </select>
+                </label>
+              )}
               <label>Match engine
                 <select value={engine} onChange={(e) => setEngine(e.target.value)}>
                   <option value="hybrid">Hybrid: watch and coach your games, the rest fast</option>
@@ -84,7 +99,7 @@ export function Start({ onDone, onCancel }: { onDone: () => void; onCancel?: () 
                 <input inputMode="numeric" value={seed} onChange={(e) => setSeed(e.target.value.replace(/\D/g, ""))} placeholder="random" />
               </label>
               <div className="row gap">
-                <button className="btn btn-primary" type="submit" disabled={loading}>{loading ? "Generating…" : "Create league"}</button>
+                <button className="btn btn-primary" type="submit" disabled={loading}>{loading ? (file ? "Loading…" : "Generating…") : file ? "Start league" : "Create league"}</button>
                 {onCancel && <button className="btn" type="button" onClick={onCancel}>Back to my game</button>}
               </div>
             </form>

@@ -46,8 +46,19 @@ def set_engine(league, args) -> None:
         league.rules.match_engine = args.engine
 
 
+def make_league(args):
+    """``--league FILE``: start from a league file; otherwise generate one."""
+    if getattr(args, "league", None):
+        from .league_file import LeagueFileError, load_league_file
+        try:
+            return load_league_file(args.league, seed=args.seed or 0)
+        except (OSError, LeagueFileError) as e:
+            raise SystemExit(f"can't load {args.league}: {e}")
+    return generate_league(seed=args.seed, num_teams=args.teams)
+
+
 def cmd_new(args) -> None:
-    league = generate_league(seed=args.seed, num_teams=args.teams)
+    league = make_league(args)
     set_engine(league, args)
     save_league(league, args.out)
     league = load_league(args.out)  # prove the save round-trips
@@ -161,7 +172,7 @@ def print_leaders(league: League, season: int) -> None:
 
 
 def cmd_season(args) -> None:
-    league = generate_league(seed=args.seed, num_teams=args.teams)
+    league = make_league(args)
     set_engine(league, args)
     summary = play_full_season(league, random.Random(args.seed))
     if args.out:
@@ -185,7 +196,7 @@ def cmd_career(args) -> None:
     if args.load:
         league = load_league(args.load)
     else:
-        league = generate_league(seed=args.seed, num_teams=args.teams)
+        league = make_league(args)
     set_engine(league, args)
     rng = random.Random(args.seed)
     print(f"{'Season':<9}{'Champion':<26}{'Finals':<8}{'Best':>5}{'Worst':>6}  MVP / Rookie of the Year")
@@ -291,6 +302,7 @@ def main() -> None:
     new.add_argument("--engine", choices=["statistical", "spatial", "hybrid"], help="match engine: statistical (fast, default), spatial (players on a court, ~0.7 s a game) or hybrid (spatial for your team's games only)")
     new.add_argument("--seed", type=int, default=0)
     new.add_argument("--teams", type=int, default=12)
+    new.add_argument("--league", help="start from a league file (JSON) instead of generating one")
     new.add_argument("--out", default="league.db")
     new.add_argument("--team", help="team abbreviation to show (default: first team)")
 
@@ -303,6 +315,7 @@ def main() -> None:
     season.add_argument("--engine", choices=["statistical", "spatial", "hybrid"], help="match engine: statistical (fast, default), spatial (players on a court, ~0.7 s a game) or hybrid (spatial for your team's games only)")
     season.add_argument("--seed", type=int, default=0)
     season.add_argument("--teams", type=int, default=12)
+    season.add_argument("--league", help="start from a league file (JSON) instead of generating one")
     season.add_argument("--out", help="save the finished season to this file")
 
     career = sub.add_parser("career", help="simulate many seasons (draft, free agency, ageing...)")
@@ -310,6 +323,7 @@ def main() -> None:
     career.add_argument("--seasons", type=int, default=10)
     career.add_argument("--seed", type=int, default=0)
     career.add_argument("--teams", type=int, default=12)
+    career.add_argument("--league", help="start from a league file (JSON) instead of generating one")
     career.add_argument("--load", help="continue a saved league instead of generating one")
     career.add_argument("--out", help="save the league afterwards")
 
@@ -318,6 +332,7 @@ def main() -> None:
     play.add_argument("--team", help="team abbreviation (otherwise you'll be asked)")
     play.add_argument("--seed", type=int, default=None)
     play.add_argument("--teams", type=int, default=12)
+    play.add_argument("--league", help="start from a league file (JSON) instead of generating one")
     play.add_argument("--load", help="continue a saved game")
     play.add_argument("--out", help="file to save to (default hoopsim_save.db)")
 
@@ -336,6 +351,7 @@ def main() -> None:
     web = sub.add_parser("web", help="play as general manager in your browser")
     web.add_argument("--load", help="open a saved game")
     web.add_argument("--save", help="default file to save to (default: the loaded file or hoopsim_save.db)")
+    web.add_argument("--leagues", help="folder of league files offered under New game (default: ./leagues)")
     web.add_argument("--port", type=int, default=8000)
     web.add_argument("--host", default="127.0.0.1")
     web.add_argument("--no-open", action="store_true", help="don't open the browser")
@@ -347,7 +363,7 @@ def main() -> None:
         except ImportError as e:
             raise SystemExit(f"the web interface needs extra packages ({e.name} is missing): "
                              "pip install -r requirements-web.txt")
-        serve(load=args.load, port=args.port, host=args.host, open_browser=not args.no_open, save=args.save)
+        serve(load=args.load, port=args.port, host=args.host, open_browser=not args.no_open, save=args.save, leagues=args.leagues)
         return
     if args.cmd == "watch":
         cmd_watch(args)

@@ -673,7 +673,11 @@ def start(args, io: Optional[IO] = None) -> None:
         if league.phase is Phase.OFFSEASON:
             raise SystemExit("that save is mid-offseason; continue it with the career command")
     else:
-        league = generate_league(seed=args.seed, num_teams=args.teams)
+        if getattr(args, "league", None):
+            from .league_file import load_league_file
+            league = load_league_file(args.league, seed=args.seed or 0)
+        else:
+            league = generate_league(seed=args.seed, num_teams=args.teams)
         team = None
         if args.team:
             team = next((t for t in league.teams.values() if t.abbreviation.lower() == args.team.lower()), None)

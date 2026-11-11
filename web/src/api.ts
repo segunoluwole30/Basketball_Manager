@@ -95,6 +95,9 @@ export interface TeamRef {
   abbr: string;
   name: string;
   conference: string;
+  city?: string;
+  nickname?: string;
+  reputation?: number;
 }
 
 export interface GameState {

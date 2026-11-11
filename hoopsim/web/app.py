@@ -23,6 +23,7 @@ class NewGame(BaseModel):
     seed: Optional[int] = None
     num_teams: int = 12
     match_engine: str = "statistical"
+    league_file: Optional[str] = None     # a file in the leagues folder (GET /api/new/files)
 
 
 class TeamChoice(BaseModel):
@@ -106,7 +107,11 @@ def create_app(session: Optional[GameSession] = None) -> FastAPI:
 
     @app.post("/api/new")
     def new_game(body: NewGame):
-        return run(game.new_game, body.seed, body.num_teams, body.match_engine)
+        return run(game.new_game, body.seed, body.num_teams, body.match_engine, body.league_file)
+
+    @app.get("/api/new/files")
+    def new_files():
+        return run(game.league_files)
 
     @app.get("/api/new/teams")
     def team_choices():
@@ -153,6 +158,22 @@ def create_app(session: Optional[GameSession] = None) -> FastAPI:
     @app.get("/api/teams")
     def teams():
         return run(game.team_list)
+
+    @app.get("/api/editor/players")
+    def editor_players(team_id: Optional[int] = None, q: str = "", free_agents: bool = False):
+        return run(game.editor_players, team_id, q, free_agents)
+
+    @app.get("/api/editor/player/{pid}")
+    def editor_player(pid: int):
+        return run(game.editor_player, pid)
+
+    @app.post("/api/editor/player/{pid}")
+    def editor_edit_player(pid: int, body: dict = Body(...)):
+        return run(game.editor_edit_player, pid, body)
+
+    @app.post("/api/editor/team/{tid}")
+    def editor_edit_team(tid: int, body: dict = Body(...)):
+        return run(game.editor_edit_team, tid, body)
 
     @app.get("/api/player/{pid}")
     def player(pid: int):
@@ -364,13 +385,13 @@ def create_app(session: Optional[GameSession] = None) -> FastAPI:
 
 
 def serve(load: Optional[str] = None, port: int = 8000, host: str = "127.0.0.1",
-          open_browser: bool = True, save: Optional[str] = None) -> None:
+          open_browser: bool = True, save: Optional[str] = None, leagues: Optional[str] = None) -> None:
     import threading
     import webbrowser
 
     import uvicorn
 
-    session = GameSession(save_path=save or load or "hoopsim_save.db")
+    session = GameSession(save_path=save or load or "hoopsim_save.db", leagues_dir=leagues)
     if load:
         session.load(load)
     app = create_app(session)
