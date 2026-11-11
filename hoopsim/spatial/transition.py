@@ -62,6 +62,15 @@ class OpenCourtTuning:
     ahead_open: float = 7.0         # ... and needs this much room
     ahead_steal: float = 0.08       # interception chance scale for an ahead pass
     pass_speed: float = 42.0
+    # Throw-ins after dead balls (DeadBallInbound).
+    dead_inbound_delay: tuple = (1.0, 2.2)   # from the spot until the throw: the official hands it over
+    inbound_settle: float = 0.6     # at the spot, the receivers get a moment to get open
+    reset_speed: float = 0.6        # walking to the inbound spots (relative to half-court speed)
+    timeout_reset_speed: float = 0.85   # out of a timeout: onto the floor for the set play
+    ball_return_speed: float = 18.0     # the ball from where it went dead to the inbounder
+    inbound_hard_cap: float = 10.0  # throw it in by then whatever happens
+    inbound_steal: float = 0.06     # interception chance scale for a throw-in through a denial
+    inbound_decide: tuple = (1.5, 3.0)  # after the throw-in: seconds to get into the offence
 
 
 DEFAULT_OPEN_TUNING = OpenCourtTuning()
@@ -107,10 +116,11 @@ class OpenCourt:
     def __init__(self, game: HalfCourtGame, side: str, how: str, carrier: Optional[Agent],
                  clock: float, rng: random.Random, tuning: OpenCourtTuning = DEFAULT_OPEN_TUNING,
                  push: Optional[bool] = None, score: Optional[dict] = None,
-                 clock_stopped: bool = True):
+                 clock_stopped: bool = True, turn: bool = True):
         """``clock_stopped``: after a make, the game clock waits for the inbound catch
         (free throws, and field goals late in a period); otherwise it runs from the make.
-        The shot clock always starts on the catch."""
+        The shot clock always starts on the catch. ``turn``: the ball changed hands, so
+        turn the court around (False: same offence, same frame)."""
         self.g, self.side, self.how, self.rng, self.t = game, side, how, rng, tuning
         self.offense = game.agents[side]
         self.defense = game.agents["away" if side == "home" else "home"]
@@ -119,13 +129,15 @@ class OpenCourt:
         self.score = dict(score or game.score)
         self.result = OpenCourtResult(pushed=False, seconds=0.0, elapsed=0.0)
         self.now = 0.0
-        self.clock_from = 0.0                  # when the game clock started
+        # When the game clock started (a stopped clock: not until the inbound is caught).
+        self.clock_from = 1e9 if (how == "score" and clock_stopped) else 0.0
         self.shot_from = 0.0                   # when the shot clock started (inbound: the catch)
         self.clock_stopped = clock_stopped
         self.flight: Optional[dict] = None
         self.inbound: Optional[dict] = None
         for a in game.everyone:
-            flip(a)
+            if turn:
+                flip(a)
             a.stuck_until = -1.0
             a.helping = False
             a.ease = 4.0
@@ -551,4 +563,296 @@ class OpenCourt:
             row += [round(a.x * 10), round(a.y * 10)]
         row.append(round(max(0.0, self.clock - used), 1))
         self.result.frames.append(row)
+
+
+class DeadBallInbound(OpenCourt):
+    """A throw-in after a dead ball: a foul away from the ball, a violation, a ball out
+    of bounds or a turnover that stops play, and the advance out of a late timeout.
+
+    Nobody is teleported: the ten players start where play stopped (turned around if
+    the ball changed hands), with the game clock stopped. The official gets the ball
+    to the nearest player of the team throwing it in, who walks to the spot out of
+    bounds (``spot``, in the new offence's frame: x = +-26 on a sideline, y > 94 on the
+    far baseline) while his teammates go to their spots and the set defence denies
+    them. Once he has it and they've had a moment to get open he throws it in; a
+    defender in the passing lane can pick it off (a turnover). The game and shot
+    clocks start on the touch. In the frontcourt the half-court engine takes over on
+    the catch (offence in "setup", the defence's own matchups); in the backcourt the
+    receiver walks it up first, as after a make."""
+
+    def __init__(self, game: HalfCourtGame, side: str, spot: tuple[float, float],
+                 ball: tuple[float, float], clock: float, rng: random.Random,
+                 tuning: OpenCourtTuning = DEFAULT_OPEN_TUNING, *, turn: bool = True,
+                 shot_clock: float = 24.0, after_timeout: bool = False,
+                 score: Optional[dict] = None):
+        """``ball``: where it went dead (new offence's frame); ``shot_clock``: what the
+        shot clock shows on the touch; ``after_timeout``: the late-game advance."""
+        self.spot = spot
+        self.ball_at = ball
+        self.shot_base = shot_clock
+        self.after_timeout = after_timeout
+        self.baseline = spot[1] > FULL
+        self.frontcourt = spot[1] < C.HALF_LENGTH
+        self.caught = False
+        self.caught_time = 0.0
+        self.in_hands = False
+        self.arrived: Optional[float] = None
+        super().__init__(game, side, "score", None, clock, rng, tuning, push=False, score=score,
+                         clock_stopped=True, turn=turn)
+        self.how = "dead"
+        self.clock_from = 1e9                  # stopped until the touch
+        self.shot_from = 1e9
+        for d in self.defense:
+            d.next_think = rng.uniform(0.0, d.reaction)
+            d.ease = 6.0
+
+    # ------------------------------------------------------------------ set-up
+    def setup_inbound(self) -> None:
+        """Called by OpenCourt.__init__: pick the inbounder and everyone's spots."""
+        t, rng = self.t, self.rng
+        # The nearest wing or forward takes it out (a guard only if nobody else is near).
+        cands = [a for a in self.offense if a.slot != 0]
+        inb = min(cands, key=lambda a: C.dist(a.pos, self.spot) - (5.0 if a.slot in (2, 3) else 0.0))
+        self.inbounder = inb
+        self.holder = inb
+        inb.tx, inb.ty = self.spot
+        mates = [a for a in self.offense if a is not inb]          # point guard first
+        self.targets = {id(a): C.clamp(p, full=True) for a, p in zip(mates, self.receiver_spots())}
+        self.ready_at = 1e9                    # nobody runs with it before the catch
+        self.throw_after = rng.uniform(*t.dead_inbound_delay)
+        self.inbound = None
+
+    def receiver_spots(self) -> list[tuple[float, float]]:
+        """Where the four others set up, best ball handler first: one comes back to the
+        ball, one goes long, the others space the floor."""
+        x, y = self.spot
+        s = 1.0 if x > 0 else -1.0
+        if self.baseline:
+            return [(-s * 9.0, FULL - 10.0), (s * 14.0, FULL - 14.0),
+                    (-s * 16.0, FULL - 30.0), (s * 6.0, FULL - 34.0)]
+        if self.frontcourt:
+            return [(s * 14.0, min(y + 9.0, 42.0)), (s * 18.0, max(y - 9.0, 4.0)),
+                    (-s * 16.0, min(max(y, 14.0), 30.0)), (-s * 5.0, 7.0)]
+        return [(s * 13.0, min(y + 7.0, FULL - 4.0)), (s * 16.0, y - 12.0),
+                (-s * 8.0, y - 16.0), (-s * 12.0, max(y - 30.0, 30.0))]
+
+    def inside_point(self, depth: float) -> tuple[float, float]:
+        """``depth`` feet inside the line, in front of the inbound spot."""
+        x, y = self.spot
+        if self.baseline:
+            return x, FULL - depth
+        return math.copysign(C.WIDTH / 2 - depth, x), y
+
+    # ------------------------------------------------------------------ run
+    def run(self) -> OpenCourtResult:
+        dt = self.g.t.dt
+        self.record_frame()
+        where = ("the frontcourt after the timeout" if self.after_timeout
+                 else "the baseline" if self.baseline else "the sideline")
+        self.say(f"{self.g.teams[self.side].abbreviation} inbound from {where}")
+        while True:
+            self.now += dt
+            self.update_ball()
+            if self.result.result:
+                break
+            self.offense_targets()
+            self.defense_targets()
+            for a in self.g.everyone:
+                if self.out_of_bounds(a) or (a is self.inbounder and not self.caught):
+                    self.walk(a, dt, self.speed_for(a))     # move() would keep him on the floor
+                else:
+                    a.move(dt, self.now, self.speed_for(a))
+            self.g.separate()
+            self.record_frame()
+            if self.caught and self.flight is None and self.now >= self.ready_at:
+                h = self.holder
+                if self.frontcourt:
+                    if not self.out_of_bounds(self.inbounder) or self.now - self.caught_time > 1.0:
+                        self.hand_over()
+                        break
+                elif self.game_clock <= 0.6:
+                    self.heave()
+                    break
+                elif h.y <= self.t.walk_up_y or self.now - self.caught_time >= self.t.max_seconds:
+                    self.hand_over()
+                    break
+            if self.game_clock <= 0:
+                self.result.result = "period"
+                self.say("End of the period")
+                break
+        self.result.seconds = max(0.0, min(self.clock, self.now - self.clock_from))
+        self.result.elapsed = self.now
+        return self.result
+
+    @staticmethod
+    def out_of_bounds(a: Agent) -> bool:
+        return abs(a.x) > C.WIDTH / 2 - 0.5 or a.y > FULL - 0.5 or a.y < 0.5
+
+    def walk(self, a: Agent, dt: float, boost: float) -> None:
+        """Agent.move without keeping him on the floor (stepping out to inbound, and back in)."""
+        dx, dy = a.tx - a.x, a.ty - a.y
+        d = math.hypot(dx, dy)
+        speed = min(a.max_speed * boost, d * a.ease)
+        want = (dx / d * speed, dy / d * speed) if d > 0.05 else (0.0, 0.0)
+        sx, sy = want[0] - a.vx, want[1] - a.vy
+        s = math.hypot(sx, sy)
+        limit = a.accel * dt
+        if s > limit:
+            sx, sy = sx / s * limit, sy / s * limit
+        a.vx += sx
+        a.vy += sy
+        a.travelled += math.hypot(a.vx, a.vy) * dt
+        a.x += a.vx * dt
+        a.y += a.vy * dt
+
+    def speed_for(self, a: Agent) -> float:
+        t = self.t
+        if not self.caught:
+            if self.arrived is not None and a is not self.inbounder:
+                return 1.0                     # the throw is coming: get open, stay with him
+            return t.timeout_reset_speed if self.after_timeout else t.reset_speed
+        if a in self.defense:
+            return 0.9
+        return super().speed_for(a)
+
+    def update_ball(self) -> None:
+        if self.caught:
+            return                             # walking it up: no passes in the backcourt
+        t, now, inb = self.t, self.now, self.inbounder
+        if self.flight is None:
+            if not self.in_hands:              # the ball comes back to the inbounder
+                step = t.ball_return_speed * self.g.t.dt
+                d = C.dist(self.ball_at, inb.pos)
+                self.ball_at = inb.pos if d <= step else C.toward(self.ball_at, inb.pos, step)
+                self.in_hands = d <= 1.0 + step
+            if self.arrived is None and C.dist(inb.pos, self.spot) < 1.0:
+                self.arrived = now
+                for a in self.offense:         # cut to get open
+                    if a is not inb:
+                        tx, ty = self.targets[id(a)]
+                        self.targets[id(a)] = C.clamp((tx + self.rng.uniform(-2.5, 2.5),
+                                                       ty + self.rng.uniform(-2.5, 2.5)), full=True)
+            ready = (self.in_hands and self.arrived is not None
+                     and now >= max(self.throw_after, self.arrived + t.inbound_settle))
+            if ready or now >= t.inbound_hard_cap:
+                self.throw_in()
+            return
+        f = self.flight
+        if now - f["t0"] < f["dur"]:
+            return
+        self.flight = None
+        self.shot_from = self.clock_from = now     # both clocks start on the touch
+        if f.get("steal") is not None:
+            thief = f["steal"]
+            self.g.credit(inb, "tov")
+            self.g.credit(thief, "stl")
+            self.g.stats["tov"] += 1
+            self.g.stats["steals"] += 1
+            self.g.stats["inbound_steals"] += 1
+            self.say(f"Stolen! {thief.p.name} picks off the inbound pass")
+            self.result.result = "steal"
+            self.result.carrier = thief
+            return
+        to = f["to"]
+        self.holder = to
+        self.caught, self.caught_time = True, now
+        self.ready_at = now + 0.2
+        self.last_passer, self.caught_at = inb, now
+        self.lanes = self.assign_lanes()
+        if self.frontcourt:
+            inb.tx, inb.ty = self.inside_point(3.0)
+        self.say(f"{inb.p.name} inbounds to {to.p.name}")
+
+    def throw_in(self) -> None:
+        """Throw it to the most open man; a defender in the lane may pick it off."""
+        t, rng, inb = self.t, self.rng, self.inbounder
+        self.in_hands = True
+        noise = 1.2 * math.exp(-0.1 * (inb.a("vision") - 10))
+        lane_defenders = [d for d in self.defense if C.dist(d.pos, inb.pos) > 4.5]
+
+        def openness(m: Agent) -> float:
+            room = min(C.dist(d.pos, m.pos) for d in self.defense)
+            lane = min((C.point_segment_distance(d.pos, inb.pos, m.pos) for d in lane_defenders), default=9.0)
+            return (min(room, 6.0) + min(lane, 4.0) - 0.05 * C.dist(inb.pos, m.pos)
+                    + (1.0 if m.slot == 0 else 0.0) + rng.gauss(0.0, noise))
+
+        to = max((a for a in self.offense if a is not inb), key=openness)
+        end = to.pos
+        dur = max(0.3, C.dist(inb.pos, end) / t.pass_speed + 0.15)
+        self.flight = {"from": inb.pos, "to": to, "end": end, "t0": self.now, "dur": dur,
+                       "inbound": True, "passer": inb}
+        for d in sorted(lane_defenders, key=lambda d: C.dist(d.pos, inb.pos)):
+            lane = C.point_segment_distance(d.pos, inb.pos, end)
+            if lane < 2.0:
+                p = (t.inbound_steal * (2.0 - lane) / 2.0 * math.exp(0.12 * (d.a("stealing") - 10))
+                     * math.exp(-0.08 * (inb.a("passing") - 10)))
+                if rng.random() < p:
+                    self.flight["steal"] = d
+                    self.flight["end"] = d.pos
+                    self.flight["dur"] = max(0.2, C.dist(inb.pos, d.pos) / t.pass_speed)
+                    break
+        to.tx, to.ty = end                     # stop and show a target
+        self.holder = None
+
+    def offense_targets(self) -> None:
+        if self.caught:
+            super().offense_targets()
+            return
+        for a in self.offense:
+            if self.now < a.next_think:
+                continue
+            if a is self.inbounder:
+                a.tx, a.ty = self.spot         # out of bounds: not clamped
+            elif self.flight is not None and self.flight["to"] is a:
+                continue
+            else:
+                self.aim(a, self.targets[id(a)])
+
+    def defense_targets(self) -> None:
+        """A set defence, each man on his own (slot) matchup: deny the throw-in, then pick
+        up the ball and get between your man and the rim."""
+        now = self.now
+        ball = self.ball_pos()
+        for i, d in enumerate(self.defense):
+            if now < d.next_think:
+                continue
+            d.next_think = now + d.reaction * 0.8
+            man = self.offense[i]
+            if not self.caught:
+                if man is self.inbounder:
+                    goal = self.inside_point(3.5)              # arms up in front of the ball
+                elif C.dist(man.pos, self.spot) > 30.0:
+                    goal = C.toward(man.pos, RIM, min(4.0, C.dist_to_rim(man.pos)))   # too far to deny
+                else:
+                    goal = C.toward(man.pos, self.inside_point(3.0), 2.2)            # deny the pass
+            elif man is self.holder:
+                gap = 4.0 + 0.25 * max(0.0, ball[1] - 50.0)     # pick him up by half court
+                goal = C.toward(ball, RIM, min(gap, C.dist(ball, RIM)))
+            else:
+                far = 3.0 + 0.12 * C.dist(man.pos, ball)
+                goal = C.toward(man.pos, RIM, min(far, C.dist_to_rim(man.pos)))
+            self.aim(d, goal)
+
+    def hand_over(self) -> bool:
+        super().hand_over()
+        r = self.result
+        r.start["shot_clock"] = self.shot_base - max(0.0, self.now - self.shot_from)
+        r.start["guards"] = list(range(len(self.offense)))  # the set defence keeps its matchups
+        # Into the offence against a set defence, as in a half-court start: fast-paced teams sooner.
+        pace = self.g.teams[self.side].tactics.pace
+        r.start["mode"] = "setup"
+        r.start["decide_in"] = self.rng.uniform(*self.t.inbound_decide) * max(0.5, 1 - 0.03 * (pace - 10))
+        r.advantage = "inbound"
+        return True
+
+    def record_frame(self) -> None:
+        if not self.record:
+            return
+        if not self.caught and self.flight is None and not self.in_hands:
+            self._ball_override = (self.ball_at[0], self.ball_at[1], 3.0)
+        super().record_frame()
+        self._ball_override = None
+        row = self.result.frames[-1]
+        shot = max(0.0, self.now - self.shot_from)
+        row[1] = round(max(0.0, min(24.0, self.shot_base - shot)), 1)
 
