@@ -43,14 +43,14 @@ FULL = C.FULL_LENGTH
 class OpenCourtTuning:
     sprint: float = 1.40            # open-court top speed, relative to half-court speed
     dribble_sprint: float = 1.28    # pushing the ball
-    jog: float = 0.80               # walking it up
+    jog: float = 0.55               # walking it up (an NBA walk-up: ~5-6 s from baseline to half court)
     push_after_steal: float = 0.92
     push_after_drb: float = 0.38
     push_after_score: float = 0.06
     pace_effect: float = 0.05       # push chance (logit) per point of pace tactics
     secure_drb: tuple = (0.35, 0.75)   # land, turn, find the outlet
     secure_steal: tuple = (0.10, 0.30)
-    inbound_delay: tuple = (1.0, 1.8)  # retrieve the ball and step out of bounds (clock stopped)
+    inbound_delay: tuple = (1.5, 2.8)  # retrieve the ball and step out of bounds
     turn_after_steal: float = 0.35  # extra delay for the team that lost the ball
     turn_after_drb: float = 0.15
     max_seconds: float = 8.0        # hand over to the half court by then whatever happens

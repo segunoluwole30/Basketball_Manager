@@ -88,6 +88,9 @@ class GameTuning:
     # A possession counts as transition if it began with an open-court phase and its
     # first shot, foul or turnover came within this many seconds of gaining the ball.
     transition_window: float = 8.0
+    # After a make the court view shows the inbound and the walk-up (open court, not
+    # pushed) instead of jumping to half-court positions.
+    inbound_walkups: bool = True
 
 
 DEFAULT_GAME_TUNING = GameTuning()
@@ -441,7 +444,7 @@ class FullGame:
             push = None
             if how in ("score", "ft"):
                 push = self.clock < 8 or self.rng.random() < self._push_after_make(offense)
-            if live or push:
+            if live or push or self.gt.inbound_walkups:     # a walk-up when not pushing
                 oc = OpenCourt(self.hc, offense.key, "score" if how in ("score", "ft") else how,
                                carrier, self.clock, self.rng, self.ot, push=push,
                                clock_stopped=how == "ft" or self.clock_stops_on_make())

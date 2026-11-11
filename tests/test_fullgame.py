@@ -246,3 +246,30 @@ class ManagerTests(unittest.TestCase):
         self.assertEqual(g.away.timeouts, before - 1)
         self.assertTrue(any("coach's decision" in e.text for e in g.events))
         self.assertTrue(any(x[2] == inn.p.id and x[3] == out.p.id for x in g.sub_log))
+
+
+class InboundTests(unittest.TestCase):
+    def possessions(self, **gt):
+        from dataclasses import replace
+        from hoopsim.spatial.fullgame import DEFAULT_GAME_TUNING
+        league = generate_league(seed=5)
+        g = FullGame(league, 1, 2, random.Random(4), record=True,
+                     game_tuning=replace(DEFAULT_GAME_TUNING, **gt))
+        g.run()
+        return g.possessions
+
+    def after_makes(self, ps):
+        return [b for a, b in zip(ps, ps[1:]) if a["result"] == "score" and a["period"] == b["period"]]
+
+    def test_possessions_after_a_make_start_with_the_inbound(self):
+        after = self.after_makes(self.possessions())
+        self.assertGreater(len(after), 20)
+        # Someone is out of bounds under the far basket (y > 94 ft) when it starts.
+        inbound = [p for p in after if max(p["frames"][0][7 + 2 * n] for n in range(10)) > 940]
+        self.assertGreater(len(inbound), 0.9 * len(after))
+        self.assertTrue(all(p["frames"][0][3] > 600 for p in after))     # the ball starts in the backcourt
+
+    def test_switching_walkups_off_jumps_to_the_half_court(self):
+        after = self.after_makes(self.possessions(inbound_walkups=False))
+        jumped = [p for p in after if not p["transition"] and p["frames"][0][3] < 500]
+        self.assertGreater(len(jumped), 0.8 * len(after))

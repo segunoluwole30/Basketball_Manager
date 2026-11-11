@@ -264,29 +264,29 @@ games could later be stored like season games. It isn't wired into the season lo
   hold for the last shot of a quarter, go two-for-one, and look for a three when
   down three. These are passed to the half-court decisions as small value biases.
 
-Measured over 60 games (seed 0; per team-game), with the calibrated half-court
-defence, rotation lag, set plays (closing in a pick-and-roll), safe routine passes
-and resets, against 2025-26 Basketball-Reference league averages (transition and
-minutes are estimates; sources in `measure.py`):
+Measured over 60 games (seed 0; per team-game), with everything above plus
+inbounds and walk-ups after makes, against 2025-26 Basketball-Reference league
+averages (transition and minutes are estimates; sources in `measure.py`):
 
 | | Sim | NBA |
 |---|---|---|
-| Pace | 103.4 (135 before set plays) | 99.4 |
-| Points per team | 116 (112 per 100) | 115.6 (115.8 per 100) |
-| Threes attempted per team | 31.5 (share .356) | 37.0 (share .415) |
-| Transition share of possessions | 14.1% | ~15% (est.) |
+| Pace | 101.1 (135 before set plays) | 99.4 |
+| Points per team | 112 (110 per 100) | 115.6 (115.8 per 100) |
+| Transition share of possessions | 14.0% | ~15% (est.) |
 | Transition points per possession | 1.19 | ~1.26 (est.) |
-| FTA per 100 possessions | 24.8 | 23.6 |
-| Personal fouls per 100 possessions | 20.0 | 20.0 |
-| Turnovers per 100 possessions | 13.9 | 14.6 |
-| Starters' minutes (by rank) | 34.6, 32.8, 31.6, 30.0, 26.4 | ~30–36 (est.) |
+| Turnovers per 100 possessions | 15.2 | 14.6 |
+| Three share / eFG | .334 / .539 | .415 / .546 |
 
-Non-shooting fouls (reach-ins, holds) are a per-second risk of live half-court
-play (`non_shooting_foul_per_second` = 0.011, about 7 a team-game). They used to be
-scheduled on 25% of possessions, so longer possessions inflated them. Pace is
-~4 possessions high, and points per 100 possessions are ~4 low. Teams take ~31
-threes a game (NBA ~37). The scoring leader averages ~30 points. Full games take
-about 0.7 s each.
+**Inbounds after makes.** After every made basket or made free throw, the court view
+shows the inbound: a big takes it out under the basket and the guard comes back
+for it. Then comes the walk-up (`inbound_walkups`; before, a possession the team
+didn't push jumped straight to half-court positions). The walk-up is real
+movement, so it sets the game clock. Walk-ups go at 55% of top speed (was 80%),
+and retrieving the ball and inbounding takes 1.5–2.8 s (was 1.0–1.8). A team then
+reaches the frontcourt with about 18.6 on the shot clock after a make and 16.6
+after a defensive rebound, and full-game pace is 101 (was 103). Possessions after
+dead balls (fouls, out of bounds, timeouts) still start in half-court positions.
+The scoring leader averages ~29 points, and full games take about 0.7 s each.
 
 ### Learned decision values (`values.py`, `train.py`)
 
