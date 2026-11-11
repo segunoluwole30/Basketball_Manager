@@ -457,3 +457,8 @@ ul.plain li { padding: 3px 0; }
   .cal-mark, .cal-count { display: none; }
   .cal-game { white-space: normal; padding: 1px 2px; }
 }
+
+/* Standings */
+.standings-bar { margin-bottom: 10px; align-items: center; }
+.div-lead { color: var(--accent); font-size: 12px; }
+.stack { display: grid; gap: 16px; align-content: start; }

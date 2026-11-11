@@ -582,6 +582,8 @@ class FullGame:
                     first_action = used
                     self._finish_possession(offense, before, open_court, first_action, record,
                                             open_court.result)
+                    if ato is not None:
+                        m["ato_next"] = ato             # scored in transition: keep the play for next time
                     if open_court.result == "steal":
                         return "steal", open_court.carrier
                     return "period", None
@@ -651,6 +653,8 @@ class FullGame:
             ending, carrier_next = self._ending(result, info)
             break
         self._finish_possession(offense, before, open_court, first_action, record, ending)
+        if ato is not None and m is not None and m["ato_next"] is None:
+            m["ato_next"] = ato                         # never set up in the half court: next time
         return ending, carrier_next
 
     # Where the last half-court segment left the ball (for the throw-in after a dead ball).

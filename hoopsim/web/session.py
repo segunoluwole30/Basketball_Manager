@@ -845,9 +845,11 @@ class GameSession:
                 n = len(results) - len(("".join(results)).rstrip(results[-1]))
                 streak = f"{results[-1]}{n}"
             streaks[tid] = streak
+        from ..playoffs import _Tiebreak
+        tb = _Tiebreak(lg)
         out = []
         for conf in sorted({t.conference for t in lg.teams.values()}):
-            ids = ranked(lg, [t.id for t in lg.teams.values() if t.conference == conf])
+            ids = tb.order([t.id for t in lg.teams.values() if t.conference == conf])
             lw, ll, _ = rec[ids[0]]
             rows = []
             for i, tid in enumerate(ids):
@@ -857,9 +859,24 @@ class GameSession:
                              "division": t.division, "w": w, "l": l, "pct": round(w / max(1, w + l), 3),
                              "gb": ((lw - w) + (l - ll)) / 2, "net": round(diff / max(1, w + l), 1),
                              "streak": streaks[tid], "last10": last10[tid],
-                             "strength": round(team_strength(lg, tid), 1)})
+                             "strength": round(team_strength(lg, tid), 1),
+                             "div_leader": tid in tb.leaders,
+                             "div_record": "{}-{}".format(*tb.div[tid]), "conf_record": "{}-{}".format(*tb.conf[tid])})
             out.append({"conference": conf, "teams": rows})
-        return {"conferences": out, "season": lg.season, "user_team_id": lg.user_team_id}
+        rows_by_id = {r["team_id"]: r for c in out for r in c["teams"]}
+        divisions = []
+        for conf in sorted({t.conference for t in lg.teams.values()}):
+            names = sorted({t.division for t in lg.teams.values() if t.conference == conf},
+                           key=lambda n: min(t.id for t in lg.teams.values() if t.division == n))
+            for name in names:
+                ids = tb.order([t.id for t in lg.teams.values() if t.division == name])
+                lw, ll, _ = rec[ids[0]]
+                rows = []
+                for i, tid in enumerate(ids):
+                    w, l, _ = rec[tid]
+                    rows.append(dict(rows_by_id[tid], div_rank=i + 1, div_gb=((lw - w) + (l - ll)) / 2))
+                divisions.append({"division": name, "conference": conf, "teams": rows})
+        return {"conferences": out, "divisions": divisions, "season": lg.season, "user_team_id": lg.user_team_id}
 
     def leaders(self) -> dict:
         lg = self._lg()

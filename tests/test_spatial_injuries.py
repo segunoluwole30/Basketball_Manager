@@ -185,9 +185,9 @@ class SeasonGameTests(unittest.TestCase):
         league.user_team_id = None
         game = min(league.games.values(), key=lambda g: g.id)
         found = False
-        for i in range(6):
+        for i in range(12):
             fg = FullGame(league, game.home_team_id, game.away_team_id, random.Random(i), model=_model(),
-                          season_tuning=boosted(5))
+                          season_tuning=boosted(15))
             fg.run()
             again = finish_spatial(fg, random.Random(99), False)
             self.assertEqual(again.injuries, fg.result.injuries)    # no post-game roll on top

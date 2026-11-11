@@ -35,11 +35,105 @@ def team_records(league: League) -> dict[int, tuple[int, int, int]]:
     return {tid: tuple(v) for tid, v in rec.items()}
 
 
+def _pct(w: int, l: int) -> float:
+    return w / (w + l) if w + l else 0.0
+
+
+class _Tiebreak:
+    """The NBA's tie-break procedure for teams with the same winning percentage.
+
+    Two teams: (1) head-to-head, (2) division winner, (3) division record (same
+    division only), (4) conference record, (5) point differential.
+    Three or more: (1) division winner, (2) head-to-head among all the tied teams,
+    (3) division record (all in one division), (4) conference record, (5) point
+    differential. Once a step splits the teams into groups, each group goes back
+    through the procedure from the top. The NBA's records against playoff teams are
+    left out; point differential (then team id) settles anything left."""
+
+    def __init__(self, league: League):
+        self.lg = league
+        self.rec = team_records(league)
+        self.h2h: dict[tuple[int, int], list[int]] = {}         # (a, b) -> [a's wins, games]
+        self.div = {t: [0, 0] for t in league.teams}
+        self.conf = {t: [0, 0] for t in league.teams}
+        T = league.teams
+        for g in league.games.values():
+            if g.season != league.season or g.playoff or not g.played:
+                continue
+            h, a = g.home_team_id, g.away_team_id
+            w = g.winner_id()
+            for x, y in ((h, a), (a, h)):
+                r = self.h2h.setdefault((x, y), [0, 0])
+                r[0] += w == x
+                r[1] += 1
+                if T[x].conference == T[y].conference:
+                    self.conf[x][0] += w == x
+                    self.conf[x][1] += w != x
+                    if T[x].division == T[y].division:
+                        self.div[x][0] += w == x
+                        self.div[x][1] += w != x
+        self.leaders: set[int] = set()
+        for name in {t.division for t in T.values()}:
+            members = [t for t in T if T[t].division == name]
+            self.leaders.add(self.order(members)[0])
+
+    def overall(self, t: int) -> float:
+        w, l, _ = self.rec[t]
+        return _pct(w, l)
+
+    def order(self, teams) -> list[int]:
+        out = []
+        for _, grp in self._groups(list(teams), self.overall):
+            out += self.settle(grp)
+        return out
+
+    @staticmethod
+    def _groups(teams, key):
+        vals = {t: key(t) for t in teams}
+        levels = sorted(set(vals.values()), reverse=True)
+        return [(v, [t for t in teams if vals[t] == v]) for v in levels]
+
+    def settle(self, tied: list[int]) -> list[int]:
+        if len(tied) <= 1:
+            return tied
+        T = self.lg.teams
+        same_div = len({T[t].division for t in tied}) == 1
+
+        def h2h(t):
+            w = g = 0
+            for o in tied:
+                if o != t:
+                    r = self.h2h.get((t, o), [0, 0])
+                    w += r[0]
+                    g += r[1]
+            return w / g if g else 0.0
+
+        leader = lambda t: 1.0 if t in self.leaders else 0.0
+        division = lambda t: _pct(*self.div[t])
+        conference = lambda t: _pct(*self.conf[t])
+        diff = lambda t: float(self.rec[t][2])
+        if len(tied) == 2:
+            steps = [h2h] + ([] if same_div else [leader]) + ([division] if same_div else []) + [conference, diff]
+        else:
+            steps = ([] if same_div else [leader]) + [h2h] + ([division] if same_div else []) + [conference, diff]
+        for step in steps:
+            groups = self._groups(tied, step)
+            if len(groups) > 1:
+                out = []
+                for _, grp in groups:
+                    out += self.settle(grp)
+                return out
+        return sorted(tied)
+
+
 def ranked(league: League, team_ids) -> list[int]:
-    """Best record first; ties broken by point differential, then team id."""
-    rec = team_records(league)
-    return sorted(team_ids, key=lambda t: (-rec[t][0] / max(1, rec[t][0] + rec[t][1]),
-                                           -rec[t][2], t))
+    """Best record first, ties broken by the NBA's procedure (see ``_Tiebreak``)."""
+    return _Tiebreak(league).order(team_ids)
+
+
+def division_leaders(league: League) -> set[int]:
+    """Each division's winner (after tie-breaks)."""
+    return _Tiebreak(league).leaders
 
 
 def start_playoffs(league: League) -> None:

@@ -1103,10 +1103,21 @@ Every regular season follows the NBA calendar:
   and Monday and Thursday lightest.
 
 Every team plays exactly `games_per_season` (82) games, **41 at home and 41
-away**:
+away**.
 
-- Opponents are weighted like the NBA's, with about 30 of 82 games against the
-  other conference.
+**Divisions.** Teams are in the NBA's six divisions: Atlantic, Central and
+Southeast in the East; Northwest, Pacific and Southwest in the West. A 30-team
+league has five teams in each, like the NBA. Conferences of 4–8 teams use two
+divisions each (Atlantic/Central, Northwest/Pacific) and smaller ones one.
+Existing saves keep their old divisions.
+
+- **Opponents follow the NBA formula.** In a 30-team league that's 4 games
+  against each of the 4 division rivals, 4 against six other conference teams and
+  3 against the other four, and 2 against each of the 15 teams in the other
+  conference (16 + 36 + 30 = 82). Smaller leagues scale it: in a 12-team league,
+  11 against division rivals, 10 against the rest of the conference and 5 against
+  the other conference. Leagues whose divisions can't be equal (e.g. 10 teams) get
+  an even split.
 - Rest is NBA-like: back-to-backs are ~18% of the gaps (**~15 a team**), one rest
   day ~64%, two ~12%, and a few longer breaks. A team never plays three nights
   running.
@@ -1118,7 +1129,22 @@ Games are placed night by night, greedily:
 - A back-to-back quota keeps each team near the NBA rate through the season.
 - The same two teams don't meet again within a few days.
 
-`schedule_report` gives per-team checks. Rest matters in both engines: on the
+`schedule_report` gives per-team checks.
+
+**Standings and tiebreakers** (`playoffs.ranked`). Teams with the same winning
+percentage are separated in the NBA's order:
+
+- **Two teams:** head-to-head, then division winner, then division record (same
+  division only), then conference record.
+- **Three or more:** division winner first, then head-to-head among all the tied
+  teams, then division record, then conference record.
+
+Point differential follows in both cases. When a step splits the tied teams, each
+group starts again from the top. The NBA's "record against playoff teams" steps
+are left out, and point differential settles those cases. The same procedure picks
+each division's winner and the playoff seeds. The League screen's standings have
+a **Conference / Division** toggle, with division leaders marked ⓓ and DIV and
+CONF record columns. Rest matters in both engines: on the
 second night of a back-to-back, players who logged 10+ minutes the night before
 start the game tired (`Tuning.b2b_start_energy` = 0.85) and shoot slightly worse
 (`b2b_form` = 0.975). Over six 30-team statistical seasons, tired teams against

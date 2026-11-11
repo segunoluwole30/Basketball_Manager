@@ -240,6 +240,23 @@ def round_robin(team_ids: list[int]) -> list[list[tuple[int, int]]]:
     return rounds
 
 
+# The NBA's divisions. A 15-team conference has three of five, as in the NBA; smaller
+# conferences use the first two (or one).
+NBA_DIVISIONS = {"East": ["Atlantic", "Central", "Southeast"],
+                 "West": ["Northwest", "Pacific", "Southwest"]}
+
+
+def divisions_per_conference(size: int) -> int:
+    return 3 if size >= 9 else 2 if size >= 4 else 1
+
+
+def division_name(conference: str, idx: int, size: int) -> str:
+    """The division of the ``idx``-th team (0-based) of a ``size``-team conference."""
+    n = divisions_per_conference(size)
+    names = NBA_DIVISIONS.get(conference, [f"{conference} {c}" for c in "ABC"])
+    return names[idx * n // size]
+
+
 def generate_schedule(league: League, rng: random.Random) -> None:
     """An NBA-shaped regular season (see ``schedule.py``)."""
     from .schedule import build_schedule
@@ -261,7 +278,7 @@ def generate_league(*, seed: int = 0, num_teams: int = 12, season: int = 2026,
         conference = "East" if i < half else "West"
         idx = i if i < half else i - half
         size = half if i < half else num_teams - half
-        division = f"{conference} {'A' if idx < (size + 1) // 2 else 'B'}"
+        division = division_name(conference, idx, size)
         league.add_team(Team(
             id=i + 1, city=city, name=nickname, abbreviation=abbr,
             conference=conference, division=division,

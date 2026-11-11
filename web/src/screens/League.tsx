@@ -57,28 +57,69 @@ export function BoxScoreModal({ id, onClose }: { id: number; onClose: () => void
 
 function Standings() {
   const f = useFetch<any>("/api/standings");
+  const [view, setView] = useState<"conference" | "division">(() => {
+    try { return (localStorage.getItem("hoopsim-standings") as any) || "conference"; } catch { return "conference"; }
+  });
+  const pick = (v: "conference" | "division") => {
+    setView(v);
+    try { localStorage.setItem("hoopsim-standings", v); } catch { /* private mode */ }
+  };
+  const teamCell = (r: any) => (
+    <span>{r.name}{r.div_leader && <span className="div-lead" title="Division leader"> ⓓ</span>}</span>
+  );
+  const cols = (division: boolean) => [
+    division ? { key: "div_rank", label: "#", num: true, desc: false } : { key: "rank", label: "#", num: true, desc: false },
+    { key: "name", label: "Team", sort: (r: any) => r.name, desc: false, render: teamCell },
+    { key: "w", label: "W", num: true },
+    { key: "l", label: "L", num: true },
+    { key: "pct", label: "PCT", num: true, render: (r: any) => pct(r.pct) },
+    division
+      ? { key: "div_gb", label: "GB", num: true, desc: false, render: (r: any) => (r.div_gb ? r.div_gb.toFixed(1) : "–") }
+      : { key: "gb", label: "GB", num: true, desc: false, render: (r: any) => (r.gb ? r.gb.toFixed(1) : "–") },
+    { key: "div_record", label: "DIV", title: "Record against division rivals", sort: (r: any) => +r.div_record.split("-")[0] },
+    { key: "conf_record", label: "CONF", title: "Record against the conference", sort: (r: any) => +r.conf_record.split("-")[0] },
+    { key: "net", label: "NET", title: "Point differential per game", num: true, render: (r: any) => (r.net > 0 ? `+${r.net}` : r.net) },
+    { key: "last10", label: "L10", sort: (r: any) => +r.last10.split("-")[0] },
+    { key: "streak", label: "STRK" },
+  ];
   return (
     <Fetched f={f} what="Loading standings">
       {(d) => (
-        <div className="two-col">
-          {d.conferences.map((c: any) => (
-            <Panel key={c.conference} title={`${c.conference}ern Conference`.replace("ernern", "ern")}>
-              <Table dense rows={c.teams} rowKey={(r: any) => r.team_id} rowClass={(r: any) => (r.team_id === d.user_team_id ? "row-me" : "")}
-                columns={[
-                  { key: "rank", label: "#", num: true, desc: false },
-                  { key: "name", label: "Team", sort: (r: any) => r.name, desc: false },
-                  { key: "w", label: "W", num: true },
-                  { key: "l", label: "L", num: true },
-                  { key: "pct", label: "PCT", num: true, render: (r: any) => pct(r.pct) },
-                  { key: "gb", label: "GB", num: true, desc: false, render: (r: any) => (r.gb ? r.gb.toFixed(1) : "–") },
-                  { key: "net", label: "NET", title: "Point differential per game", num: true, render: (r: any) => (r.net > 0 ? `+${r.net}` : r.net) },
-                  { key: "last10", label: "L10", sort: (r: any) => +r.last10.split("-")[0] },
-                  { key: "streak", label: "STRK" },
-                  { key: "strength", label: "STR", title: "Top-8 average current ability", num: true },
-                ]} />
-            </Panel>
-          ))}
-        </div>
+        <>
+          <div className="row gap wrap standings-bar">
+            <span className="seg" role="group" aria-label="Standings view">
+              {(["conference", "division"] as const).map((v) => (
+                <button key={v} className={`seg-btn ${view === v ? "seg-on" : ""}`} aria-pressed={view === v} onClick={() => pick(v)}>
+                  {v === "conference" ? "Conference" : "Division"}
+                </button>
+              ))}
+            </span>
+            <span className="muted small">ⓓ division leader. Ties: head-to-head, division winner, division and conference record, point differential (NBA order).</span>
+          </div>
+          {view === "conference" ? (
+            <div className="two-col">
+              {d.conferences.map((c: any) => (
+                <Panel key={c.conference} title={`${c.conference}ern Conference`.replace("ernern", "ern")}>
+                  <Table dense rows={c.teams} rowKey={(r: any) => r.team_id} rowClass={(r: any) => (r.team_id === d.user_team_id ? "row-me" : "")}
+                    columns={cols(false)} />
+                </Panel>
+              ))}
+            </div>
+          ) : (
+            <div className="two-col">
+              {d.conferences.map((c: any) => (
+                <div key={c.conference} className="stack">
+                  {d.divisions.filter((x: any) => x.conference === c.conference).map((x: any) => (
+                    <Panel key={x.division} title={`${x.division} Division`}>
+                      <Table dense rows={x.teams} rowKey={(r: any) => r.team_id} rowClass={(r: any) => (r.team_id === d.user_team_id ? "row-me" : "")}
+                        columns={cols(true)} />
+                    </Panel>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+        </>
       )}
     </Fetched>
   );

@@ -98,33 +98,79 @@ def _regular_pairs(members: list[int], degree: int, rng: random.Random) -> list[
     return sorted(pairs)
 
 
+def _cross_division_pairs(members: list[int], div: dict[int, str], degree: int,
+                          rng: random.Random) -> Optional[list[tuple[int, int]]]:
+    """A ``degree``-regular set of pairs between teams of *different* divisions of one
+    conference, or None if this construction can't make one."""
+    if degree == 0:
+        return []
+    groups: dict[str, list[int]] = {}
+    for t in members:
+        groups.setdefault(div[t], []).append(t)
+    d = len(groups)
+    sizes = {len(g) for g in groups.values()}
+    m = len(members)
+    if d < 2 or len(sizes) != 1 or (m * degree) % 2:
+        return None
+    # Interleave the divisions (A1 B1 C1 A2 B2 C2 ...): an offset that isn't a multiple
+    # of the division count always lands in another division.
+    cols = [rng.sample(g, len(g)) for g in groups.values()]
+    order = [cols[j][i] for i in range(len(cols[0])) for j in range(d)]
+    offsets = [s for s in range(1, (m + 1) // 2) if s % d]
+    rng.shuffle(offsets)
+    use = offsets[:degree // 2]
+    if degree % 2:
+        if m % 2 or (m // 2) % d == 0:
+            return _random_regular_cross(members, div, degree, rng)
+        use.append(m // 2)
+    if len(use) * 2 - (1 if degree % 2 else 0) == degree:
+        pairs = set()
+        for i in range(m):
+            for s_ in use:
+                a, b = order[i], order[(i + s_) % m]
+                pairs.add((min(a, b), max(a, b)))
+        return sorted(pairs)
+    return _random_regular_cross(members, div, degree, rng)
+
+
+def _random_regular_cross(members, div, degree, rng, tries: int = 400):
+    """Small conferences the interleaving can't handle: random greedy attempts."""
+    allowed = [(a, b) for i, a in enumerate(members) for b in members[i + 1:] if div[a] != div[b]]
+    for _ in range(tries):
+        rng.shuffle(allowed)
+        deg = {t: 0 for t in members}
+        pairs = []
+        for a, b in allowed:
+            if deg[a] < degree and deg[b] < degree:
+                pairs.append((min(a, b), max(a, b)))
+                deg[a] += 1
+                deg[b] += 1
+        if all(v == degree for v in deg.values()):
+            return sorted(pairs)
+    return None
+
+
 def matchup_counts(league: League, games: int, rng: random.Random) -> dict[tuple[int, int], int]:
-    """How many times each pair meets so that every team plays ``games``."""
+    """How many times each pair meets so that every team plays ``games``.
+
+    Two equal conferences get the NBA's formula: a fixed number against each team in
+    the other conference (2 in an 82-game, 30-team league), and the rest within the
+    conference, where division rivals get the extra games first (4 each) and the
+    remaining extras go to other conference teams (4 against six of them, 3 against
+    the other four)."""
     teams = sorted(league.teams)
     n = len(teams)
+    div = {t: league.teams[t].division for t in teams}
     confs: dict[str, list[int]] = {}
     for t in teams:
         confs.setdefault(league.teams[t].conference, []).append(t)
-    counts: dict[tuple[int, int], int] = {}
     groups = list(confs.values())
-    nba_like = (len(groups) == 2 and len(groups[0]) == len(groups[1]) and len(groups[0]) >= 2)
-    if nba_like:
-        size = len(groups[0])
-        inter = max(1, round(INTER_CONFERENCE_SHARE * games / size))
-        rest = games - inter * size
-        base, extra = divmod(rest, size - 1) if size > 1 else (0, 0)
-        if rest >= 0 and (size * extra) % 2 == 0:
-            for a in groups[0]:
-                for b in groups[1]:
-                    counts[(min(a, b), max(a, b))] = inter
-            for g in groups:
-                for i, a in enumerate(g):
-                    for b in g[i + 1:]:
-                        counts[(min(a, b), max(a, b))] = base
-                for pair in _regular_pairs(g, extra, rng):
-                    counts[pair] += 1
+    if len(groups) == 2 and len(groups[0]) == len(groups[1]) and len(groups[0]) >= 2:
+        counts = _nba_formula(groups, div, games, rng)
+        if counts is not None:
             return counts
     # Any other league: as even as possible, the odd games against neighbours.
+    counts: dict[tuple[int, int], int] = {}
     base, extra = divmod(games, n - 1)
     if (n * extra) % 2:
         extra -= 1                                       # an odd total can't be split evenly
@@ -133,6 +179,46 @@ def matchup_counts(league: League, games: int, rng: random.Random) -> dict[tuple
             counts[(a, b)] = base
     for pair in _regular_pairs(teams, extra, rng):
         counts[pair] += 1
+    return counts
+
+
+def _nba_formula(groups, div, games, rng):
+    size = len(groups[0])
+    inter = max(1, round(INTER_CONFERENCE_SHARE * games / size))
+    rest = games - inter * size                          # conference games per team
+    if rest < 0 or size < 2:
+        return None
+    base, extra = divmod(rest, size - 1)
+    counts: dict[tuple[int, int], int] = {}
+    for a in groups[0]:
+        for b in groups[1]:
+            counts[(min(a, b), max(a, b))] = inter
+    for g in groups:
+        for i, a in enumerate(g):
+            for b in g[i + 1:]:
+                counts[(min(a, b), max(a, b))] = base
+        rivals = {t: [x for x in g if x != t and div[x] == div[t]] for t in g}
+        k = {len(v) for v in rivals.values()}
+        if len(k) != 1:
+            return None                                  # unequal divisions: use the even split
+        k = k.pop()
+        if extra >= k:
+            for t in g:                                  # division rivals: one more game each
+                for x in rivals[t]:
+                    if t < x:
+                        counts[(t, x)] += 1
+            cross = _cross_division_pairs(g, div, extra - k, rng)
+            if cross is None:
+                return None
+            for pair in cross:
+                counts[pair] += 1
+        else:
+            for name in {div[t] for t in g}:
+                members = [t for t in g if div[t] == name]
+                if (len(members) * extra) % 2:
+                    return None
+                for pair in _regular_pairs(members, extra, rng):
+                    counts[pair] += 1
     return counts
 
 
