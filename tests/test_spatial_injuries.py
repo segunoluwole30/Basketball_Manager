@@ -95,9 +95,13 @@ class HurtPlayerTests(unittest.TestCase):
 
 class ManualSubsTests(unittest.TestCase):
     def test_hurt_players_are_replaced_when_the_coach_makes_the_subs(self):
-        g = FullGame(short_league(4), 1, 2, random.Random(12), season_tuning=boosted(40))
-        g.attach_manager("home")["auto_subs"] = False
-        sim = g.run()
+        # A game where the home team gets hurt (which seed does it depends on the engine).
+        for seed in range(12, 40):
+            g = FullGame(short_league(4), 1, 2, random.Random(seed), season_tuning=boosted(40))
+            g.attach_manager("home")["auto_subs"] = False
+            sim = g.run()
+            if any(s.injury for s in g.home.roster):
+                break
         home_out = [x[3] for x in g.sub_log if x[1] == "home"]
         self.assertTrue(home_out)
         self.assertTrue(any(g.home.seats[pid].injury for pid in home_out))
