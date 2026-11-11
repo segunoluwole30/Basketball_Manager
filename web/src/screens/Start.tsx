@@ -71,15 +71,19 @@ export function Start({ onDone, onCancel }: { onDone: () => void; onCancel?: () 
         <div className="start-grid">
           <Panel title="New game">
             <form className="form" onSubmit={(e) => { e.preventDefault(); create(); }}>
-              {!!files.data?.files.length && (
-                <label>League
-                  <select value={file} onChange={(e) => setFile(e.target.value)}>
-                    <option value="">Generated: fictional players</option>
-                    {files.data.files.map((f) => (
-                      <option key={f.file} value={f.file}>{f.name} ({f.teams} teams, {f.players} players)</option>
-                    ))}
-                  </select>
-                </label>
+              <label>League
+                <select value={file} onChange={(e) => setFile(e.target.value)}>
+                  <option value="">Generated: fictional players</option>
+                  {(files.data?.files ?? []).map((f) => (
+                    <option key={f.file} value={f.file}>{f.name} ({f.teams} teams, {f.players} players)</option>
+                  ))}
+                </select>
+              </label>
+              {files.data && !files.data.files.length && (
+                <p className="muted small">
+                  No league files in <code>{files.data.folder}</code>. To play with the real NBA, build one (about 3 minutes,
+                  for personal use): <code>python3 tools/build_nba_league.py --fetch</code>, then restart the app.
+                </p>
               )}
               {!file && (
                 <label>Teams
