@@ -77,7 +77,8 @@ class LiveMatch:
         self._saved_tactics = team.tactics
         team.tactics = copy.deepcopy(team.tactics)       # match tactics: changes don't stick
         try:
-            self.fg = FullGame(league, game.home_team_id, game.away_team_id, rng, record=True, model=_model())
+            self.fg = FullGame(league, game.home_team_id, game.away_team_id, rng, record=True, model=_model(),
+                               day=game.day)
         except Exception:
             team.tactics = self._saved_tactics
             raise

@@ -309,6 +309,21 @@ def create_app(session: Optional[GameSession] = None) -> FastAPI:
         return run(game.auto, body.scope)
 
     # -- stats pages (read-only) --------------------------------------------------------
+    # -- calendar ----------------------------------------------------------------------
+    from . import calendar as cal
+
+    @app.get("/api/calendar")
+    def calendar_view(team_id: Optional[int] = None):
+        return run(cal.calendar, game, team_id)
+
+    @app.get("/api/calendar/day/{day}")
+    def calendar_day(day: int):
+        return run(cal.calendar_day, game, day)
+
+    @app.post("/api/sim/to")
+    def sim_to(body: dict = Body(...)):
+        return run(cal.sim_to, game, body.get("day"))
+
     @app.get("/api/stats/leaders")
     def stats_leaders(playoffs: bool = False, pos: Optional[str] = None,
                       season: Optional[int] = None, limit: int = 10):

@@ -42,7 +42,8 @@ def simulate_spatial(league: League, game: Game, rng: random.Random, record: Opt
     (default: the user's team is playing) keeps the movement for the viewer."""
     if record is None:
         record = league.user_team_id in (game.home_team_id, game.away_team_id)
-    fg = FullGame(league, game.home_team_id, game.away_team_id, rng, record=record, model=_model())
+    fg = FullGame(league, game.home_team_id, game.away_team_id, rng, record=record, model=_model(),
+                  day=game.day)
     fg.run()
     return finish_spatial(fg, rng, record)
 

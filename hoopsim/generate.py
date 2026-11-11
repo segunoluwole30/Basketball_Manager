@@ -241,22 +241,9 @@ def round_robin(team_ids: list[int]) -> list[list[tuple[int, int]]]:
 
 
 def generate_schedule(league: League, rng: random.Random) -> None:
-    """Repeat the round robin, flipping home/away each cycle, one round per day."""
-    team_ids = sorted(league.teams)
-    per_cycle = len(team_ids) - 1
-    cycles = max(1, round(league.rules.games_per_season / per_cycle))
-    league.rules.games_per_season = cycles * per_cycle
-    base = round_robin(team_ids)
-    day = 1
-    for c in range(cycles):
-        rounds = base[:]
-        rng.shuffle(rounds)
-        for pairs in rounds:
-            for home, away in pairs:
-                if c % 2:
-                    home, away = away, home
-                league.add_game(Game(league.next_game_id(), league.season, day, home, away))
-            day += 1
+    """An NBA-shaped regular season (see ``schedule.py``)."""
+    from .schedule import build_schedule
+    build_schedule(league, rng)
 
 
 def generate_league(*, seed: int = 0, num_teams: int = 12, season: int = 2026,

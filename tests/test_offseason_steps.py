@@ -189,7 +189,10 @@ class OffseasonStepTests(unittest.TestCase):
         self.assertTrue(set(drafted) <= roster | {p.id for p in lg.players.values() if p.team_id is None})
         self.assertTrue(all(lg.players[d].draft_pick for d in drafted))
         if "walking" in locals():
-            self.assertFalse(roster & set(walking))
+            # Let walk: gone, unless the roster had to be topped up to the minimum and he
+            # was the best free agent left (then he's back on a minimum deal).
+            for pid in roster & set(walking):
+                self.assertEqual(lg.players[pid].contract.salary, lg.rules.min_salary)
         self.assertEqual(lg.validate(), [])
 
     def test_errors(self):

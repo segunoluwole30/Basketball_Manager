@@ -14,7 +14,8 @@ def short_spatial_league(seed: int = 4, days: int = 6):
     league = generate_league(seed=seed, num_teams=4)
     league.rules.match_engine = "spatial"
     league.rules.playoff_series_length = 1
-    for gid in [g.id for g in league.games.values() if g.day > days]:
+    opening = min(g.day for g in league.games.values())
+    for gid in [g.id for g in league.games.values() if g.day > opening + days]:
         del league.games[gid]                     # a few days of games is enough
     return league
 

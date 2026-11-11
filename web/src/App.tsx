@@ -9,6 +9,7 @@ import { Offseason } from "./screens/Offseason";
 import { Squad } from "./screens/Squad";
 import { Start, SaveLoad } from "./screens/Start";
 import { Stats } from "./screens/Stats";
+import { Calendar } from "./screens/Calendar";
 import { Tactics } from "./screens/Tactics";
 import { Transfers } from "./screens/Transfers";
 
@@ -18,6 +19,7 @@ const NAV = [
   { key: "tactics", label: "Tactics", icon: "◎" },
   { key: "transfers", label: "Transfers", icon: "⇄" },
   { key: "league", label: "League", icon: "▤" },
+  { key: "calendar", label: "Calendar", icon: "▦" },
   { key: "stats", label: "Stats", icon: "∑" },
   { key: "offseason", label: "Offseason", icon: "☀" },
 ];
@@ -137,6 +139,7 @@ export default function App() {
     case "transfers": screen = <Transfers params={params} />; break;
     case "league": screen = <League params={params} go={go} />; break;
     case "stats": screen = <Stats params={params} />; break;
+    case "calendar": screen = <Calendar />; break;
     case "offseason": screen = <Offseason go={go} />; break;
     default: screen = <Home go={go} />;
   }

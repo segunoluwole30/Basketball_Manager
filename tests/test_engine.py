@@ -145,8 +145,13 @@ class SeasonTests(unittest.TestCase):
 
     def test_play_day_and_season(self):
         league = generate_league(seed=5, num_teams=6)
-        played = play_day(league, 1, random.Random(1))
-        self.assertEqual(len(played), 3)
+        opening = min(g.day for g in league.games.values())
+        tonight = [g for g in league.games.values() if g.day == opening]
+        played = play_day(league, opening, random.Random(1))
+        self.assertEqual(len(played), len(tonight))
+        self.assertTrue(played)
+        teams = [t for g in played for t in (g.home_team_id, g.away_team_id)]
+        self.assertEqual(len(teams), len(set(teams)))            # nobody plays twice in a night
         play_season(league, random.Random(2))
         self.assertTrue(all(g.played for g in league.games.values()))
         wins = sum(w for _, w, _ in league.standings())

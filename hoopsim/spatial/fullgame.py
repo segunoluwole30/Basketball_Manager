@@ -176,7 +176,8 @@ class FullGame:
                  tuning: SpatialTuning = DEFAULT_TUNING, game_tuning: GameTuning = DEFAULT_GAME_TUNING,
                  open_tuning: OpenCourtTuning = DEFAULT_OPEN_TUNING,
                  model: Optional[DecisionModel] = None, params=None,
-                 season_tuning: Tuning = SEASON_TUNING):
+                 season_tuning: Tuning = SEASON_TUNING, day: Optional[int] = None):
+        """``day``: the schedule day, so players who played last night start tired."""
         self.league, self.rules = league, league.rules
         self.rng = rng or random.Random()
         self.gt, self.ot = game_tuning, open_tuning
@@ -190,6 +191,15 @@ class FullGame:
         self.sides = {key: self._side(key, tid) for key, tid in (("home", home_id), ("away", away_id))}
         self.hc.box = {id(s.agent): Counter() for side in self.sides.values() for s in side.roster}
         self._game_day_form()
+        if day is not None:
+            from ..schedule import tired_from_last_night
+            for side in self.sides.values():
+                tired = tired_from_last_night(league, side.team.id, day)
+                for s in side.roster:
+                    if s.p.id in tired:
+                        s.energy = season_tuning.b2b_start_energy
+                        s.form = s.agent.form = s.form * season_tuning.b2b_form
+                        self.apply_fatigue(s)
         self._sync()
         self.period = 0
         self.clock = 0.0                       # seconds left in the period

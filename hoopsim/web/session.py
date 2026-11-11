@@ -30,7 +30,8 @@ from ..manager import (
 )
 from ..market import _salaries_match, evaluate_trade, execute_user_trade
 from ..models import ContractOption, DefensiveScheme, League, OffensiveFocus, Phase, Player
-from ..playoffs import _HIGH_SEED_HOME, _advance_bracket, current_round, ranked, start_playoffs, team_records
+from ..playoffs import (_HIGH_SEED_HOME, _advance_bracket, current_round, next_playoff_day, ranked,
+                        start_playoffs, team_records)
 from ..season import (
     OFFSEASON_STEPS, STEP_TITLES, answer_offseason, finish_season, manager_answer,
     offseason_pending, offseason_report, pending_players, play_regular_season,
@@ -752,7 +753,7 @@ class GameSession:
                 if not _advance_bracket(lg):
                     return None
                 continue
-            day += 1
+            day = next_playoff_day(lg, day)
             for s in live:
                 n = len(s.game_ids)
                 home, away = (s.high_id, s.low_id) if n in _HIGH_SEED_HOME else (s.low_id, s.high_id)

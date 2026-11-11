@@ -101,6 +101,16 @@ def _advance_bracket(league: League) -> bool:
     return True
 
 
+PLAYOFF_START_GAP = 6     # NBA: the play-in fills the week after the regular season
+PLAYOFF_GAME_GAP = 2      # then a game every other day
+
+
+def next_playoff_day(league: League, day: int) -> int:
+    """The day after ``day`` (the last scheduled game) for the next playoff games."""
+    started = any(g.playoff for g in league.games.values() if g.season == league.season)
+    return day + (PLAYOFF_GAME_GAP if started else PLAYOFF_START_GAP)
+
+
 def play_playoffs(league: League, rng: Optional[random.Random] = None) -> int:
     """Play the whole bracket one day at a time. Returns the champion's team id."""
     if league.phase is not Phase.PLAYOFFS:
@@ -112,7 +122,7 @@ def play_playoffs(league: League, rng: Optional[random.Random] = None) -> int:
             if not _advance_bracket(league):
                 break
             continue
-        day += 1
+        day = next_playoff_day(league, day)
         for s in live:
             n = len(s.game_ids)
             home, away = (s.high_id, s.low_id) if n in _HIGH_SEED_HOME else (s.low_id, s.high_id)

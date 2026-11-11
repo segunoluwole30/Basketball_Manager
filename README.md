@@ -235,6 +235,7 @@ package (`hoopsim/web/static/`), so Node isn't needed to play.
 | **Tactics** | starting five by position (with each player's ability at that slot), minutes that must total 240 (with a "balance" helper), the assistant-coach toggle, team tactics and player instructions. |
 | **Transfers** | free agents with their asks and a contract form that shows how you'd pay (cap space, mid-level exception, minimum); a trade builder with live salary-matching and roster feedback and the other team's verdict. |
 | **League** | standings, leaders, schedule and results with box scores (current season), a daily scoreboard, the playoff bracket and past seasons. |
+| **Calendar** | The season a month at a time: your games (home/away, results, **B2B** badges), league games per night, opening night, Thanksgiving, Christmas, the All-Star break, the trade deadline and the playoffs. Click a day for every game on it, and **Sim to this day** to play up to it. See *Schedule* below. |
 | **Stats** | *League leaders*: per-game points, rebounds, assists, steals and blocks, FG%, 3P% and FT%, and advanced lists (true shooting %, usage %, share of team FGA, points/rebounds/assists per 36), filtered by season, regular season or playoffs, and position; your players are highlighted. To qualify a player needs 60% of the most games any team has played (4 games in the playoffs), plus 5 FGA, 2 3PA or 2 FTA per game for the shooting lists and 15 minutes per game for the rate lists. *Team stats*: a sortable table of points for and against, pace, offensive, defensive and net rating and the four factors for offence and defence (eFG%, TOV%, ORB%/DRB%, FT rate, 3PA rate). *Game log*: every game a team has played this season with the score, running record and top scorer, linked to the box score and, for recorded games, the viewer. |
 | **Offseason** | one screen per step: team options, re-signing (asks and the chance he stays), the draft board pick by pick, every free-agency round, trade offers and roster cuts. Any decision, a whole step or the rest of the summer can be handed to your assistant. |
 
@@ -1086,8 +1087,57 @@ guards, and half of power forwards and a third of centres are drawn as stretch b
 lands them on their target CA). Salaries follow a steep curve on CA. Rosters are filled
 by a snake draft with noisy scouting, so there are strong and weak teams without
 absurd gaps. `auto_lineup` (in `lineup.py`) brute-forces the best starting five and
-shares out 240 minutes. The schedule is a repeated round robin with alternating
-home and away.
+shares out 240 minutes. The schedule is NBA-shaped (see below).
+
+## Schedule (`hoopsim/schedule.py`)
+
+Every regular season follows the NBA calendar:
+
+- Opening night is a Tuesday in late October, and the season ends on a Sunday in
+  mid-April (about 173 days, on ~166 game nights; shorter seasons are compressed).
+- There are no games on Thanksgiving or Christmas Eve.
+- Christmas Day has a slate of up to 5 games.
+- The six-day All-Star break runs around the third Sunday of February.
+- The trade deadline falls about 60% of the way through.
+- League nights follow the NBA's weekday rhythm, with Wednesday and Friday busiest
+  and Monday and Thursday lightest.
+
+Every team plays exactly `games_per_season` (82) games, **41 at home and 41
+away**:
+
+- Opponents are weighted like the NBA's, with about 30 of 82 games against the
+  other conference.
+- Rest is NBA-like: back-to-backs are ~18% of the gaps (**~15 a team**), one rest
+  day ~64%, two ~12%, and a few longer breaks. A team never plays three nights
+  running.
+- Road trips run to at most 6 games and homestands to at most 7.
+
+Games are placed night by night, greedily:
+
+- Teams that are behind on their games are scheduled first.
+- A back-to-back quota keeps each team near the NBA rate through the season.
+- The same two teams don't meet again within a few days.
+
+`schedule_report` gives per-team checks. Rest matters in both engines: on the
+second night of a back-to-back, players who logged 10+ minutes the night before
+start the game tired (`Tuning.b2b_start_energy` = 0.85) and shoot slightly worse
+(`b2b_form` = 0.975). Over six 30-team statistical seasons, tired teams against
+rested ones won 46.4% and lost by 1.2 points (NBA: roughly 1.5). Playoffs start six
+days after the regular season (the play-in week) and are played every other day.
+
+The browser app's **Calendar** screen shows the season a month at a time:
+
+- Each day shows your games (home/away, result, a **B2B** badge on second
+  nights), how many league games are on, and markers for opening night,
+  Thanksgiving, Christmas Eve and Day, the All-Star break and Game, the trade
+  deadline, the final day and the playoffs.
+- Summary cards show games, home/away split, back-to-backs and the longest road
+  trip. Any team's schedule can be viewed.
+- Clicking a day lists every game on it, with box score and watch links.
+- **Sim to this day** plays up to it. It stops early for a trade offer, as the
+  other sim buttons do.
+
+The routes are `/api/calendar`, `/api/calendar/day/{day}` and `POST /api/sim/to`.
 
 ## Storage (`hoopsim/db.py`)
 

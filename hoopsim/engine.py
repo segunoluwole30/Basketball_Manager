@@ -74,6 +74,10 @@ class Tuning:
     injury_rate_per_36: float = 0.02
     # Morale shifts game-day form: +/-1.8% at morale 80 / 20.
     morale_form_effect: float = 0.0006
+    # Second night of a back-to-back: players who logged 10+ minutes last night start
+    # this tired (NBA: about 1-2 points worse; see schedule.py).
+    b2b_start_energy: float = 0.85
+    b2b_form: float = 0.975            # ...and their shots are a little flatter
     # How strongly ratings move outcomes. 1.0 = raw ratings; lower compresses
     # every rating toward 10 so talent gaps produce realistic point margins.
     skill_impact: float = 0.5
@@ -237,6 +241,12 @@ class _GameSim:
 
         self.home = _Side(self, league.teams[game.home_team_id], players_for(game.home_team_id), True)
         self.away = _Side(self, league.teams[game.away_team_id], players_for(game.away_team_id), False)
+        from .schedule import tired_from_last_night
+        for side in (self.home, self.away):
+            for pid in tired_from_last_night(league, side.team.id, game.day):
+                if pid in side.players:
+                    side.players[pid].energy = tuning.b2b_start_energy
+                    side.players[pid].form *= tuning.b2b_form
         self.period = 0
         self.clock = 0.0           # seconds left in the period
         self.elapsed = 0.0         # game seconds played so far

@@ -389,7 +389,7 @@ class WebApiTests(unittest.TestCase):
                              (c["season"], c["playoffs"], c["team"], c["gp"], c["ca"]))
             for k in ("pts", "fgm", "fga", "ast", "tov"):
                 self.assertEqual(row["totals"][k], c[k])
-            self.assertAlmostEqual(row["pts"], c["pts"] / c["gp"], places=1)
+            self.assertAlmostEqual(row["pts"], c["pts"] / c["gp"], delta=0.051)   # shown to one decimal
             self.assertAlmostEqual(row["trb"], (c["orb"] + c["drb"]) / c["gp"], places=1)
         reg = [c for c in p.career if not c["playoffs"]]
         self.assertEqual([x["season"] for x in h["chart"]], [c["season"] for c in reg])
@@ -650,6 +650,32 @@ class WebMatchEngineTests(unittest.TestCase):
         page = self.client.get(f"/api/replay/{gid}").text
         self.assertIn('"hl":', page)
         self.assertIn('id="hlBox"', page)
+
+    def test_calendar_and_sim_to_a_day(self):
+        choices = self.post("/api/new", {"seed": 3, "num_teams": 8})["teams"]
+        me = choices[0]["id"]
+        self.post("/api/new/team", {"team_id": me})
+        cal = self.client.get("/api/calendar").json()
+        days = cal["days"]
+        mine = [d for d in days if d["game"]]
+        self.assertEqual(len(mine), 82)
+        self.assertEqual(cal["summary"]["games"], 82)
+        self.assertEqual(cal["summary"]["home"], 41)
+        self.assertEqual(sum(d["b2b"] for d in days), cal["summary"]["back_to_backs"])
+        marks = [m for d in days for m in d["marks"]]
+        for m in ("Opening night", "Christmas Day", "All-Star Game", "Trade deadline",
+                  "Final day of the regular season"):
+            self.assertIn(m, marks)
+        # Sim to my fifth game: everything up to that day is played, nothing after.
+        target = mine[4]["day"]
+        self.post("/api/sim/to", {"day": target})
+        lg = self.session.league
+        self.assertTrue(all(g.played == (g.day <= target) for g in lg.games.values()))
+        day = self.client.get(f"/api/calendar/day/{target}").json()
+        self.assertTrue(day["games"] and all(g["played"] for g in day["games"]))
+        self.assertEqual(self.client.post("/api/sim/to", json={"day": target}).status_code, 400)
+        other = self.client.get("/api/calendar", params={"team_id": choices[1]["id"]}).json()
+        self.assertEqual(other["team_id"], choices[1]["id"])
 
     def test_live_needs_the_spatial_engine(self):
         choices = self.post("/api/new", {"seed": 7, "num_teams": 4})["teams"]
