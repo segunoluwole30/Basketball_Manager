@@ -200,7 +200,7 @@ class GameSession:
         if lg is None:
             return {"loaded": False}
         out: dict[str, Any] = {
-            "loaded": True, "league": lg.name, "season": lg.season,
+            "loaded": True, "league": lg.name, "season": lg.season, "match_engine": lg.rules.match_engine,
             "season_label": f"{lg.season}-{(lg.season + 1) % 100:02d}",
             "date": lg.current_date.isoformat(), "phase": lg.phase.value,
             "user_team_id": lg.user_team_id, "save_path": self.save_path, "unsaved": self.dirty,
@@ -887,8 +887,45 @@ class GameSession:
                        key=lambda g: g.id)
         return {"day": d, "days": played_days, "games": [self._game_view(g) for g in games]}
 
-    def replay_page(self, game_id: int) -> str:
-        """The match viewer for a recorded game (spatial engine, the user's team)."""
+    def watch_next(self) -> dict:
+        """Play on to the user's next game (and the rest of that day), so it can be
+        watched live. Needs the spatial engine; stops early for a trade offer."""
+        lg = self._me()
+        me = lg.user_team_id
+        if lg.rules.match_engine != "spatial":
+            raise UserError("watching live needs the spatial match engine (choose it when starting a new game)")
+        mine = lambda g: me in (g.home_team_id, g.away_team_id)
+        before = {g.id for g in lg.games.values() if g.played and mine(g)}
+        if lg.phase is Phase.REGULAR_SEASON and not regular_season_over(lg):
+            nxt = min((g for g in lg.games.values() if g.season == lg.season and not g.playoff
+                       and not g.played and mine(g)), key=lambda g: (g.day, g.id), default=None)
+            if nxt is None:
+                raise UserError("you have no games left this regular season")
+            days = len({g.day for g in lg.games.values() if g.season == lg.season and not g.playoff
+                        and not g.played and g.day <= nxt.day})
+            r = self.sim("days", days)
+            if not lg.games[nxt.id].played:
+                return {"ok": True, "game_id": None, "stopped_for": r["stopped_for"], "state": self.state()}
+            game_id = nxt.id
+        elif lg.phase is Phase.PLAYOFFS:
+            if not any(me in (s.high_id, s.low_id) and not s.over for s in lg.playoffs):
+                raise UserError("your season is over: no playoff games to watch")
+            while True:
+                r = self.sim_playoffs("day")
+                new = [g for g in lg.games.values() if g.played and mine(g) and g.id not in before]
+                if new or r.get("finished"):
+                    break
+            if not new:
+                raise UserError("no game to watch")
+            game_id = max(g.id for g in new)
+        else:
+            raise UserError("there are no games to watch right now")
+        return {"ok": True, "game_id": game_id, "url": f"/api/replay/{game_id}?live=1",
+                "stopped_for": None, "state": self.state()}
+
+    def replay_page(self, game_id: int, live: bool = False) -> str:
+        """The match viewer for a recorded game (spatial engine, the user's team).
+        ``live``: spoiler-free (the box score appears at the final buzzer)."""
         from ..spatial.export import build_html
         from ..spatial.season_game import replay_data
         lg = self._lg()
@@ -898,6 +935,7 @@ class GameSession:
         if data is None:
             raise UserError("no recording of that game: only your team's most recent games on the "
                             "spatial engine are kept", 404)
+        data["live"] = bool(live)
         return build_html(data)
 
     def box_score(self, game_id: int) -> dict:

@@ -28,9 +28,18 @@ const STAGE_LABEL: Record<string, string> = {
   offseason: "Offseason",
 };
 
-function SimControls({ go }: { go: (r: string) => void }) {
+function SimControls({ go, onLive }: { go: (r: string) => void; onLive: (url: string) => void }) {
   const { state, act, busy } = useGame();
   if (!state?.stage) return null;
+  // Spatial engine: play on to your next game and watch it, spoiler-free.
+  const watch = async () => {
+    const r: any = await act(() => api.post("/api/watch-next"), (r: any) =>
+      r.game_id ? undefined : r.stopped_for === "offers" ? "A trade offer arrived first: check your inbox." : "No game to watch.");
+    if (r?.game_id) onLive(r.url);
+  };
+  const live = state.match_engine === "spatial" && (
+    <button className="btn" disabled={busy} onClick={watch} title="Play on to your next game and watch it live">▶ Watch next game</button>
+  );
   const sim = (mode: string) =>
     act(() => api.post("/api/sim", { mode }), (r: any) =>
       r.stopped_for === "offers" ? "A trade offer arrived: check your inbox." : r.games.length ? `Played ${r.days} day${r.days > 1 ? "s" : ""}` : undefined);
@@ -39,6 +48,7 @@ function SimControls({ go }: { go: (r: string) => void }) {
     case "regular_season":
       return (
         <div className="sim-controls" aria-label="Simulation">
+          {live}
           <button className="btn btn-primary" disabled={busy} onClick={() => sim("day")}>Next day</button>
           <button className="btn" disabled={busy} onClick={() => sim("week")}>Week</button>
           {state.deadline_in != null && <button className="btn" disabled={busy} onClick={() => sim("deadline")} title="Play to the trade deadline">To deadline</button>}
@@ -56,6 +66,7 @@ function SimControls({ go }: { go: (r: string) => void }) {
     case "playoffs":
       return (
         <div className="sim-controls">
+          {live}
           <button className="btn btn-primary" disabled={busy} onClick={() => po("day")}>Next day</button>
           <button className="btn" disabled={busy} onClick={() => po("round")}>Round</button>
           <button className="btn" disabled={busy} onClick={() => po("all")}>All playoffs</button>
@@ -82,6 +93,7 @@ export default function App() {
   const [route, go] = useRoute();
   const [menu, setMenu] = useState<null | "save" | "load" | "new">(null);
   const [navOpen, setNavOpen] = useState(false);
+  const [live, setLive] = useState<string | null>(null);
   const [page, query] = route.split("?");
   const params = new URLSearchParams(query ?? "");
 
@@ -129,12 +141,22 @@ export default function App() {
             </div>
           </div>
           <div className="topbar-date">{state.date && new Date(state.date + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</div>
-          <SimControls go={go} />
+          <SimControls go={go} onLive={setLive} />
           {busy && <span className="spinner" aria-label="Working" />}
         </header>
         <main className="content">{screen}</main>
       </div>
       <PlayerCard />
+      {live && (
+        // Full screen, so the result in the record, inbox and standings stays hidden.
+        <div className="live-overlay" role="dialog" aria-modal aria-label="Live game">
+          <div className="live-bar">
+            <span><span className="live-dot" aria-hidden>●</span> <strong>Live</strong> <span className="muted small">{state.team.name}</span></span>
+            <button className="btn" onClick={() => setLive(null)}>Back to the office</button>
+          </div>
+          <iframe src={live} title="Live game" />
+        </div>
+      )}
       {(menu === "save" || menu === "load") && (
         <Modal title={menu === "save" ? "Save game" : "Load game"} onClose={() => setMenu(null)}>
           <SaveLoad mode={menu} onDone={() => setMenu(null)} />

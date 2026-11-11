@@ -234,8 +234,12 @@ def create_app(session: Optional[GameSession] = None) -> FastAPI:
         return run(game.box_score, game_id)
 
     @app.get("/api/replay/{game_id}", response_class=HTMLResponse)
-    def replay(game_id: int):
-        return HTMLResponse(run(game.replay_page, game_id))
+    def replay(game_id: int, live: bool = False):
+        return HTMLResponse(run(game.replay_page, game_id, live))
+
+    @app.post("/api/watch-next")
+    def watch_next():
+        return run(game.watch_next)
 
     @app.get("/api/history")
     def history():

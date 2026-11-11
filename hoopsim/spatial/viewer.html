@@ -438,7 +438,7 @@ window.GAME = /*GAME_DATA*/null;
       } else if (!holdUntil) {
         holdUntil = ts + 1100 / speed;         // let the result sink in
       } else if (ts >= holdUntil) {
-        if (poss < P.length - 1) goTo(poss + 1); else setPlaying(false);
+        if (poss < P.length - 1) goTo(poss + 1); else { setPlaying(false); revealBox(); }
       }
     }
     requestAnimationFrame(tick);
@@ -488,8 +488,15 @@ window.GAME = /*GAME_DATA*/null;
       "fatigue and fouls. Every position comes from the simulation, ten updates a second; the camera pulls " +
       "back while the teams run the floor.";
   }
+  // Live: no spoilers. The box score appears at the final buzzer.
+  let boxReady = false;
+  const revealBox = () => { if (boxReady) $("boxCard").hidden = false; };
+  if (G.live) {
+    $("about").innerHTML = "<strong>Live.</strong> Your game as it happened, possession by possession. " +
+      "The box score appears at the final buzzer (or jump ahead with the quarter buttons).";
+  }
   if (G.box) {
-    $("boxCard").hidden = false;
+    $("boxCard").hidden = !!G.live;
     const cols = [["MIN", (r) => Math.round(r.min)], ["PTS", (r) => r.pts], ["REB", (r) => r.orb + r.drb],
       ["AST", (r) => r.ast], ["STL", (r) => r.stl], ["BLK", (r) => r.blk], ["TO", (r) => r.tov],
       ["PF", (r) => r.pf], ["FG", (r) => r.fgm + "-" + r.fga], ["3P", (r) => r.tpm + "-" + r.tpa],
@@ -521,7 +528,7 @@ window.GAME = /*GAME_DATA*/null;
       }
     }
     table.appendChild(body);
-    if (body.children.length) $("boxScore").appendChild(table); else $("boxCard").hidden = true;
+    if (body.children.length) { $("boxScore").appendChild(table); boxReady = true; } else $("boxCard").hidden = true;
   }
   $("scrub").max = P.length - 1;
   $("scrub").addEventListener("input", (e) => goTo(+e.target.value));

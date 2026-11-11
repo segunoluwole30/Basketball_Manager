@@ -294,6 +294,32 @@ class WebMatchEngineTests(unittest.TestCase):
         if others:
             self.assertEqual(self.client.get(f"/api/replay/{others[0].id}").status_code, 404)
 
+    def test_watch_next_game_live(self):
+        choices = self.post("/api/new", {"seed": 7, "num_teams": 4, "match_engine": "spatial"})["teams"]
+        short_season(self.session, games=4)
+        me = choices[0]["id"]
+        self.post("/api/new/team", {"team_id": me})
+        lg = self.session.league
+        nxt = min((g for g in lg.games.values() if me in (g.home_team_id, g.away_team_id)),
+                  key=lambda g: (g.day, g.id))
+        r = self.post("/api/watch-next")
+        self.assertEqual(r["game_id"], nxt.id)
+        self.assertTrue(lg.games[nxt.id].played)
+        # Everything up to and including that day is played; nothing after it.
+        self.assertTrue(all(g.played == (g.day <= nxt.day) for g in lg.games.values()))
+        page = self.client.get(r["url"])
+        self.assertEqual(page.status_code, 200)
+        self.assertIn('"live":true', page.text)
+        self.assertIn("revealBox", page.text)
+        self.assertIn('"live":false', self.client.get(f"/api/replay/{nxt.id}").text)
+
+    def test_watch_next_needs_the_spatial_engine(self):
+        choices = self.post("/api/new", {"seed": 7, "num_teams": 4})["teams"]
+        self.post("/api/new/team", {"team_id": choices[0]["id"]})
+        r = self.client.post("/api/watch-next")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("spatial", r.json()["detail"])
+
     def test_unknown_engine_is_refused(self):
         r = self.client.post("/api/new", json={"seed": 7, "num_teams": 4, "match_engine": "arcade"})
         self.assertGreaterEqual(r.status_code, 400)

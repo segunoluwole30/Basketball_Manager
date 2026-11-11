@@ -393,3 +393,9 @@ ul.plain li { padding: 3px 0; }
   .slider-word { grid-column: 1 / -1; }
   .court { grid-template-columns: 1fr 1fr; grid-template-areas: "pg sg" "sf pf" "c c"; }
 }
+
+/* Watching a game live: full screen over the app (no spoilers behind it). */
+.live-overlay { position: fixed; inset: 0; z-index: 40; background: var(--bg); display: flex; flex-direction: column; }
+.live-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--panel); }
+.live-dot { color: #d13b3b; }
+.live-overlay iframe { flex: 1; width: 100%; border: 0; }

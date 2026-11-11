@@ -102,6 +102,16 @@ for the whole game, with quarter buttons and the box score. A replay is about
 (`engine.REPLAYS_KEPT`; save files are schema v4, and v1–v3 still load). Other
 teams' games, and statistical-engine games, aren't recorded. Replaying them on
 the spatial engine wouldn't reproduce the result in the standings.
+
+**Watching live.** On the spatial engine, the top bar has a **▶ Watch next game**
+button, in the regular season and in the playoffs. It plays on to your next
+game, including the rest of that day's games, then opens the game full screen
+over the app, so the record, inbox and standings behind it can't spoil the
+result. The viewer starts playing at once, the play-by-play shows only what has
+happened so far, and the box score appears at the final buzzer. **Back to the
+office** returns to the app. If an AI team makes you a trade offer on the way,
+it stops there, as the normal sim does. The game is simulated in full before you
+watch it, so you can't make decisions during it yet.
 - The full-game numbers (pace ~103, ~116 points, three share ~.36) are in the
   "Full games" section below.
 

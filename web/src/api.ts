@@ -102,6 +102,7 @@ export interface GameState {
   league?: string;
   season?: number;
   season_label?: string;
+  match_engine?: "statistical" | "spatial";
   date?: string;
   phase?: "regular_season" | "playoffs" | "offseason";
   stage?: "regular_season" | "season_over" | "playoffs" | "awards" | "offseason";
