@@ -47,8 +47,8 @@ body {
   padding-right: max(16px, env(safe-area-inset-right, 0px));
   padding-block: 16px;
 }
-.app { max-width: 1180px; margin: 0 auto; display: grid; gap: 16px;
-  grid-template-columns: minmax(0, 1fr) 340px; align-items: start; }
+.app { max-width: 1440px; margin: 0 auto; display: grid; gap: 16px;
+  grid-template-columns: minmax(0, 1fr) 400px; align-items: start; }
 @media (max-width: 900px) { .app { grid-template-columns: minmax(0, 1fr); } }
 
 /* Scoreboard */
@@ -92,7 +92,7 @@ table.box tr.dnp td { color: var(--muted); }
 .stage { display: grid; gap: 10px; min-width: 0; }
 .court-wrap { position: relative; background: var(--panel); border: 1px solid var(--rule);
   border-radius: var(--radius); padding: 10px; }
-canvas { display: block; width: 100%; height: auto; border-radius: 6px; }
+canvas { display: block; width: 100%; height: auto; border-radius: 6px; margin: 0 auto; }
 .call { min-height: 2.9em; display: flex; align-items: center; gap: 10px; padding: 8px 14px;
   background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius);
   font-size: 15px; font-weight: 500; }
@@ -119,12 +119,23 @@ button.primary { background: var(--ink); color: var(--panel); border-color: var(
   font-variant-numeric: tabular-nums; white-space: nowrap; }
 .toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
 
-/* Side panel */
-aside { display: grid; gap: 16px; min-width: 0; }
+/* Side panel: one card with tabs, as tall as the screen, so nothing needs page scrolling */
+aside { min-width: 0; display: flex; flex-direction: column; background: var(--panel);
+  border: 1px solid var(--rule); border-radius: var(--radius); overflow: hidden;
+  position: sticky; top: 16px; height: calc(100vh - 32px); }
+@media (max-width: 900px) { aside { position: static; height: 70vh; } }
+.tabs { display: flex; gap: 2px; padding: 6px 6px 0; border-bottom: 1px solid var(--rule); flex: none; overflow-x: auto; }
+.tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 6px 6px 0 0; background: none;
+  padding: 9px 11px; color: var(--muted); white-space: nowrap; }
+.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.tabs button[hidden] { display: none; }
+.pane { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-top: 8px; }
+.pane[hidden] { display: none; }
+.pane .note { padding: 12px 14px; }
 .card { background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius); min-width: 0; }
 .card h2 { margin: 0; padding: 12px 14px 8px; font: 600 13px/1 var(--font-body);
   letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
-.log { list-style: none; margin: 0; padding: 0 6px 8px; max-height: 420px; overflow-y: auto; }
+.log { list-style: none; margin: 0; padding: 0 6px 8px; }
 .log li { display: grid; grid-template-columns: 4.2em 1fr; gap: 8px; padding: 6px 8px; border-radius: 6px; }
 .log li .when { font-family: var(--font-display); color: var(--muted); font-variant-numeric: tabular-nums; }
 .log li.poss { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em;
@@ -179,6 +190,8 @@ aside { display: grid; gap: 16px; min-width: 0; }
 .coach .stag button { padding: 2px 6px; font-size: 12px; border: 0; background: transparent; }
 .coach .stag.d { background: color-mix(in srgb, var(--home) 16%, transparent); }
 .waiting { opacity: 0.6; }
+.stage { position: sticky; top: 16px; }
+@media (max-width: 900px) { .stage { position: static; } }
 .hl { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 </style>
 
@@ -193,7 +206,7 @@ aside { display: grid; gap: 16px; min-width: 0; }
         <div class="name"><div class="abbr" id="homeAbbr">HME</div><div class="full" id="homeName"></div></div>
         <span class="chip"></span></div>
     </div>
-    <div class="court-wrap"><canvas id="court" width="1000" height="980" aria-label="Half court with players"></canvas></div>
+    <div class="court-wrap"><canvas id="court" width="1000" height="560" aria-label="Court with players"></canvas></div>
     <div class="call" aria-live="polite"><span class="t" id="callTime">0.0s</span><span id="callText">Loading…</span></div>
     <div class="controls">
       <button id="prev" type="button" aria-label="Previous possession">Prev</button>
@@ -220,13 +233,20 @@ aside { display: grid; gap: 16px; min-width: 0; }
     </div>
   </div>
   <aside>
-    <section class="card" id="coachCard" hidden><h2>Coach</h2><div class="coach" id="coach"></div></section>
-    <section class="card"><h2>Play-by-play</h2><ol class="log" id="log"></ol></section>
-    <section class="card"><h2>On the floor</h2><div class="lineups" id="lineups"></div></section>
-    <section class="card" id="boxCard" hidden><h2>Box score</h2><div class="tablewrap" id="boxScore"></div></section>
-    <section class="card note" id="about"><strong>Spatial prototype.</strong> Half-court possessions only:
+    <div class="tabs" role="tablist" aria-label="Match panels">
+      <button type="button" role="tab" data-pane="coachCard" hidden>Coach</button>
+      <button type="button" role="tab" data-pane="pbpPane">Play-by-play</button>
+      <button type="button" role="tab" data-pane="boxCard" hidden>Box score</button>
+      <button type="button" role="tab" data-pane="floorPane">On the floor</button>
+      <button type="button" role="tab" data-pane="aboutPane">About</button>
+    </div>
+    <section class="pane" role="tabpanel" id="coachCard" hidden><div class="coach" id="coach"></div></section>
+    <section class="pane" role="tabpanel" id="pbpPane"><ol class="log" id="log"></ol></section>
+    <section class="pane" role="tabpanel" id="boxCard" hidden><div class="tablewrap" id="boxScore"></div></section>
+    <section class="pane" role="tabpanel" id="floorPane" hidden><div class="lineups" id="lineups"></div></section>
+    <section class="pane" role="tabpanel" id="aboutPane" hidden><div class="note" id="about"><strong>Spatial prototype.</strong> Half-court possessions only:
       every position comes from the simulation, ten updates a second. Shots, passes, help defence
-      and rebounds are decided by where players are.</section>
+      and rebounds are decided by where players are.</div></section>
   </aside>
 </div>
 
@@ -247,43 +267,39 @@ window.GAME = /*GAME_DATA*/null;
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   // ---- court geometry (feet), basket at the top of the canvas. Full games run the
-  // open court too (y up to 94, the far baseline): the camera pulls back to show it.
+  // open court too (y up to 94, the far baseline).
   const W = 50, L = 47, FULL = 94, PAD = 2;
   const FULLGAME = !!G.fullgame;
-  let scale = 1, ox = 0, oy = 0, viewL = L;
+  // The whole court, lying sideways as on TV. Each team attacks one basket (they swap at
+  // halftime), so possessions flow into each other instead of the picture flipping round.
+  // Frames are in the attacking team's coordinates (x across, 0 at the middle; y from the
+  // basket it attacks); toCourt() turns them into "left basket" court feet.
+  let scale = 1;
+  const ASPECT = (FULL + PAD * 2) / (W + PAD * 2);
   function fit() {
-    const cssW = canvas.clientWidth || 600;
+    const wrap = canvas.parentElement;
     const ratio = Math.min(window.devicePixelRatio || 1, 2);
-    const cssH = cssW * (L + PAD * 2) / (W + PAD * 2);
+    let cssW = (wrap.clientWidth || 600) - 20;
+    if (window.innerWidth > 900) {        // leave room for the scoreboard and controls on screen
+      const stage = wrap.parentElement;
+      const others = stage.offsetHeight - wrap.offsetHeight;
+      const room = window.innerHeight - 32 - others - 20;
+      cssW = Math.max(320, Math.min(cssW, room * ASPECT));
+    }
+    const cssH = cssW / ASPECT;
     canvas.width = Math.round(cssW * ratio);
     canvas.height = Math.round(cssH * ratio);
+    canvas.style.width = cssW + "px";
     canvas.style.height = cssH + "px";
-    camera(viewL);
+    scale = canvas.width / (FULL + PAD * 2);
   }
-  function camera(len) {
-    viewL = len;
-    scale = Math.min(canvas.width / (W + PAD * 2), canvas.height / (len + PAD * 2));
-    ox = canvas.width / 2;
-    oy = PAD * scale;
+  function attacksLeft(p) {               // home goes left in the first half, right after it
+    return (p.offense === "home") !== ((p.period || 1) >= 3);
   }
-  // How much floor each frame needs (deepest player or ball), smoothed over about two seconds.
-  function viewTrack(p) {
-    if (p._view) return p._view;
-    const deep = p.frames.map((f) => {
-      let m = f[3];
-      for (let n = 0; n < 10; n++) m = Math.max(m, f[7 + n * 2]);
-      return Math.min(FULL + 3, Math.max(L, m / 10 + 5));
-    });
-    const out = deep.map((_, i) => {
-      let s = 0, c = 0;
-      for (let j = Math.max(0, i - 8); j <= Math.min(deep.length - 1, i + 12); j++) { s += deep[j]; c++; }
-      return s / c;
-    });
-    p._view = out;
-    return out;
-  }
-  const X = (x) => ox + x * scale;
-  const Y = (y) => oy + y * scale;
+  function toCourt(p, x, y) { return attacksLeft(p) ? [x, y] : [-x, FULL - y]; }
+  // court feet (x across from the middle, y from the left baseline) -> canvas pixels
+  const SX = (x, y) => (PAD + y) * scale;
+  const SY = (x, y) => (PAD + W / 2 + x) * scale;
   let colors = {};
   function readColors() {
     const cs = getComputedStyle(document.documentElement);
@@ -297,7 +313,7 @@ window.GAME = /*GAME_DATA*/null;
     c.setTransform(1, 0, 0, 1, 0, 0);
     c.fillStyle = colors.court;
     c.fillRect(0, 0, canvas.width, canvas.height);
-    c.setTransform(scale, 0, 0, scale, ox, oy);           // draw in feet from here
+    c.setTransform(0, scale, scale, 0, PAD * scale, (PAD + W / 2) * scale);   // draw in court feet from here
     // floorboards: 2.25-inch maple strips run baseline to baseline
     c.strokeStyle = colors["court-grain"];
     c.lineWidth = 0.04;
@@ -342,6 +358,8 @@ window.GAME = /*GAME_DATA*/null;
 
   // ---- state
   let poss = 0, t = 0, playing = !reduceMotion, speed = 1, lastTs = null, holdUntil = 0;
+  // Between possessions: {kind: "glide" | "fade", progress 0-1, ms, from, to}
+  let trans = null;
   // Frames list the five home players on the floor first (indices 0-4), then the away five.
   // Full games say who they are per possession (indices into the rosters), as subs come in.
   const roster = { home: G.home.players.map((p) => ({ ...p, side: "home" })),
@@ -371,50 +389,79 @@ window.GAME = /*GAME_DATA*/null;
   // Only touch the DOM when text changes (keeps screen readers from re-announcing every frame).
   const setText = (id, value) => { const el = $(id); const v = String(value); if (el.textContent !== v) el.textContent = v; };
 
+  // Where everyone is at frame position (i, k) of possession p, in court feet:
+  // { key: [x, y] } by side and roster slot, plus the ball [x, y, z].
+  function positions(p, i, a, b, k) {
+    const lu = lineupAt(p, i);
+    const out = {};
+    for (let n = 0; n < 10; n++) {
+      const key = (n < 5 ? "h" : "a") + lu[n];
+      out[key] = toCourt(p, lerp(a[6 + n * 2], b[6 + n * 2], k) / 10, lerp(a[7 + n * 2], b[7 + n * 2], k) / 10);
+    }
+    const ball = toCourt(p, lerp(a[2], b[2], k) / 10, lerp(a[3], b[3], k) / 10);
+    return { out, ball: [ball[0], ball[1], lerp(a[4], b[4], k) / 10] };
+  }
+  const ease = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+
   function drawFrame() {
     const p = P[poss];
     const { a, b, k, i } = frameAt(p, t);
-    const track = viewTrack(p);
-    camera(lerp(track[i], track[Math.min(track.length - 1, i + 1)], k));
+    const now = positions(p, i, a, b, k);
+    // Gliding in from the previous possession: everyone slides from where they were.
+    let g = 0;
+    if (trans && trans.kind === "glide") g = 1 - ease(trans.progress);
     drawCourt();
     const order = onFloor(p, i);
+    const lu = lineupAt(p, i);
     const showNames = $("names").checked;
     const r = Math.max(1.15 * scale, 9.5 * Math.min(window.devicePixelRatio || 1, 2));   // stay tappable-size on phones
     // players
     for (let n = 0; n < 10; n++) {
-      const x = lerp(a[6 + n * 2], b[6 + n * 2], k) / 10;
-      const y = lerp(a[7 + n * 2], b[7 + n * 2], k) / 10;
+      const key = (n < 5 ? "h" : "a") + lu[n];
+      let [x, y] = now.out[key];
+      if (g > 0 && trans.from.out[key]) {
+        const [fx, fy] = trans.from.out[key];
+        x = lerp(x, fx, g); y = lerp(y, fy, g);
+      }
+      const px = SX(x, y), py = SY(x, y);
       const pl = order[n];
       const offense = pl.side === p.offense;
       ctx.beginPath();
-      ctx.arc(X(x), Y(y), r, 0, 2 * Math.PI);
+      ctx.arc(px, py, r, 0, 2 * Math.PI);
       ctx.fillStyle = colors[pl.side];
       ctx.fill();
       ctx.lineWidth = Math.max(1.5, scale * 0.12);
       ctx.strokeStyle = offense ? colors["court-line"] : colors.ink;
       ctx.stroke();
       if (a[5] === n) {                          // ball handler halo
-        ctx.beginPath(); ctx.arc(X(x), Y(y), r * 1.55, 0, 2 * Math.PI);
+        ctx.beginPath(); ctx.arc(px, py, r * 1.55, 0, 2 * Math.PI);
         ctx.strokeStyle = colors.accent; ctx.lineWidth = Math.max(2, scale * 0.14); ctx.stroke();
       }
       ctx.fillStyle = "#ffffff";
       ctx.font = `700 ${Math.round(r * 1.05)}px ${colors.font}`;
       ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText(String(pl.num ?? ""), X(x), Y(y) + r * 0.05);
+      ctx.fillText(String(pl.num ?? ""), px, py + r * 0.05);
       if (showNames) {
         ctx.font = `600 ${Math.round(r * 0.8)}px Inter, system-ui, sans-serif`;
         ctx.fillStyle = colors.ink;
-        ctx.fillText(pl.name.split(" ").slice(-1)[0], X(x), Y(y) + r * 2.1);
+        ctx.fillText(pl.name.split(" ").slice(-1)[0], px, py + r * 2.1);
       }
     }
-    // ball: shadow on the floor, ball lifted by its height
-    const bx = lerp(a[2], b[2], k) / 10, by = lerp(a[3], b[3], k) / 10, bz = lerp(a[4], b[4], k) / 10;
-    const lift = Math.max(0, bz - 3) * 0.35;
-    ctx.beginPath(); ctx.ellipse(X(bx), Y(by), 0.55 * scale, 0.4 * scale, 0, 0, 2 * Math.PI);
+    // ball: shadow on the floor, ball lifted (up the screen) by its height
+    let [bx, by, bz] = now.ball;
+    if (g > 0) { bx = lerp(bx, trans.from.ball[0], g); by = lerp(by, trans.from.ball[1], g); bz = lerp(bz, trans.from.ball[2], g); }
+    const lift = Math.max(0, bz - 3) * 0.35 * scale;
+    ctx.beginPath(); ctx.ellipse(SX(bx, by), SY(bx, by), 0.55 * scale, 0.4 * scale, 0, 0, 2 * Math.PI);
     ctx.fillStyle = "rgba(0,0,0,0.25)"; ctx.fill();
-    ctx.beginPath(); ctx.arc(X(bx), Y(by - lift), (0.55 + bz * 0.03) * scale, 0, 2 * Math.PI);
+    ctx.beginPath(); ctx.arc(SX(bx, by), SY(bx, by) - lift, (0.55 + bz * 0.03) * scale, 0, 2 * Math.PI);
     ctx.fillStyle = colors.accent; ctx.fill();
     ctx.lineWidth = Math.max(1, scale * 0.08); ctx.strokeStyle = "rgba(0,0,0,0.55)"; ctx.stroke();
+    // a cut (highlights skipping ahead, halftime): dip through the court colour
+    if (trans && trans.kind === "fade") {
+      const v = trans.progress < 0.5 ? trans.progress * 2 : (1 - trans.progress) * 2;
+      ctx.globalAlpha = Math.min(1, v); ctx.fillStyle = colors.court;
+      ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.globalAlpha = 1;
+    }
     // scoreboard
     setText("shotClock", Math.ceil(lerp(a[1], b[1], k)));
     if (FULLGAME && a.length > 26) setText("gameClock", periodName(p.period) + " " + clockText(lerp(a[26], b[26], k)));
@@ -462,7 +509,8 @@ window.GAME = /*GAME_DATA*/null;
         log.appendChild(li);
       });
     }
-    log.scrollTop = log.scrollHeight;
+    const pane = $("pbpPane");
+    if (!pane.hidden) pane.scrollTop = pane.scrollHeight;
   }
 
   // ---- highlight modes (Key / Extended / Full), as in Football Manager
@@ -491,6 +539,31 @@ window.GAME = /*GAME_DATA*/null;
     const s0 = P[a].end_score, s1 = b < P.length ? P[b].start_score : P[P.length - 1].end_score;
     return `⏩ ${b - a - 1} possession${b - a - 1 > 1 ? "s" : ""}: ${G.away.abbr} +${s1[1] - s0[1]}, ${G.home.abbr} +${s1[0] - s0[0]}`;
   }
+  // Played out (not clicked): move on smoothly. The very next possession glides in from
+  // where everyone stands; a skip or the halftime switch of ends fades through.
+  function playOn() {
+    const n = nextShown(poss);
+    if (n < 0 || reduceMotion) return advance();
+    const p = P[poss], last = p.frames[p.frames.length - 1];
+    const from = positions(p, p.frames.length - 1, last, last, 0);
+    const q = P[n], first = q.frames[0], to = positions(q, 0, first, first, 0);
+    let moved = 0, cnt = 0;
+    for (const key in to.out) if (from.out[key]) {
+      moved += Math.hypot(to.out[key][0] - from.out[key][0], to.out[key][1] - from.out[key][1]); cnt++;
+    }
+    const avg = cnt ? moved / cnt : 99;
+    if (n === poss + 1 && avg < 0.5) return advance();                     // already in place
+    if (n === poss + 1 && avg < 30) {
+      const s = skipSummary(poss, n);
+      goTo(n);
+      skipText = s;
+      trans = { kind: "glide", progress: 0, ms: Math.min(900, 300 + avg * 25), from };
+      drawFrame();
+      return true;
+    }
+    trans = { kind: "fade", progress: 0, ms: 520, to: n, from: poss };
+    return true;
+  }
   function advance() {                 // on to the next possession worth showing
     const n = nextShown(poss);
     if (n < 0) {
@@ -516,7 +589,8 @@ window.GAME = /*GAME_DATA*/null;
 
   // ---- playback
   function duration(p) { return (p.frames.length - 1) * dt; }
-  function goTo(n) {
+  function goTo(n, keepTrans) {
+    if (!keepTrans) trans = null;
     poss = Math.max(0, Math.min(P.length - 1, n)); t = 0; holdUntil = 0; logKey = ""; skipText = "";
     $("scrub").value = poss;
     $("possLabel").textContent = `${poss + 1} / ${P.length}`;
@@ -528,15 +602,25 @@ window.GAME = /*GAME_DATA*/null;
     if (lastTs === null) lastTs = ts;
     const elapsed = Math.min(0.1, (ts - lastTs) / 1000);
     lastTs = ts;
-    if (playing) {
+    if (trans) {
+      trans.progress = Math.min(1, trans.progress + elapsed * 1000 * Math.min(speed, 2) / trans.ms);
+      if (trans.kind === "fade" && trans.to !== undefined && trans.progress >= 0.5) {
+        const s = skipSummary(trans.from, trans.to);
+        const tr = trans;
+        goTo(tr.to, true); skipText = s; tr.to = undefined;
+      }
+      if (trans.progress >= 1) trans = null;
+      drawFrame();
+    } else if (playing) {
       const p = P[poss];
       if (t < duration(p)) {
         t = Math.min(duration(p), t + elapsed * speed);
         drawFrame();
       } else if (!holdUntil) {
-        holdUntil = ts + 1100 / speed;         // let the result sink in
+        const scored = p.end_score[0] !== p.start_score[0] || p.end_score[1] !== p.start_score[1];
+        holdUntil = ts + (scored ? 800 : 350) / speed;   // let the result sink in
       } else if (ts >= holdUntil) {
-        if (advance()) { /* next highlight */ }
+        if (playOn()) { /* next possession or highlight */ }
         else if (LIVE && !liveDone) { liveFetch(); }              // the next possession is on its way
         else { setPlaying(false); revealBox(); if (LIVE) liveFinal(); }
       }
@@ -549,6 +633,25 @@ window.GAME = /*GAME_DATA*/null;
     $("play").textContent = on ? "Pause" : "Play";
     if (on && poss === P.length - 1 && t >= duration(P[poss])) goTo(0);
   }
+
+  // ---- side panel tabs (a pane is offered once its tab button is shown)
+  const tabButtons = [...document.querySelectorAll(".tabs button")];
+  function showTab(id) {
+    for (const btn of tabButtons) {
+      const on = btn.dataset.pane === id;
+      btn.setAttribute("aria-selected", String(on));
+      $(btn.dataset.pane).hidden = !on;
+    }
+    try { localStorage.setItem("hoopsim-tab", id); } catch (e) {}
+    if (id === "pbpPane") $("pbpPane").scrollTop = $("pbpPane").scrollHeight;
+  }
+  function offerTab(id, on) {
+    const btn = tabButtons.find((b) => b.dataset.pane === id);
+    btn.hidden = !on;
+    if (!on && btn.getAttribute("aria-selected") === "true") showTab("pbpPane");
+  }
+  tabButtons.forEach((btn) => btn.addEventListener("click", () => showTab(btn.dataset.pane)));
+  showTab("pbpPane");
 
   // ---- UI
   $("homeAbbr").textContent = G.home.abbr; $("homeName").textContent = G.home.name;
@@ -593,12 +696,12 @@ window.GAME = /*GAME_DATA*/null;
   if (FULLGAME) {
     buildPeriods();
     $("about").innerHTML = "<strong>Full game.</strong> Four quarters with transition, substitutions, " +
-      "fatigue and fouls. Every position comes from the simulation, ten updates a second; the camera pulls " +
-      "back while the teams run the floor.";
+      "fatigue and fouls. Every position comes from the simulation, ten updates a second. The home team " +
+      "attacks the left basket in the first half and the right in the second.";
   }
   // Live: no spoilers. The box score appears at the final buzzer.
   let boxReady = false;
-  const revealBox = () => { if (boxReady) $("boxCard").hidden = false; };
+  const revealBox = () => { if (boxReady) offerTab("boxCard", true); };
   if (G.live) {
     $("about").innerHTML = "<strong>Live.</strong> Your game as it happened, possession by possession. " +
       "The box score appears at the final buzzer (or jump ahead with the quarter buttons).";
@@ -636,10 +739,10 @@ window.GAME = /*GAME_DATA*/null;
       }
     }
     table.appendChild(body);
-    if (body.children.length) { $("boxScore").appendChild(table); boxReady = true; } else $("boxCard").hidden = true;
+    if (body.children.length) { $("boxScore").appendChild(table); boxReady = true; } else offerTab("boxCard", false);
   }
   if (G.box) {
-    $("boxCard").hidden = !!G.live;
+    offerTab("boxCard", !G.live);
     buildBox(G.box, G.final);
   }
   $("scrub").max = Math.max(0, P.length - 1);
@@ -726,7 +829,7 @@ window.GAME = /*GAME_DATA*/null;
           orb: 0, drb: p.reb, ast: p.ast, stl: 0, blk: 0, tov: p.tov, pf: p.pf, fgm: p.fgm, fga: p.fga,
           tpm: p.tpm, tpa: p.tpa, ftm: p.ftm, fta: p.fta, pm: p.pm }));
         buildBox({ home: rows("home"), away: rows("away") }, [st.home.score, st.away.score]);
-        $("boxCard").hidden = false;
+        offerTab("boxCard", true);
       }
       coachMsg("Final. The result is in: head back to the office.");
       try { parent.postMessage({ hoopsim: "live-final" }, "*"); } catch (e) {}
@@ -967,7 +1070,7 @@ window.GAME = /*GAME_DATA*/null;
 
   async function start() {
     if (LIVE) {
-      $("coachCard").hidden = false;
+      offerTab("coachCard", true); showTab("coachCard");
       $("about").innerHTML = "<strong>Live.</strong> You're on the bench. Timeouts and substitutions happen at the " +
         "next dead ball (a timeout also when you have the ball), with the play you pick run out of it; " +
         "shouts tilt your players' choices until you cancel them; tactics hold for this game only.";

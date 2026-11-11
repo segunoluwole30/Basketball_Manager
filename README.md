@@ -109,7 +109,9 @@ Differences on the spatial engine, for now (`spatial/season_game.py`):
 **Watching your games.** On the spatial or hybrid engine, your team's games record their
 movement. In the browser, recorded games show a **watch** link next to **box**
 (on Home → Recent results, and on League → Schedule). It opens the match viewer
-for the whole game, with quarter buttons and the box score. A replay is about
+for the whole game, with quarter buttons. The page fits the screen: the court on the left,
+and tabs on the right for the play-by-play, box score, who's on the floor and (live) the
+coach panel. A replay is about
 0.8 MB compressed, so only your 10 most recent are kept in the save
 (`engine.REPLAYS_KEPT`; save files are schema v4, and v1–v3 still load). Other
 teams' games, and statistical-engine games, aren't recorded. Replaying them on
@@ -314,8 +316,9 @@ games could later be stored like season games. It isn't wired into the season lo
   through the inbound after a made basket, except late in periods. Jump balls start
   the game and each overtime, and possessions alternate between quarters.
 - **Transition** (`transition.py`). After steals, defensive rebounds and some made
-  baskets, the players run the floor at ten updates a second (the viewer's camera
-  pulls back to show it). A team pushes depending on how it got the ball, its pace
+  baskets, the players run the floor at ten updates a second (the viewer shows the
+  whole court sideways, as on TV: each team attacks one basket and they switch at halftime,
+  so possessions flow into each other; a quarter break or a highlights skip fades through). A team pushes depending on how it got the ball, its pace
   and whether anyone is already behind the defence. The defence turns and runs
   back after a delay (longer for the team that just lost the ball): the deepest
   defender takes the rim, the next stops the ball, and the rest pick up the most
