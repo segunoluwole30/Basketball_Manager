@@ -7,7 +7,7 @@ from hoopsim import generate_league
 from hoopsim.spatial import court as C
 from hoopsim.spatial.fullgame import FullGame
 
-SEEDS = (10, 11, 12)
+SEEDS = tuple(range(30, 38))      # 8 games: 3 were too few to see a shout through the noise
 
 
 def coached_games(shouts=None, seeds=SEEDS, user="home"):

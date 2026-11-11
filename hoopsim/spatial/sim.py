@@ -317,6 +317,8 @@ class HalfCourtGame:
 
         mirror = rng.random() < 0.5
         focus = self.teams[side].tactics.offensive_focus.value
+        if "post" in self.shouts.get(side, {}):
+            focus = "inside"                 # "feed the post": get a big on the block first
         five_out_shooting = {"perimeter": 10, "inside": 15}.get(focus, 12)
         five_out = self.offense[4].a("three_point") >= five_out_shooting
         spots = list(SPOTS_4OUT)

@@ -158,12 +158,16 @@ your decisions change what happens next. The **Coach** panel has:
   per group (rim/threes/post, slow/push, pressure/paint); a new one replaces the
   old. A shout lasts until you cancel it, or for your next 3, 5 or 10 possessions at
   that end (*Foul now* counts the fouls). Active shouts show as tags with a ×.
-  Over three games each, against the same games without it: *Attack rim* took the
-  rim share of shots from 45% to 54%, *Threes* the three share from 15% to 20%,
+  *Feed post* also lines the team up with a post-capable big on the block (as the
+  inside-focus tactic does). Otherwise, with stretch bigs spacing five-out, there's
+  often nobody to feed. Over 16 games each, against the same games without it
+  (after the three-point changes below): *Attack rim* took the rim share of shots
+  from 45% to 50% (threes 32% → 26%), *Threes* the three share from 32% to 38%,
+  *Feed post* post-ups from 82 to 221, and *Pressure* strips from 0.028 to 0.054
+  per possession (cushion 5.6 → 4.9 ft). Before those changes, over three games:
   *Slow down* raised seconds per possession from 14.2 to 16.1 and *Push pace*
-  lowered it to 12.0, *Feed post* raised post-ups by about 30%, *Pressure* cut the
-  handler's cushion by about 0.8 ft and raised strips by about 45%, and *Protect
-  paint* raised the opponent's three share from 45% to 56%.
+  lowered it to 12.0, and *Protect paint* raised the opponent's three share from
+  45% to 56%. The tests use 8 games per shout, because 3 were too noisy.
 - **End of game.** Overrule the bench coach's late-game calls for your team: hold
   for the last shot, go two-for-one, and foul to stop the clock (when trailing in
   the last 45 seconds), each *Bench coach* (the default), *On* or *Off*.
