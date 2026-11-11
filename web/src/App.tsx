@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "./api";
 import { PlayerCard } from "./components/PlayerCard";
 import { Loading, Modal } from "./components/ui";
@@ -37,9 +37,20 @@ function SimControls({ go, onLive }: { go: (r: string) => void; onLive: (url: st
       r.game_id ? undefined : r.stopped_for === "offers" ? "A trade offer arrived first: check your inbox." : "No game to watch.");
     if (r?.game_id) onLive(r.url);
   };
-  const live = state.match_engine === "spatial" && (
-    <button className="btn" disabled={busy} onClick={watch} title="Play on to your next game and watch it live">▶ Watch next game</button>
-  );
+  // ...or coach it: timeouts, substitutions and tactics while it's played.
+  const coach = async () => {
+    const r: any = await act(() => api.post("/api/live/start"), (r: any) =>
+      r.started ? undefined : r.stopped_for === "offers" ? "A trade offer arrived first: check your inbox." : "No game to coach.");
+    if (r?.started) onLive(r.url);
+  };
+  const live = state.match_engine === "spatial" && (state.live_game ? (
+    <button className="btn btn-primary" onClick={() => onLive("/api/live/page")}>Resume live game</button>
+  ) : (
+    <>
+      <button className="btn btn-primary" disabled={busy} onClick={coach} title="Coach your next game live: timeouts, subs, tactics">🏀 Play live</button>
+      <button className="btn" disabled={busy} onClick={watch} title="Play on to your next game and watch it">▶ Watch</button>
+    </>
+  ));
   const sim = (mode: string) =>
     act(() => api.post("/api/sim", { mode }), (r: any) =>
       r.stopped_for === "offers" ? "A trade offer arrived: check your inbox." : r.games.length ? `Played ${r.days} day${r.days > 1 ? "s" : ""}` : undefined);
@@ -94,6 +105,23 @@ export default function App() {
   const [menu, setMenu] = useState<null | "save" | "load" | "new">(null);
   const [navOpen, setNavOpen] = useState(false);
   const [live, setLive] = useState<string | null>(null);
+  const { act } = useGame();
+  // The live viewer says when the final buzzer has gone (the result is recorded by then).
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => { if (e.data?.hoopsim === "live-final") act(() => api.get("/api/state")); };
+    window.addEventListener("message", onMsg);
+    return () => window.removeEventListener("message", onMsg);
+  }, [act]);
+  const closeLive = async () => {
+    const s: any = await api.get("/api/state");
+    if (s.live_game) {
+      if (!window.confirm("Leave the game? Your bench coach will finish it.")) return;
+      await act(() => api.post("/api/live/finish"), "Your bench coach finished the game");
+    } else {
+      await act(() => api.get("/api/state"));
+    }
+    setLive(null);
+  };
   const [page, query] = route.split("?");
   const params = new URLSearchParams(query ?? "");
 
@@ -152,7 +180,7 @@ export default function App() {
         <div className="live-overlay" role="dialog" aria-modal aria-label="Live game">
           <div className="live-bar">
             <span><span className="live-dot" aria-hidden>●</span> <strong>Live</strong> <span className="muted small">{state.team.name}</span></span>
-            <button className="btn" onClick={() => setLive(null)}>Back to the office</button>
+            <button className="btn" onClick={closeLive}>Back to the office</button>
           </div>
           <iframe src={live} title="Live game" />
         </div>

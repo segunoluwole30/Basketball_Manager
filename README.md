@@ -110,8 +110,35 @@ over the app, so the record, inbox and standings behind it can't spoil the
 result. The viewer starts playing at once, the play-by-play shows only what has
 happened so far, and the box score appears at the final buzzer. **Back to the
 office** returns to the app. If an AI team makes you a trade offer on the way,
-it stops there, as the normal sim does. The game is simulated in full before you
-watch it, so you can't make decisions during it yet.
+it stops there, as the normal sim does. A watched game is simulated in full
+before you see it; to make decisions, coach it live instead.
+
+**Coaching live** (`spatial/live.py`). **🏀 Play live** plays on to your next game
+(regular season or playoffs) and puts you on the bench. The game is simulated one
+possession at a time, only a possession or two ahead of what you're watching, so
+your decisions change what happens next. The **Coach** panel has:
+
+- **Call timeout.** Taken at the next dead ball, or as soon as your team has the
+  ball. It uses one of your timeouts, gives everyone a breather and stops the
+  other team's run.
+- **Substitutions.** Click a player on the floor, then one on the bench. He checks
+  in at the next dead ball. The panel shows each player's energy, fouls and
+  minutes. Points stay out of the panel until the final buzzer, because the
+  simulation runs a possession or two ahead.
+- **Auto subs.** On, your bench coach keeps running the rotation. Off, only
+  forced changes (foul-outs) are made for you.
+- **Match tactics.** Pace, three-point rate, crashing the glass, offensive focus and
+  defensive scheme, for this game only. Your saved tactics come back afterwards.
+- **Sim to end.** Your bench coach finishes the game.
+
+Timeouts and substitutions from both benches show in the play-by-play. While a
+game is live, the rest of the app waits: no sims, deals or saves. **Back to the
+office** in the middle of a game asks first, then your bench coach finishes it.
+The result, injuries, news and replay are recorded like any other game, then the
+rest of that day is played. Under the hood, `FullGame.iter_game()` pauses after
+every possession (`run()` plays straight through, with identical results), and
+`attach_manager()` queues the coach's commands for the next break. The API routes
+are `/api/live/start`, `/next`, `/command`, `/finish` and `/page`.
 - The full-game numbers (pace ~103, ~116 points, three share ~.36) are in the
   "Full games" section below.
 

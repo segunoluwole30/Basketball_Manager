@@ -142,6 +142,33 @@ aside { display: grid; gap: 16px; min-width: 0; }
 .note { padding: 12px 14px; color: var(--muted); font-size: 13px; }
 .note strong { color: var(--ink); font-weight: 600; }
 @media (prefers-reduced-motion: reduce) { .log { scroll-behavior: auto; } }
+
+/* Coach panel (live matches) */
+.coach { padding: 0 14px 12px; display: grid; gap: 10px; }
+.coach .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.coach .facts { font-size: 13px; color: var(--muted); }
+.coach .facts b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.coach .msg { font-size: 13px; min-height: 1.2em; color: var(--ink); }
+.coach .msg.err { color: var(--away); }
+.coach table { border-collapse: collapse; width: 100%; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.coach th, .coach td { padding: 4px 5px; text-align: right; white-space: nowrap; }
+.coach th:nth-child(2), .coach td:nth-child(2) { text-align: left; width: 100%; }
+.coach th { color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--rule); }
+.coach tr.plr { cursor: pointer; }
+.coach tr.plr:hover td { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.coach tr.court td:nth-child(2) { font-weight: 600; }
+.coach tr.sel td { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.coach tr.out td { color: var(--muted); text-decoration: line-through; }
+.coach tr.split td { border-top: 1px dashed var(--rule); }
+.coach .bar { display: inline-block; width: 42px; height: 6px; border-radius: 3px; background: var(--rule); vertical-align: middle; overflow: hidden; }
+.coach .bar i { display: block; height: 100%; background: var(--home); }
+.coach .bar.low i { background: var(--away); }
+.coach .pend { font-size: 12.5px; }
+.coach label.t { display: grid; grid-template-columns: 6.5em 1fr 2em; align-items: center; gap: 8px; font-size: 13px; }
+.coach label.t output { text-align: right; font-variant-numeric: tabular-nums; }
+.coach select { font: inherit; font-size: 13px; padding: 6px; border-radius: 6px; border: 1px solid var(--rule); background: var(--panel); color: var(--ink); }
+.coach details summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+.waiting { opacity: 0.6; }
 </style>
 
 <div class="app">
@@ -174,6 +201,7 @@ aside { display: grid; gap: 16px; min-width: 0; }
     </div>
   </div>
   <aside>
+    <section class="card" id="coachCard" hidden><h2>Coach</h2><div class="coach" id="coach"></div></section>
     <section class="card"><h2>Play-by-play</h2><ol class="log" id="log"></ol></section>
     <section class="card"><h2>On the floor</h2><div class="lineups" id="lineups"></div></section>
     <section class="card" id="boxCard" hidden><h2>Box score</h2><div class="tablewrap" id="boxScore"></div></section>
@@ -190,7 +218,8 @@ window.GAME = /*GAME_DATA*/null;
   const canvas = document.getElementById("court");
   const ctx = canvas.getContext("2d");
   const $ = (id) => document.getElementById(id);
-  if (!G || !G.possessions || !G.possessions.length) {
+  const LIVE = G && G.live_client ? G.live_client : null;
+  if (!G || (!LIVE && (!G.possessions || !G.possessions.length))) {
     $("callText").textContent = "No game data in this file. Create one with: python -m hoopsim watch";
     return;
   }
@@ -438,8 +467,11 @@ window.GAME = /*GAME_DATA*/null;
       } else if (!holdUntil) {
         holdUntil = ts + 1100 / speed;         // let the result sink in
       } else if (ts >= holdUntil) {
-        if (poss < P.length - 1) goTo(poss + 1); else { setPlaying(false); revealBox(); }
+        if (poss < P.length - 1) goTo(poss + 1);
+        else if (LIVE && !liveDone) { liveFetch(); }              // the next possession is on its way
+        else { setPlaying(false); revealBox(); if (LIVE) liveFinal(); }
       }
+      if (LIVE && poss >= P.length - 2) liveFetch();
     }
     requestAnimationFrame(tick);
   }
@@ -477,13 +509,17 @@ window.GAME = /*GAME_DATA*/null;
       lineups.appendChild(col);
     }
   }
-  if (FULLGAME) {
+  function buildPeriods() {
+    $("periods").textContent = "";
     for (const n of [...new Set(P.map((p) => p.period))]) {
       const btn = document.createElement("button");
       btn.type = "button"; btn.dataset.period = n; btn.textContent = periodName(n);
       btn.addEventListener("click", () => goTo(P.findIndex((p) => p.period === n)));
       $("periods").appendChild(btn);
     }
+  }
+  if (FULLGAME) {
+    buildPeriods();
     $("about").innerHTML = "<strong>Full game.</strong> Four quarters with transition, substitutions, " +
       "fatigue and fouls. Every position comes from the simulation, ten updates a second; the camera pulls " +
       "back while the teams run the floor.";
@@ -495,8 +531,8 @@ window.GAME = /*GAME_DATA*/null;
     $("about").innerHTML = "<strong>Live.</strong> Your game as it happened, possession by possession. " +
       "The box score appears at the final buzzer (or jump ahead with the quarter buttons).";
   }
-  if (G.box) {
-    $("boxCard").hidden = !!G.live;
+  function buildBox(boxData, final) {
+    $("boxScore").textContent = "";
     const cols = [["MIN", (r) => Math.round(r.min)], ["PTS", (r) => r.pts], ["REB", (r) => r.orb + r.drb],
       ["AST", (r) => r.ast], ["STL", (r) => r.stl], ["BLK", (r) => r.blk], ["TO", (r) => r.tov],
       ["PF", (r) => r.pf], ["FG", (r) => r.fgm + "-" + r.fga], ["3P", (r) => r.tpm + "-" + r.tpa],
@@ -507,13 +543,13 @@ window.GAME = /*GAME_DATA*/null;
     table.appendChild(head);
     const body = document.createElement("tbody");
     for (const side of ["away", "home"]) {
-      if (!G.box[side] || G.box[side].length === 0 || G.box[side][0].min === undefined) continue;
+      if (!boxData[side] || boxData[side].length === 0 || boxData[side][0].min === undefined) continue;
       const tr = document.createElement("tr"); tr.className = "team";
       const td = document.createElement("td");
-      const final = G.final ? (side === "home" ? G.final[0] : G.final[1]) : "";
-      td.textContent = `${G[side].abbr} ${final}`; td.colSpan = cols.length + 1;
+      const fin = final ? (side === "home" ? final[0] : final[1]) : "";
+      td.textContent = `${G[side].abbr} ${fin}`; td.colSpan = cols.length + 1;
       tr.appendChild(td); body.appendChild(tr);
-      for (const r of G.box[side]) {
+      for (const r of boxData[side]) {
         const row = document.createElement("tr");
         const name = document.createElement("td"); name.textContent = (r.starter ? "* " : "") + r.name;
         row.appendChild(name);
@@ -530,7 +566,11 @@ window.GAME = /*GAME_DATA*/null;
     table.appendChild(body);
     if (body.children.length) { $("boxScore").appendChild(table); boxReady = true; } else $("boxCard").hidden = true;
   }
-  $("scrub").max = P.length - 1;
+  if (G.box) {
+    $("boxCard").hidden = !!G.live;
+    buildBox(G.box, G.final);
+  }
+  $("scrub").max = Math.max(0, P.length - 1);
   $("scrub").addEventListener("input", (e) => goTo(+e.target.value));
   $("prev").addEventListener("click", () => goTo(t > 1.5 ? poss : poss - 1));
   $("next").addEventListener("click", () => goTo(poss + 1));
@@ -552,7 +592,181 @@ window.GAME = /*GAME_DATA*/null;
   new MutationObserver(redrawAll).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(redrawAll);
 
-  readColors(); fit(); goTo(0); setPlaying(playing);
-  requestAnimationFrame(tick);
+  // ---- live match client: fetch possessions as they're played, and coach ------------
+  let liveDone = false, fetching = false, liveState = null, finalSent = false;
+  let liveNext = 0;
+  async function api(method, url, body) {
+    const r = await fetch(url, { method, headers: { "content-type": "application/json" },
+                                 body: body ? JSON.stringify(body) : undefined });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.detail || r.statusText);
+    return data;
+  }
+  async function liveFetch() {
+    if (!LIVE || fetching || liveDone) return;
+    fetching = true;
+    try {
+      const c = await api("GET", `/api/live/next?after=${liveNext}`);
+      for (const p of c.possessions) {
+        // Bench news (subs, timeouts) shows at the start of the possession it came before.
+        if (p.notes && p.notes.length) p.events = [[0, p.notes.join(" · "), ...p.start_score], ...p.events];
+        P.push(p);
+      }
+      liveNext = c.next;
+      liveDone = c.done;
+      liveState = c.state;
+      $("scrub").max = Math.max(0, P.length - 1);
+      $("possLabel").textContent = `${poss + 1} / ${P.length}${liveDone ? "" : "+"}`;
+      if (c.possessions.length) buildPeriods();
+      renderCoach();
+    } catch (e) {
+      coachMsg(e.message, true);
+    } finally {
+      fetching = false;
+    }
+  }
+  async function liveFinal() {
+    if (finalSent) return;
+    finalSent = true;
+    if (!liveDone) coachMsg("Your bench coach is finishing the game…");
+    try {
+      const r = await api("POST", "/api/live/finish");
+      const st = r.final || liveState;
+      liveDone = true;
+      if (st) {
+        liveState = st;
+        renderCoach(true);
+        setText("gameClock", "Final");
+        setText("homePts", st.home.score); setText("awayPts", st.away.score);
+        setText("callText", `Final: ${st.away.abbr} ${st.away.score}, ${st.home.abbr} ${st.home.score}`);
+        const rows = (side) => st[side].players.map((p) => ({ name: p.name, min: p.min, starter: false, pts: p.pts,
+          orb: 0, drb: p.reb, ast: p.ast, stl: 0, blk: 0, tov: p.tov, pf: p.pf, fgm: p.fgm, fga: p.fga,
+          tpm: p.tpm, tpa: p.tpa, ftm: p.ftm, fta: p.fta, pm: p.pm }));
+        buildBox({ home: rows("home"), away: rows("away") }, [st.home.score, st.away.score]);
+        $("boxCard").hidden = false;
+      }
+      coachMsg("Final. The result is in: head back to the office.");
+      try { parent.postMessage({ hoopsim: "live-final" }, "*"); } catch (e) {}
+    } catch (e) { coachMsg(e.message, true); }
+  }
+  let selected = null;
+  const coach = $("coach");
+  function coachMsg(text, err) {
+    const el = $("coachMsg"); if (!el) return;
+    el.textContent = text; el.classList.toggle("err", !!err);
+  }
+  async function command(body) {
+    try {
+      const r = await api("POST", "/api/live/command", body);
+      liveState = r.state; renderCoach(); coachMsg(r.message);
+    } catch (e) { coachMsg(e.message, true); }
+  }
+  let coachKey = "";
+  function renderCoach(force) {
+    if (!LIVE || !liveState) return;
+    // Redraw only when something shown changed (a redraw mid-click would eat the click).
+    const shown = liveState[liveState.user_side];
+    const key = JSON.stringify([shown.timeouts, shown.team_fouls, liveState.manager, liveState.tactics, selected,
+      liveDone, liveState.done, shown.players.map((p) => [p.id, p.on_court, Math.round(p.energy * 20), p.pf, Math.round(p.min), p.fouled_out])]);
+    if (key === coachKey && !force) return;
+    coachKey = key;
+    const st = liveState, me = st[st.user_side], m = st.manager, keepMsg = $("coachMsg") ? $("coachMsg").textContent : "";
+    const keepErr = $("coachMsg") && $("coachMsg").classList.contains("err");
+    const open = coach.querySelector("details") && coach.querySelector("details").open;
+    coach.textContent = "";
+    const facts = document.createElement("div"); facts.className = "facts";
+    facts.innerHTML = `Timeouts <b>${me.timeouts}</b>${m.timeout_pending ? " (one called)" : ""} · Team fouls <b>${me.team_fouls}</b>`;
+    const row = document.createElement("div"); row.className = "row";
+    const to = document.createElement("button"); to.type = "button"; to.textContent = m.timeout_pending ? "Timeout called" : "Call timeout";
+    to.disabled = m.timeout_pending || me.timeouts <= 0 || st.done;
+    to.addEventListener("click", () => command({ type: "timeout" }));
+    const auto = document.createElement("label"); auto.className = "toggle";
+    auto.innerHTML = `<input type="checkbox" ${m.auto_subs ? "checked" : ""}> Auto subs`;
+    auto.firstChild.addEventListener("change", (e) => command({ type: "auto_subs", on: e.target.checked }));
+    const end = document.createElement("button"); end.type = "button"; end.textContent = "Sim to end";
+    end.title = "Let the bench coach finish the game";
+    end.disabled = liveDone;
+    end.addEventListener("click", async () => { setPlaying(false); await liveFinal(); });
+    row.append(to, auto, end);
+    coach.append(facts, row);
+    // Players: click someone on the floor, then someone on the bench.
+    const table = document.createElement("table");
+    table.innerHTML = "<thead><tr><th>#</th><th>Player</th><th>Energy</th><th>PF</th><th>MIN</th></tr></thead>";
+    const body = document.createElement("tbody");
+    const players = [...me.players].sort((a, b) => (b.on_court - a.on_court));
+    let first = true;
+    for (const p of players) {
+      const tr = document.createElement("tr");
+      const pendingOut = m.subs_pending.some((s) => s.out === p.id), pendingIn = m.subs_pending.some((s) => s.in === p.id);
+      tr.className = "plr" + (p.on_court ? " court" : "") + (selected === p.id ? " sel" : "") + (p.fouled_out ? " out" : "")
+        + (!p.on_court && first ? " split" : "");
+      if (!p.on_court) first = false;
+      const e = Math.round(p.energy * 100);
+      tr.innerHTML = `<td>${p.num}</td><td></td><td><span class="bar ${e < 70 ? "low" : ""}"><i style="width:${e}%"></i></span></td>`
+        + `<td>${p.pf}</td><td>${Math.round(p.min)}</td>`;
+      tr.children[1].textContent = p.name + (pendingOut ? " → out" : "") + (pendingIn ? " → in" : "");
+      tr.title = p.on_court ? "On the floor: click, then a bench player, to sub" : "Bench: click, then a player on the floor";
+      tr.addEventListener("click", () => {
+        if (p.fouled_out || st.done) return;
+        if (selected === null) { selected = p.id; renderCoach(); return; }
+        const other = me.players.find((x) => x.id === selected);
+        selected = null;
+        if (!other || other.on_court === p.on_court) { renderCoach(); return; }
+        const out = p.on_court ? p : other, inn = p.on_court ? other : p;
+        command({ type: "sub", out: out.id, in: inn.id });
+      });
+      body.appendChild(tr);
+    }
+    table.appendChild(body);
+    coach.appendChild(table);
+    if (m.subs_pending.length) {
+      const pend = document.createElement("div"); pend.className = "row pend";
+      const name = (id) => me.players.find((x) => x.id === id)?.name ?? id;
+      pend.textContent = "At the next dead ball: " + m.subs_pending.map((s) => `${name(s.in)} for ${name(s.out)}`).join(", ") + " ";
+      const cancel = document.createElement("button"); cancel.type = "button"; cancel.textContent = "Cancel";
+      cancel.addEventListener("click", () => command({ type: "cancel_subs" }));
+      pend.appendChild(cancel);
+      coach.appendChild(pend);
+    }
+    // Match tactics
+    const tac = document.createElement("details"); tac.open = !!open;
+    tac.innerHTML = "<summary>Match tactics</summary>";
+    const box = document.createElement("div"); box.className = "coach"; box.style.padding = "8px 0 0";
+    const t = st.tactics;
+    const slider = (key, label) => {
+      const l = document.createElement("label"); l.className = "t";
+      l.innerHTML = `<span>${label}</span><input type="range" min="1" max="20" value="${t[key]}"><output>${t[key]}</output>`;
+      l.children[1].addEventListener("input", (e) => { l.children[2].textContent = e.target.value; });
+      l.children[1].addEventListener("change", (e) => command({ type: "tactics", changes: { [key]: +e.target.value } }));
+      return l;
+    };
+    const select = (key, label, opts) => {
+      const l = document.createElement("label"); l.className = "t";
+      l.innerHTML = `<span>${label}</span><select>${opts.map((o) => `<option value="${o}" ${t[key] === o ? "selected" : ""}>${o}</option>`).join("")}</select><span></span>`;
+      l.children[1].addEventListener("change", (e) => command({ type: "tactics", changes: { [key]: e.target.value } }));
+      return l;
+    };
+    box.append(slider("pace", "Pace"), slider("three", "Threes"), slider("crash", "Crash glass"),
+      select("focus", "Focus", ["inside", "balanced", "perimeter"]), select("defense", "Defence", ["man", "switch", "zone", "press"]));
+    tac.appendChild(box);
+    coach.appendChild(tac);
+    const msg = document.createElement("div"); msg.className = "msg"; msg.id = "coachMsg";
+    msg.textContent = keepMsg; msg.classList.toggle("err", keepErr);
+    coach.appendChild(msg);
+  }
+
+  async function start() {
+    if (LIVE) {
+      $("coachCard").hidden = false;
+      $("about").innerHTML = "<strong>Live.</strong> You're on the bench. Timeouts and substitutions happen at the " +
+        "next dead ball (a timeout also when you have the ball); tactics hold for this game only.";
+      $("callText").textContent = "Tip-off…";
+      while (!P.length && !liveDone) { await liveFetch(); if (!P.length) await new Promise((r) => setTimeout(r, 300)); }
+      if (!P.length) return;
+    }
+    readColors(); fit(); goTo(0); setPlaying(playing);
+    requestAnimationFrame(tick);
+  }
+  start();
 })();
 </script>

@@ -241,6 +241,35 @@ def create_app(session: Optional[GameSession] = None) -> FastAPI:
     def watch_next():
         return run(game.watch_next)
 
+    # -- live match: coach your game as it's played ---------------------------------
+    @app.middleware("http")
+    async def live_guard(request: Request, call_next):
+        # While a live game is on, the rest of the game waits (no sims, deals or saves).
+        if (request.method == "POST" and game.live is not None
+                and not request.url.path.startswith("/api/live")):
+            return JSONResponse({"detail": "finish your live game first"}, status_code=409)
+        return await call_next(request)
+
+    @app.post("/api/live/start")
+    def live_start():
+        return run(game.live_start)
+
+    @app.get("/api/live/page", response_class=HTMLResponse)
+    def live_page():
+        return HTMLResponse(run(game.live_page))
+
+    @app.get("/api/live/next")
+    def live_next(after: int = 0):
+        return run(game.live_next, after)
+
+    @app.post("/api/live/command")
+    def live_command(body: dict = Body(...)):
+        return run(game.live_command, body)
+
+    @app.post("/api/live/finish")
+    def live_finish():
+        return run(game.live_finish)
+
     @app.get("/api/history")
     def history():
         return run(game.history)

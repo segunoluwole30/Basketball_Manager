@@ -948,6 +948,13 @@ def play_game(league: League, game_id: int, rng: Optional[random.Random] = None,
     if game.played:
         raise ValueError(f"game {game_id} has already been played")
     sim = simulate_game(league, game, rng, record_pbp=record_pbp, tuning=tuning)
+    store_result(league, game_id, sim)
+    return sim
+
+
+def store_result(league: League, game_id: int, sim: GameSim) -> None:
+    """Record a simulated game in the league: result, box score, injuries, replay."""
+    game = league.games[game_id]
     game.result, game.box_score = sim.result, sim.box_score
     for pid, injury in sim.injuries:
         league.players[pid].injury = injury
@@ -955,7 +962,6 @@ def play_game(league: League, game_id: int, rng: Optional[random.Random] = None,
         league.replays[game_id] = sim.replay
         for old in sorted(league.replays)[:-REPLAYS_KEPT]:     # keep the most recent few
             del league.replays[old]
-    return sim
 
 
 def play_day(league: League, day: int, rng: Optional[random.Random] = None) -> list[Game]:

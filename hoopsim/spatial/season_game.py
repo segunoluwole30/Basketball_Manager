@@ -44,7 +44,13 @@ def simulate_spatial(league: League, game: Game, rng: random.Random, record: Opt
     if record is None:
         record = league.user_team_id in (game.home_team_id, game.away_team_id)
     fg = FullGame(league, game.home_team_id, game.away_team_id, rng, record=record, model=_model())
-    sim = fg.run()
+    fg.run()
+    return finish_spatial(fg, rng, record)
+
+
+def finish_spatial(fg: FullGame, rng: random.Random, record: bool) -> GameSim:
+    """Post-game for a finished spatial game: injury rolls and the replay."""
+    sim = fg.result
     t = DEFAULT_TUNING
     injuries = []
     for side in fg.sides.values():

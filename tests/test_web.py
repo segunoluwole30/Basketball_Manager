@@ -320,6 +320,82 @@ class WebMatchEngineTests(unittest.TestCase):
         self.assertEqual(r.status_code, 400)
         self.assertIn("spatial", r.json()["detail"])
 
+    def _spatial_team(self, games=4):
+        choices = self.post("/api/new", {"seed": 7, "num_teams": 4, "match_engine": "spatial"})["teams"]
+        short_season(self.session, games=games)
+        me = choices[0]["id"]
+        self.post("/api/new/team", {"team_id": me})
+        return me
+
+    def test_live_match_start_stream_coach_and_finish(self):
+        me = self._spatial_team()
+        lg = self.session.league
+        nxt = min((g for g in lg.games.values() if me in (g.home_team_id, g.away_team_id)),
+                  key=lambda g: (g.day, g.id))
+        saved_pace = lg.teams[me].tactics.pace
+        r = self.post("/api/live/start")
+        self.assertTrue(r["started"])
+        self.assertEqual(r["game_id"], nxt.id)
+        self.assertEqual(r["state"]["live_game"], nxt.id)
+        self.assertFalse(lg.games[nxt.id].played)
+        # Days before the game are played; nothing on its day yet.
+        self.assertTrue(all(g.played == (g.day < nxt.day) for g in lg.games.values()))
+        page = self.client.get("/api/live/page")
+        self.assertIn('"live_client"', page.text)
+        # While live, the rest of the game waits.
+        self.assertEqual(self.client.post("/api/sim", json={"mode": "day"}).status_code, 409)
+        chunk = self.client.get("/api/live/next", params={"after": 0}).json()
+        self.assertTrue(chunk["possessions"])
+        st = chunk["state"]
+        side = st[st["user_side"]]
+        on = [p for p in side["players"] if p["on_court"]]
+        bench = [p for p in side["players"] if not p["on_court"]]
+        self.post("/api/live/command", {"type": "auto_subs", "on": False})
+        self.post("/api/live/command", {"type": "sub", "out": on[0]["id"], "in": bench[0]["id"]})
+        self.post("/api/live/command", {"type": "timeout"})
+        self.post("/api/live/command", {"type": "tactics", "changes": {"pace": 18}})
+        bad = self.client.post("/api/live/command", json={"type": "sub", "out": bench[1]["id"], "in": bench[2]["id"]})
+        self.assertEqual(bad.status_code, 400)
+        n = chunk["next"]
+        for _ in range(8):
+            chunk = self.client.get("/api/live/next", params={"after": n}).json()
+            n = chunk["next"]
+        side = chunk["state"][chunk["state"]["user_side"]]
+        self.assertLess(side["timeouts"], lg.rules.timeouts_per_game)
+        self.assertTrue(next(p for p in side["players"] if p["id"] == bench[0]["id"])["on_court"])
+        done = self.post("/api/live/finish")
+        self.assertTrue(lg.games[nxt.id].played)
+        self.assertIn(nxt.id, lg.replays)
+        self.assertIsNone(done["state"]["live_game"])
+        self.assertEqual(lg.teams[me].tactics.pace, saved_pace)            # match tactics only
+        self.assertTrue(all(g.played == (g.day <= nxt.day) for g in lg.games.values()))
+        self.post("/api/sim", {"mode": "day"})                               # back to normal
+
+    def test_live_playoff_game(self):
+        me = self._spatial_team(games=2)
+        lg = self.session.league
+        lg.rules.playoff_series_length = 1
+        for _ in range(20):                       # trade offers pause the sim
+            if self.post("/api/sim", {"mode": "end"})["state"].get("season_over"):
+                break
+        self.post("/api/playoffs/start")
+        if not any(me in (s.high_id, s.low_id) for s in lg.playoffs):
+            self.skipTest("this seed's team missed the playoffs")
+        r = self.post("/api/live/start")
+        g = lg.games[r["game_id"]]
+        self.assertTrue(g.playoff and me in (g.home_team_id, g.away_team_id) and not g.played)
+        self.post("/api/live/finish")
+        self.assertTrue(g.played)
+        series = next(s for s in lg.playoffs if g.id in s.game_ids)
+        self.assertEqual(series.high_wins + series.low_wins, len(series.game_ids))
+        # Every game scheduled that day was played.
+        self.assertTrue(all(x.played for x in lg.games.values() if x.playoff and x.day == g.day))
+
+    def test_live_needs_the_spatial_engine(self):
+        choices = self.post("/api/new", {"seed": 7, "num_teams": 4})["teams"]
+        self.post("/api/new/team", {"team_id": choices[0]["id"]})
+        self.assertEqual(self.client.post("/api/live/start").status_code, 400)
+
     def test_unknown_engine_is_refused(self):
         r = self.client.post("/api/new", json={"seed": 7, "num_teams": 4, "match_engine": "arcade"})
         self.assertGreaterEqual(r.status_code, 400)

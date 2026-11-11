@@ -166,6 +166,8 @@ class FullGame:
         self.possessions: list[dict] = []      # recorded possessions for the viewer
         self.stats = Counter()
         self.sub_log: list[tuple] = []         # (game seconds, side, player in id, player out id)
+        self.manager: Optional[dict] = None    # a human coach for one side (see attach_manager)
+        self.result: Optional[GameSim] = None
 
     # ------------------------------------------------------------------ set-up
     def _side(self, key: str, team_id: int) -> Side:
@@ -292,6 +294,9 @@ class FullGame:
     def substitutions(self, side: Side, forced_only: bool = False) -> None:
         """Engine.py's substitution logic at a dead ball. ``forced_only``: just replace
         players who fouled out (they can't wait for the next dead ball)."""
+        m = self.manager
+        if m is not None and m["side"] == side.key and not m["auto_subs"]:
+            forced_only = True                 # the coach makes his own changes
         final = self.period >= 4
         crunch = final and self.clock <= 300 and self.margin() <= 8
         garbage = final and self.clock <= 360 and self.margin() >= 20
@@ -679,7 +684,7 @@ class FullGame:
             "offense": offense.key, "period": self.period,
             "start_score": start_score, "end_score": [self.hc.score["home"], self.hc.score["away"]],
             "frames": frames, "events": events, "result": ending,
-            "transition": is_transition, "lineups": lineups,
+            "transition": is_transition, "lineups": lineups, "log_at": len(self.events),
         })
 
     # ------------------------------------------------------------------ periods and the game
@@ -691,6 +696,11 @@ class FullGame:
         return self.home if self.rng.random() < 0.5 + max(-0.3, min(0.3, edge)) else self.away
 
     def play_period(self, starting: Side) -> None:
+        for _ in self._period(starting):
+            pass
+
+    def _period(self, starting: Side):
+        """One period, pausing (yield) after every possession."""
         self.period += 1
         minutes = self.rules.quarter_minutes if self.period <= 4 else self.rules.overtime_minutes
         self.clock = minutes * 60.0
@@ -701,6 +711,7 @@ class FullGame:
             side.period_points.append(0)
         if self.period > 1:
             self.rest(self.gt.halftime_recovery if self.period == 3 else self.gt.period_break_recovery)
+            self._manager_subs()
             self._dead_ball()
         label = f"Q{self.period}" if self.period <= 4 else f"OT{self.period - 4}"
         self.log(None, f"Start of {label}")
@@ -711,9 +722,13 @@ class FullGame:
             self._lineup_at_start = self._lineup_indices()
             how, carrier = self.possession(offense, how, carrier)
             offense = self.other(offense)
+            yield
             if self.clock <= 0:
                 break
-            if how in ("dead", "ft") or (how == "score" and self.period >= 4 and self.clock <= 120):
+            dead = how in ("dead", "ft") or (how == "score" and self.period >= 4 and self.clock <= 120)
+            if self.manager is not None and self._manager_break(dead, offense):
+                continue                       # the coach's timeout handled this break
+            if dead:
                 # Stop the bleeding: timeout on an 8-0 run (saving a few for the end).
                 for side in self.sides.values():
                     if side.run_against >= 8 and side.timeouts > 2 and self.clock > 120:
@@ -725,18 +740,63 @@ class FullGame:
         self.log(None, f"End of {label}")
 
     def run(self) -> GameSim:
+        for _ in self.iter_game():
+            pass
+        return self.result
+
+    def iter_game(self):
+        """The whole game, pausing (yield) after every possession; ``self.result`` is
+        set at the end. ``run()`` plays it straight through."""
         tip = self.jump_ball()
         other = self.other(tip)
         for starting in (tip, other, other, tip):
-            self.play_period(starting)
+            yield from self._period(starting)
         while self.hc.score["home"] == self.hc.score["away"]:
-            self.play_period(self.jump_ball())
+            yield from self._period(self.jump_ball())
         self.log(None, "Final")
         boxes = [TeamBox(side.team.id, list(side.period_points), self.lines(side), side.possessions)
                  for side in (self.home, self.away)]
         result = GameResult(self.hc.score["home"], self.hc.score["away"], overtimes=max(0, self.period - 4))
         self.result = GameSim(result, BoxScore(*boxes), self.events, [])
-        return self.result
+
+    # ------------------------------------------------------------------ a human coach
+    def attach_manager(self, side_key: str) -> dict:
+        """Let a human coach ``side_key``: queue commands in the returned dict (or with
+        the helpers below); they're applied at the next chance in the game."""
+        self.manager = {"side": side_key, "timeout": False, "subs": [], "auto_subs": True}
+        return self.manager
+
+    def _manager_break(self, dead: bool, next_offense: Side) -> bool:
+        """Between possessions: the coach's timeout (on a dead ball or with the ball) and
+        substitutions (dead balls). True if a timeout was taken."""
+        m = self.manager
+        side = self.sides[m["side"]]
+        if m["timeout"] and (dead or next_offense is side):
+            m["timeout"] = False
+            if self.call_timeout(side, "coach's decision"):
+                side.run_against = 0
+                self._manager_subs()
+                return True
+        if dead:
+            self._manager_subs()
+        return False
+
+    def _manager_subs(self) -> None:
+        m = self.manager
+        if m is None or not m["subs"]:
+            return
+        side = self.sides[m["side"]]
+        changed = False
+        for out_id, in_id in m["subs"]:
+            out, inn = side.seats.get(out_id), side.seats.get(in_id)
+            if (out is None or inn is None or not out.on_court or inn.on_court
+                    or self.fouled_out(inn)):
+                continue
+            self._swap(side, side.lineup.index(out), out, inn, False)
+            changed = True
+        m["subs"] = []
+        if changed:
+            self._sync()
 
     def lines(self, side: Side) -> list[PlayerLine]:
         out = []

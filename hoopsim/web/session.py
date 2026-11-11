@@ -19,7 +19,7 @@ from typing import Any, Optional
 
 from ..contracts import cap_room, max_contract, payment_route, payroll_for, team_strength
 from ..db import load_league, save_league
-from ..engine import play_day
+from ..engine import clear_healed, play_day, store_result, tick_injuries
 from ..generate import generate_league
 from ..models import MATCH_ENGINES
 from ..lineup import POSITIONS
@@ -34,7 +34,7 @@ from ..playoffs import _HIGH_SEED_HOME, _advance_bracket, current_round, ranked,
 from ..season import (
     OFFSEASON_STEPS, STEP_TITLES, answer_offseason, finish_season, manager_answer,
     offseason_pending, offseason_report, pending_players, play_regular_season,
-    regular_season_over, season_start, start_offseason, trade_deadline_day,
+    refresh_lineups, regular_season_over, season_start, start_offseason, trade_deadline_day,
 )
 from ..models import Game as GameModel
 from ..stats import career_per_game, per_game, season_totals
@@ -89,6 +89,7 @@ class GameSession:
         self.saves_dir = Path(saves_dir) if saves_dir else Path.cwd()
         self.lock = threading.RLock()
         self.dirty = False
+        self.live: Optional[dict] = None       # a live match in progress (live_start)
 
     # -- guards -----------------------------------------------------------------
     def _lg(self) -> League:
@@ -201,6 +202,7 @@ class GameSession:
             return {"loaded": False}
         out: dict[str, Any] = {
             "loaded": True, "league": lg.name, "season": lg.season, "match_engine": lg.rules.match_engine,
+            "live_game": self.live["game_id"] if self.live else None,
             "season_label": f"{lg.season}-{(lg.season + 1) % 100:02d}",
             "date": lg.current_date.isoformat(), "phase": lg.phase.value,
             "user_team_id": lg.user_team_id, "save_path": self.save_path, "unsaved": self.dirty,
@@ -732,13 +734,23 @@ class GameSession:
 
     def _playoff_day(self) -> bool:
         """One day of playoff games (mirrors playoffs.play_playoffs exactly). False when done."""
+        opened = self._playoff_day_open()
+        if opened is None:
+            return False
+        day, live = opened
+        play_day(self._lg(), day, self.rng)
+        self._playoff_day_close(live)
+        return True
+
+    def _playoff_day_open(self):
+        """Schedule the next playoff day's games: (day, series playing) or None when done."""
         lg = self._lg()
         day = max(g.day for g in lg.games.values() if g.season == lg.season)
         while True:
             live = [s for s in lg.playoffs if s.round == current_round(lg) and not s.over]
             if not live:
                 if not _advance_bracket(lg):
-                    return False
+                    return None
                 continue
             day += 1
             for s in live:
@@ -747,14 +759,16 @@ class GameSession:
                 gid = lg.next_game_id()
                 lg.add_game(GameModel(gid, lg.season, day, home, away, playoff=True))
                 s.game_ids.append(gid)
-            play_day(lg, day, self.rng)
-            for s in live:
-                g = lg.games[s.game_ids[-1]]
-                if g.winner_id() == s.high_id:
-                    s.high_wins += 1
-                else:
-                    s.low_wins += 1
-            return True
+            return day, live
+
+    def _playoff_day_close(self, live) -> None:
+        lg = self._lg()
+        for s in live:
+            g = lg.games[s.game_ids[-1]]
+            if g.winner_id() == s.high_id:
+                s.high_wins += 1
+            else:
+                s.low_wins += 1
 
     def sim_playoffs(self, mode: str = "day") -> dict:
         lg = self._me()
@@ -762,7 +776,6 @@ class GameSession:
             raise UserError("the playoffs haven't started")
         if mode not in ("day", "round", "all"):
             raise UserError("mode must be day, round or all")
-        me = lg.user_team_id
         over_before = {s.id for s in lg.playoffs if s.over}
         rnd = current_round(lg)
         finished = False
@@ -774,6 +787,11 @@ class GameSession:
                 break
             if mode == "round" and all(s.over for s in lg.playoffs if s.round == rnd):
                 break
+        return self._after_playoff_days(over_before, finished)
+
+    def _after_playoff_days(self, over_before: set, finished: bool) -> dict:
+        lg = self._lg()
+        me = lg.user_team_id
         for s in lg.playoffs:
             if s.over and s.id not in over_before and me in (s.high_id, s.low_id):
                 won = s.winner_id == me
@@ -886,6 +904,115 @@ class GameSession:
         games = sorted((g for g in lg.games.values() if g.season == lg.season and g.day == d and g.played),
                        key=lambda g: g.id)
         return {"day": d, "days": played_days, "games": [self._game_view(g) for g in games]}
+
+    # -- live match (coach your team's game as it's played) ---------------------------
+    def live_start(self) -> dict:
+        """Play on to the user's next game, then hold it as a live match."""
+        if self.live is not None:
+            return self.live_header()
+        lg = self._me()
+        me = lg.user_team_id
+        if lg.rules.match_engine != "spatial":
+            raise UserError("live matches need the spatial match engine (choose it when starting a new game)")
+        mine = lambda g: me in (g.home_team_id, g.away_team_id)
+        from ..spatial.live import LiveMatch
+        if lg.phase is Phase.REGULAR_SEASON and not regular_season_over(lg):
+            nxt = min((g for g in lg.games.values() if g.season == lg.season and not g.playoff
+                       and not g.played and mine(g)), key=lambda g: (g.day, g.id), default=None)
+            if nxt is None:
+                raise UserError("you have no games left this regular season")
+            days = len({g.day for g in lg.games.values() if g.season == lg.season and not g.playoff
+                        and not g.played and g.day < nxt.day})
+            if days:
+                r = self.sim("days", days)
+                if r["stopped_for"]:
+                    return {"ok": True, "started": False, "stopped_for": r["stopped_for"], "state": self.state()}
+            refresh_lineups(lg)
+            clear_healed(lg)
+            match = LiveMatch(lg, nxt, self.rng)
+            self.live = {"match": match, "kind": "regular", "game_id": nxt.id, "day": nxt.day}
+        elif lg.phase is Phase.PLAYOFFS:
+            if not any(me in (s.high_id, s.low_id) and not s.over for s in lg.playoffs):
+                raise UserError("your season is over: no playoff games to coach")
+            over_before = {s.id for s in lg.playoffs if s.over}
+            while True:
+                opened = self._playoff_day_open()
+                if opened is None:
+                    raise UserError("no playoff game to coach")
+                day, series = opened
+                game = next((g for g in lg.games.values() if g.day == day and g.playoff and not g.played
+                             and mine(g)), None)
+                if game is not None:
+                    break
+                play_day(lg, day, self.rng)            # your series is waiting on others
+                self._playoff_day_close(series)
+            clear_healed(lg)
+            match = LiveMatch(lg, game, self.rng)
+            self.live = {"match": match, "kind": "playoff", "game_id": game.id, "day": day,
+                         "series": series, "over_before": over_before}
+        else:
+            raise UserError("there are no games to coach right now")
+        self.dirty = True
+        return self.live_header()
+
+    def _live(self):
+        if self.live is None:
+            raise UserError("no live game in progress", 409)
+        return self.live["match"]
+
+    def live_header(self) -> dict:
+        m = self._live()
+        return {"ok": True, "started": True, "game_id": self.live["game_id"], "url": "/api/live/page",
+                "state": self.state()}
+
+    def live_page(self) -> str:
+        from ..spatial.export import build_html
+        return build_html(self._live().header())
+
+    def live_next(self, after: int = 0) -> dict:
+        return self._live().next_chunk(after)
+
+    def live_command(self, cmd: dict) -> dict:
+        from ..spatial.live import LiveError
+        try:
+            return self._live().command(cmd)
+        except LiveError as e:
+            raise UserError(str(e))
+
+    def live_finish(self) -> dict:
+        """End the live match (playing out anything left) and carry on with the day."""
+        match = self._live()
+        lg = self._lg()
+        live, self.live = self.live, None
+        sim = match.finish()
+        g = lg.games[live["game_id"]]
+        store_result(lg, g.id, sim)
+        tick_injuries(lg, {g.home_team_id, g.away_team_id}, {pid for pid, _ in sim.injuries})
+        view = self._game_view(g)
+        self._news("results", f"Live: {'W' if view['won'] else 'L'} {view['score']} "
+                              f"{'vs' if view['at_home'] else '@'} {view['opponent']}",
+                   [f"{'W' if view['won'] else 'L'} {view['score']} {'vs' if view['at_home'] else '@'} "
+                    f"{view['opponent']}" + (" (OT)" if view.get("ot") else "")], game_ids=[g.id])
+        me = lg.user_team_id
+        for pid, injury in sim.injuries:
+            p = lg.players[pid]
+            if p.team_id == me:
+                self._news("injury", f"Injury: {p.name}",
+                           [f"{p.name} has a {injury.description} and will miss {injury.games_remaining} games."],
+                           player_id=p.id)
+        self.dirty = True
+        if live["kind"] == "regular":
+            rest = [x for x in lg.games.values() if x.season == lg.season and not x.playoff
+                    and x.day == live["day"] and not x.played]
+            if rest:
+                self.sim("day")                        # the rest of today's games
+            else:
+                lg.current_date = season_start(lg.season) + timedelta(days=live["day"])
+        else:
+            play_day(lg, live["day"], self.rng)
+            self._playoff_day_close(live["series"])
+            self._after_playoff_days(live["over_before"], False)
+        return {"ok": True, "game": self._game_view(g), "final": match.state(), "state": self.state()}
 
     def watch_next(self) -> dict:
         """Play on to the user's next game (and the rest of that day), so it can be

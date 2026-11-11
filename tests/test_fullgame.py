@@ -209,3 +209,40 @@ class FatigueShootingTests(unittest.TestCase):
         ratios = [t / f for t, f in zip(tired, fresh)]
         for r in ratios:
             self.assertAlmostEqual(r, 0.95, places=3)
+
+
+class ManagerTests(unittest.TestCase):
+    def game(self, seed=3):
+        league = generate_league(seed=5)
+        return FullGame(league, 1, 2, random.Random(seed), record=True)
+
+    def test_no_manager_plays_exactly_as_before(self):
+        a, b = self.game(), self.game()
+        b.attach_manager("home")
+        self.assertEqual(a.run().result, b.run().result)          # untouched commands change nothing
+
+    def test_manual_subs_only_for_foul_outs(self):
+        g = self.game()
+        g.attach_manager("home")["auto_subs"] = False
+        g.run()
+        home_subs = [x for x in g.sub_log if x[1] == "home"]
+        fouled_out = sum(1 for s in g.home.roster if g.fouled_out(s))
+        self.assertEqual(len(home_subs), fouled_out)
+        self.assertTrue([x for x in g.sub_log if x[1] == "away"])
+
+    def test_coach_timeout_and_sub_are_applied(self):
+        g = self.game()
+        m = g.attach_manager("away")
+        it = g.iter_game()
+        for _ in range(3):
+            next(it)
+        out = g.away.lineup[0]
+        inn = next(s for s in g.away.bench if not g.fouled_out(s))
+        m["timeout"] = True
+        m["subs"].append((out.p.id, inn.p.id))
+        before = g.away.timeouts
+        for _ in range(12):
+            next(it)
+        self.assertEqual(g.away.timeouts, before - 1)
+        self.assertTrue(any("coach's decision" in e.text for e in g.events))
+        self.assertTrue(any(x[2] == inn.p.id and x[3] == out.p.id for x in g.sub_log))
