@@ -24,13 +24,20 @@ from .models import (
 # Offsets from a league-average 10, in Attributes field order:
 #            fin cls mid 3pt ft pas bh vis per int stl blk orb drb spd str vrt sta iq cmp
 _TEMPLATES = {
-    Position.PG: (0, -1, 1, 1, 1, 3, 3, 3, 1, -3, 2, -4, -4, -3, 3, -3, 0, 1, 1, 0),
+    Position.PG: (0, -1, 1, 2, 1, 3, 3, 3, 1, -3, 2, -4, -4, -3, 3, -3, 0, 1, 1, 0),
     Position.SG: (1, -1, 2, 2, 1, 0, 1, 0, 1, -2, 1, -3, -3, -2, 2, -2, 1, 1, 0, 0),
     Position.SF: (1, 0, 1, 1, 0, 0, 0, 0, 1, 0, 1, -1, -1, 0, 1, 0, 1, 1, 0, 0),
     Position.PF: (1, 2, 0, -1, -1, -1, -2, -1, -1, 2, -1, 1, 2, 2, -1, 2, 0, 0, 0, 0),
     Position.C:  (2, 2, -2, -4, -2, -2, -4, -2, -3, 3, -2, 3, 3, 3, -3, 3, 0, -1, 0, 0),
 }
 TEMPLATES = {pos: dict(zip(Attributes.names(), t, strict=True)) for pos, t in _TEMPLATES.items()}
+
+# Stretch bigs: most NBA power forwards and many centres now shoot threes. This
+# share of each big position is drawn as a shooter: offsets added to the template
+# (the level shift still lands the player on his target ability, so the shooting
+# comes at the cost of a little everything else).
+STRETCH_SHARE = {Position.PF: 0.50, Position.C: 0.35}
+STRETCH = {"three_point": 5, "mid_range": 1, "close_range": -1}
 
 # Mean height (cm) and weight (kg) by position.
 _BODY = {
@@ -97,7 +104,10 @@ TEAM_NAMES = [
 def _attributes_for_target(position: Position, height_z: float, age: int,
                            target_ca: int, rng: random.Random) -> Attributes:
     """Pick a level shift so the resulting attributes land on ``target_ca``."""
-    template = TEMPLATES[position]
+    template = dict(TEMPLATES[position])
+    if rng.random() < STRETCH_SHARE.get(position, 0.0):
+        for n, v in STRETCH.items():
+            template[n] += v
     noise = {n: rng.gauss(0, 1.8) for n in Attributes.names()}
     decline = max(0.0, (age - 30) * 0.6)
 

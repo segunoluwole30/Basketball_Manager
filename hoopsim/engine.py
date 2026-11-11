@@ -45,8 +45,8 @@ class Tuning:
     non_shooting_foul_rate: float = 0.10
     offensive_foul_share: float = 0.15     # dead-ball turnovers that are charges/illegal screens
     team_rebound_share: float = 0.11       # misses out of bounds etc.: no player credited
-    zone_mix: dict = field(default_factory=lambda: {RIM: 0.315, CLOSE: 0.15, MID: 0.135, THREE: 0.40})
-    make: dict = field(default_factory=lambda: {RIM: 0.672, CLOSE: 0.46, MID: 0.435, THREE: 0.36})
+    zone_mix: dict = field(default_factory=lambda: {RIM: 0.315, CLOSE: 0.15, MID: 0.135, THREE: 0.33})
+    make: dict = field(default_factory=lambda: {RIM: 0.672, CLOSE: 0.46, MID: 0.435, THREE: 0.355})
     shooting_foul: dict = field(default_factory=lambda: {RIM: 0.24, CLOSE: 0.13, MID: 0.042, THREE: 0.016})
     block: dict = field(default_factory=lambda: {RIM: 0.088, CLOSE: 0.068, MID: 0.016, THREE: 0.008})
     assist: dict = field(default_factory=lambda: {RIM: 0.62, CLOSE: 0.54, MID: 0.55, THREE: 0.90})

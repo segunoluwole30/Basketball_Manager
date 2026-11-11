@@ -69,6 +69,11 @@ class SpatialParams:
     entry_drive_gap: float = 5.0          # ... and drives a freed catch only with this much daylight (ft)
     routine_pass_risk: float = 0.4        # steal and errant chances on routine perimeter passes
     second_actions: float = 2.0           # resets into a new action after a stalled attack (per possession)
+    # Shooting off the dribble and spacing (README "Full-game three-point volume, part 2").
+    off_dribble_penalty: float = 0.01     # make chance off the dribble (NBA pull-up ~34% vs catch ~37%)
+    pullup_on_the_move: float = 0.0       # 1: value pull-up jumpers as running shots (the old mismatch)
+    relocate_shooter: float = 10.0        # shooters this good slide along the arc when their man helps (0: off)
+    relocate_degrees: float = 18.0        # ... by this much of the arc
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -129,6 +134,9 @@ LEGACY_PARAMS = SpatialParams(
     entry_actions=0.0,
     routine_pass_risk=1.0,
     second_actions=0.0,
+    off_dribble_penalty=0.035,
+    pullup_on_the_move=1.0,
+    relocate_shooter=0.0,
 )
 
 # Searched fields: (low, high). Everything else stays at its default.

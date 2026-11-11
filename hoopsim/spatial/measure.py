@@ -273,6 +273,15 @@ def collect_fullgames(games: int, seed: int, jobs: int = 1, params=None, model=N
         "orb_pct": s["orb"] / max(1, s["orb"] + s["drb"]),
     }
     out["_games"] = s["games"]
+    # Basketball-Reference doesn't count possessions, it estimates them from the box
+    # score (FGA + 0.4 FTA - 1.07 ORB% x misses + TOV). The same estimate here, for an
+    # apples-to-apples look at the targets (counted possessions run ~2% higher:
+    # end-of-period possessions with no shot, and the formula's FT-trip weight).
+    orb_share = s["orb"] / max(1, s["orb"] + s["drb"])
+    est = (s["fga"] + 0.4 * s["fta"] - 1.07 * orb_share * (s["fga"] - s["fgm"]) + s["tov"]) / tg
+    out["_pace_bref_formula"] = est * 2880 / (s["seconds"] / s["games"])
+    out["_points_per_100_bref_formula"] = 100 * (s["pts"] / tg) / max(1e-9, est)
+    out["_three_pct"] = s["tpm"] / max(1, s["tpa"])
     out["_seconds_per_game"] = (time.time() - start) / s["games"] * jobs
     out["_halfcourt_ppp"] = s["halfcourt_points"] / max(1, s["halfcourt"])
     for k in ("fta", "pf", "tov", "fga", "tpa", "orb", "drb", "ast", "stl", "blk"):
