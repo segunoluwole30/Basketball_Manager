@@ -104,9 +104,11 @@ class Agent:
         self.ease = 3.0
         self.cut_until = -1.0
         self.last_cut = -9.0
-        # Full-game hooks (fullgame.py): make-chance penalty from fatigue, and
-        # distance run (drives energy drain).
+        # Full-game hooks (fullgame.py): make-chance penalty from fatigue, game-day
+        # form (a make-chance multiplier from morale and the night), and distance
+        # run (drives energy drain).
         self.fatigue_shot = 0.0
+        self.form = 1.0
         self.travelled = 0.0
 
     @property
@@ -268,6 +270,7 @@ class HalfCourtGame:
         if lob:
             prob += t.lob_bonus + 0.01 * (shooter.a("vertical") - 10)
         prob *= 1.0 - shooter.fatigue_shot           # tired legs: the same fraction off every shot
+        prob *= shooter.form                         # game-day form (morale), also proportional
         return max(0.02, min(0.95, prob)), z
 
     def shot_value(self, shooter: Agent, p=None, contest_d=None, defender=None, moving=False,

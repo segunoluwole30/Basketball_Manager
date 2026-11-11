@@ -292,6 +292,8 @@ def collect_fullgames(games: int, seed: int, jobs: int = 1, params=None, model=N
     out["_players_used"] = s["players_used"] / tg
     out["_top_scorer_points"] = s["top_scorer_pts"] / tg
     out["_fouled_out_per_game"] = s["fouled_out"] / tg
+    out["_injuries_per_game"] = s["injuries"] / tg
+    out["_injury_risk_per_game"] = s["injury_risk"] / tg        # expected injuries (smooth)
     out["_substitutions_per_game"] = s["substitutions"] / s["games"]
     out["_overtime_share"] = s["overtime_games"] / s["games"]
     out["_non_bonus_fouls_per_game"] = s["fouls_no_bonus"] / tg

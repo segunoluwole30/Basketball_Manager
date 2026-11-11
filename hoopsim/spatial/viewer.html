@@ -667,7 +667,7 @@ window.GAME = /*GAME_DATA*/null;
     // Redraw only when something shown changed (a redraw mid-click would eat the click).
     const shown = liveState[liveState.user_side];
     const key = JSON.stringify([shown.timeouts, shown.team_fouls, liveState.manager, liveState.tactics, selected,
-      liveDone, liveState.done, shown.players.map((p) => [p.id, p.on_court, Math.round(p.energy * 20), p.pf, Math.round(p.min), p.fouled_out])]);
+      liveDone, liveState.done, shown.players.map((p) => [p.id, p.on_court, Math.round(p.energy * 20), p.pf, Math.round(p.min), p.fouled_out, p.injured])]);
     if (key === coachKey && !force) return;
     coachKey = key;
     const st = liveState, me = st[st.user_side], m = st.manager, keepMsg = $("coachMsg") ? $("coachMsg").textContent : "";
@@ -690,6 +690,7 @@ window.GAME = /*GAME_DATA*/null;
     row.append(to, auto, end);
     coach.append(facts, row);
     // Players: click someone on the floor, then someone on the bench.
+    if (me.players.some((x) => x.id === selected && (x.fouled_out || x.injured))) selected = null;
     const table = document.createElement("table");
     table.innerHTML = "<thead><tr><th>#</th><th>Player</th><th>Energy</th><th>PF</th><th>MIN</th></tr></thead>";
     const body = document.createElement("tbody");
@@ -698,16 +699,18 @@ window.GAME = /*GAME_DATA*/null;
     for (const p of players) {
       const tr = document.createElement("tr");
       const pendingOut = m.subs_pending.some((s) => s.out === p.id), pendingIn = m.subs_pending.some((s) => s.in === p.id);
-      tr.className = "plr" + (p.on_court ? " court" : "") + (selected === p.id ? " sel" : "") + (p.fouled_out ? " out" : "")
+      const gone = p.fouled_out || p.injured;
+      tr.className = "plr" + (p.on_court ? " court" : "") + (selected === p.id ? " sel" : "") + (gone ? " out" : "")
         + (!p.on_court && first ? " split" : "");
       if (!p.on_court) first = false;
       const e = Math.round(p.energy * 100);
       tr.innerHTML = `<td>${p.num}</td><td></td><td><span class="bar ${e < 70 ? "low" : ""}"><i style="width:${e}%"></i></span></td>`
         + `<td>${p.pf}</td><td>${Math.round(p.min)}</td>`;
-      tr.children[1].textContent = p.name + (pendingOut ? " → out" : "") + (pendingIn ? " → in" : "");
-      tr.title = p.on_court ? "On the floor: click, then a bench player, to sub" : "Bench: click, then a player on the floor";
+      tr.children[1].textContent = p.name + (p.injured ? " (injured)" : "") + (pendingOut ? " → out" : "") + (pendingIn ? " → in" : "");
+      tr.title = p.injured ? `Injured${p.injury ? " (" + p.injury + ")" : ""}: out for the game`
+        : p.on_court ? "On the floor: click, then a bench player, to sub" : "Bench: click, then a player on the floor";
       tr.addEventListener("click", () => {
-        if (p.fouled_out || st.done) return;
+        if (gone || st.done) return;
         if (selected === null) { selected = p.id; renderCoach(); return; }
         const other = me.players.find((x) => x.id === selected);
         selected = null;

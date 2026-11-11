@@ -93,11 +93,16 @@ The browser's new-game form has the same choice. Regular season, playoffs, the w
 interface and `play` all go through `engine.play_game`, so standings, stats,
 awards, morale, development and the offseason work the same on either engine.
 
+Injuries and game-day form work as on the statistical engine, with its tuning:
+- Injuries are rolled at dead balls from each player's court time since the last
+  check, his injury proneness and how tired he is (about 0.17 a team-game on both
+  engines). A hurt player leaves at that dead ball, like a foul-out, and can't
+  come back; "X is hurt (sprained ankle)" shows in the play-by-play.
+- Each player has a game-day form: a small random night (wider for inconsistent
+  players) plus his morale (+/-1.8% at morale 80 / 20). It multiplies his make
+  chances, the same fraction off every shot, like fatigue.
+
 Differences on the spatial engine, for now (`spatial/season_game.py`):
-- Injuries are rolled after the game from each player's minutes, injury proneness
-  and how tired he finished, at the statistical engine's rate. A player hurt in a
-  game doesn't leave it early.
-- Morale doesn't change game-day form.
 - `game --pbp` has no text play-by-play. Watch the game instead
   (`python -m hoopsim watch --full`).
 
@@ -131,14 +136,15 @@ your decisions change what happens next. The **Coach** panel has:
 - **Substitutions.** Click a player on the floor, then one on the bench. He checks
   in at the next dead ball. The panel shows each player's energy, fouls and
   minutes. Points stay out of the panel until the final buzzer, because the
-  simulation runs a possession or two ahead.
+  simulation runs a possession or two ahead. An injured player is shown as out
+  ("injured") and can't be picked; a queued sub involving him is dropped.
 - **Auto subs.** On, your bench coach keeps running the rotation. Off, only
-  forced changes (foul-outs) are made for you.
+  forced changes (foul-outs and injuries) are made for you.
 - **Match tactics.** Pace, three-point rate, crashing the glass, offensive focus and
   defensive scheme, for this game only. Your saved tactics come back afterwards.
 - **Sim to end.** Your bench coach finishes the game.
 
-Timeouts and substitutions from both benches show in the play-by-play. While a
+Timeouts, substitutions and injuries from both benches show in the play-by-play. While a
 game is live, the rest of the app waits: no sims, deals or saves. **Back to the
 office** in the middle of a game asks first, then your bench coach finishes it.
 The result, injuries, news and replay are recorded like any other game, then the
@@ -258,7 +264,8 @@ games could later be stored like season games. It isn't wired into the season lo
   happen at dead balls (after made baskets only late in games) and use the season
   engine's logic: the rotation plan from `lineup.plan_rotation` (or the coach's
   minutes), fatigue, foul trouble, and the best players in close games and the
-  bench in blowouts. Fouled-out players leave at once.
+  bench in blowouts. Fouled-out players leave at once, and hurt players at the
+  dead ball where it happens (injuries are rolled as in the season engine).
 - **End of game.** Trailing teams foul to stop the clock and call a late timeout to
   advance the ball. Leading teams milk the shot clock and dribble out the end. Teams
   hold for the last shot of a quarter, go two-for-one, and look for a three when

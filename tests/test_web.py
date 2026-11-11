@@ -371,6 +371,29 @@ class WebMatchEngineTests(unittest.TestCase):
         self.assertTrue(all(g.played == (g.day <= nxt.day) for g in lg.games.values()))
         self.post("/api/sim", {"mode": "day"})                               # back to normal
 
+    def test_live_injuries_are_reported_once(self):
+        from hoopsim.models import Injury
+        me = self._spatial_team()
+        lg = self.session.league
+        self.post("/api/live/start")
+        match = self.session.live["match"]
+        chunk = self.client.get("/api/live/next", params={"after": 0}).json()
+        self.assertIn("injured", chunk["state"]["home"]["players"][0])
+        seat = match.fg.sides[match.user_side].lineup[0]
+        seat.injury = Injury("sprained ankle", 5)          # as if the roll had hit him
+        chunk = self.client.get("/api/live/next", params={"after": chunk["next"]}).json()
+        p = next(x for x in chunk["state"][match.user_side]["players"] if x["id"] == seat.p.id)
+        self.assertTrue(p["injured"])
+        self.assertEqual(p["injury"], "sprained ankle")
+        self.post("/api/live/finish")
+        hurt = [pid for pid, _ in match.sim.injuries if lg.players[pid].team_id == me]
+        self.assertTrue(hurt)
+        self.post("/api/sim", {"mode": "day"})
+        for pid in hurt:
+            name = lg.players[pid].name
+            news = [m for m in lg.inbox if m["kind"] == "injury" and m["title"] == f"Injury: {name}"]
+            self.assertEqual(len(news), 1, name)
+
     def test_live_playoff_game(self):
         me = self._spatial_team(games=2)
         lg = self.session.league

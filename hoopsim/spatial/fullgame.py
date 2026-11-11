@@ -26,12 +26,18 @@ form:
   side follows its rotation plan from ``lineup.plan_rotation`` (or the coach's
   saved minutes), weighs fatigue and foul trouble, and goes to its best players
   in close games and its bench in blowouts, as in engine.py.
+* **Injuries and form.** At dead balls, injuries are rolled for each player's
+  court time since the last check at engine.py's rate (injury proneness, fatigue);
+  a hurt player leaves at once, like a foul-out, and can't come back. Each player's
+  game-day form (a random night plus morale, engine.py's numbers) multiplies his
+  make chances. Both use their own random stream, so a game without injuries
+  plays out exactly as with injuries switched off.
 * **End of game.** A trailing team fouls to stop the clock, a leading team milks
   the shot clock and dribbles out the last seconds, teams hold for the last shot
   of a quarter and go two-for-one, a team down three looks for a three, and
   trailing teams call a late timeout to advance the ball and set a play.
 
-The result is engine.py's ``GameSim`` (result, box score, play-by-play), so
+The result is engine.py's ``GameSim`` (result, box score, play-by-play, injuries), so
 spatial games can later be stored like season-engine games.
 
     from hoopsim.spatial.fullgame import FullGame
@@ -45,9 +51,11 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Optional
 
-from ..engine import GameSim, PlayEvent
+from ..engine import DEFAULT_TUNING as SEASON_TUNING
+from ..engine import GameSim, PlayEvent, Tuning
+from ..injuries import draw_injury
 from ..lineup import lineup_is_usable, plan_rotation
-from ..models import (BoxScore, DefensiveScheme, GameResult, League, Player, PlayerLine,
+from ..models import (BoxScore, DefensiveScheme, GameResult, Injury, League, Player, PlayerLine,
                       Position, TeamBox)
 from .sim import DEFAULT_TUNING, Agent, HalfCourtGame, SpatialTuning
 from .transition import DEFAULT_OPEN_TUNING, OpenCourt, OpenCourtTuning
@@ -112,6 +120,10 @@ class Seat:
         self.stint_start = 0.0
         self.left_at = -1e9
         self.fouled_out_at: Optional[float] = None    # game seconds when he fouled out
+        self.injury: Optional[Injury] = None           # hurt during this game (out for the rest)
+        self.hurt_at: Optional[float] = None           # game seconds when he got hurt
+        self.checked = 0.0                             # court seconds already rolled for injury
+        self.form = 1.0                                # game-day form (make-chance multiplier)
         self.travel_mark = 0.0
         self.base = (agent.max_speed, agent.accel, agent.reaction)
         self.ca = player.current_ability
@@ -151,15 +163,21 @@ class FullGame:
                  rng: Optional[random.Random] = None, *, record: bool = False,
                  tuning: SpatialTuning = DEFAULT_TUNING, game_tuning: GameTuning = DEFAULT_GAME_TUNING,
                  open_tuning: OpenCourtTuning = DEFAULT_OPEN_TUNING,
-                 model: Optional[DecisionModel] = None, params=None):
+                 model: Optional[DecisionModel] = None, params=None,
+                 season_tuning: Tuning = SEASON_TUNING):
         self.league, self.rules = league, league.rules
         self.rng = rng or random.Random()
         self.gt, self.ot = game_tuning, open_tuning
+        # Injuries and game-day form use the statistical engine's tuning, on their own
+        # random stream so the rolls don't shift the rest of the game.
+        self.st = season_tuning
+        self.irng = random.Random(self.rng.getrandbits(64))
         self.record = record
         self.hc = HalfCourtGame(league, home_id, away_id, self.rng, tuning, record=record, model=model,
                                 params=params)
         self.sides = {key: self._side(key, tid) for key, tid in (("home", home_id), ("away", away_id))}
         self.hc.box = {id(s.agent): Counter() for side in self.sides.values() for s in side.roster}
+        self._game_day_form()
         self._sync()
         self.period = 0
         self.clock = 0.0                       # seconds left in the period
@@ -223,6 +241,10 @@ class FullGame:
     def fouled_out(self, s: Seat) -> bool:
         return self.pf(s) >= self.rules.personal_foul_limit
 
+    def unavailable(self, s: Seat) -> bool:
+        """Fouled out or hurt: he can't (re)enter the game."""
+        return s.injury is not None or self.fouled_out(s)
+
     # ------------------------------------------------------------------ logging
     def log(self, side: Optional[Side], text: str) -> None:
         if self.record:
@@ -271,7 +293,7 @@ class FullGame:
 
     # ------------------------------------------------------------------ substitutions
     def _sub_score(self, s: Seat, crunch: bool, garbage: bool) -> float:
-        if self.fouled_out(s):
+        if self.unavailable(s):
             return -1e9
         if crunch:
             score = s.ca / 10 + 6 * (s.energy - 0.8)
@@ -296,14 +318,14 @@ class FullGame:
 
     def substitutions(self, side: Side, forced_only: bool = False) -> None:
         """Engine.py's substitution logic at a dead ball. ``forced_only``: just replace
-        players who fouled out (they can't wait for the next dead ball)."""
+        players who fouled out or got hurt (they can't wait for the next dead ball)."""
         m = self.manager
         if m is not None and m["side"] == side.key and not m["auto_subs"]:
             forced_only = True                 # the coach makes his own changes
         final = self.period >= 4
         crunch = final and self.clock <= 300 and self.margin() <= 8
         garbage = final and self.clock <= 360 and self.margin() >= 20
-        bench = [s for s in side.bench if not self.fouled_out(s)]
+        bench = [s for s in side.bench if not self.unavailable(s)]
         if not bench:
             return
         scores = {id(s): self._sub_score(s, crunch, garbage) for s in side.roster}
@@ -311,7 +333,7 @@ class FullGame:
         changed = False
         for slot in order:
             out = side.lineup[slot]
-            forced = self.fouled_out(out)
+            forced = self.unavailable(out)
             if forced_only and not forced:
                 continue
             if not forced and self.elapsed - out.stint_start < 240 and not (crunch or garbage):
@@ -323,7 +345,7 @@ class FullGame:
             if forced or (scores[id(best)] + best.fit[slot]) - (scores[id(out)] + out.fit[slot]) > 2.5:
                 self._swap(side, slot, out, best, forced)
                 bench.remove(best)
-                if not self.fouled_out(out):
+                if not self.unavailable(out):
                     bench.append(out)
                 changed = True
         if changed:
@@ -339,7 +361,53 @@ class FullGame:
         inn.travel_mark = b.travelled
         self.stats["substitutions"] += 1
         self.sub_log.append((self.elapsed, side.key, inn.p.id, out.p.id))
-        self.log(side, f"Sub: {inn.p.name} in for {out.p.name}" + (" (fouled out)" if forced else ""))
+        why = " (injured)" if out.injury is not None else " (fouled out)" if forced else ""
+        self.log(side, f"Sub: {inn.p.name} in for {out.p.name}" + why)
+
+    # ------------------------------------------------------------------ injuries and form
+    def _game_day_form(self) -> None:
+        """The statistical engine's game-day form: a random night (wider for
+        inconsistent players) plus the morale shift. It multiplies make chances."""
+        for key in SIDES:
+            for s in self.sides[key].roster:
+                sd = 0.02 + (20 - s.p.hidden.consistency) * 0.0025
+                s.form = s.agent.form = (self.irng.gauss(1.0, sd)
+                                         + (s.p.morale - 50) * self.st.morale_form_effect)
+
+    def check_injuries(self, substitute: bool = True) -> None:
+        """Roll for injuries on court time since the last check (at dead balls), at the
+        statistical engine's rate. A hurt player leaves now, like a foul-out, and
+        can't come back. ``substitute=False``: the final check after the buzzer."""
+        t = self.st
+        for key in SIDES:
+            side = self.sides[key]
+            hurt = []
+            for s in side.roster:
+                exposure = s.seconds - s.checked
+                s.checked = s.seconds
+                if exposure <= 0 or s.injury is not None:
+                    continue
+                rate = (t.injury_rate_per_36 / 2160
+                        * math.exp(0.12 * (s.p.hidden.injury_proneness - 10))
+                        * (1 + 1.5 * (1 - s.energy)))
+                self.stats["injury_risk"] += rate * exposure      # expected injuries (measure.py)
+                if self.irng.random() < rate * exposure:
+                    s.injury, s.hurt_at = draw_injury(self.irng), self.elapsed
+                    hurt.append(s.p.id)
+                    self.stats["injuries"] += 1
+                    self.log(side, f"{s.p.name} is hurt ({s.injury.description})")
+            if not hurt:
+                continue
+            m = self.manager
+            if m is not None and m["side"] == key:
+                # The coach's queued changes involving him are void.
+                m["subs"] = [(o, i) for o, i in m["subs"] if o not in hurt and i not in hurt]
+            if substitute:
+                self.substitutions(side, forced_only=True)
+
+    def injuries(self) -> list[tuple[int, Injury]]:
+        return [(s.p.id, s.injury) for key in SIDES for s in self.sides[key].roster
+                if s.injury is not None]
 
     # ------------------------------------------------------------------ fouls
     def in_bonus_after_foul(self, defense: Side, clock_at_foul: float) -> bool:
@@ -648,6 +716,7 @@ class FullGame:
             self._record(offense, before, open_court, record, ending, is_transition)
 
     def _dead_ball(self) -> None:
+        self.check_injuries()
         self.substitutions(self.home)
         self.substitutions(self.away)
 
@@ -729,6 +798,8 @@ class FullGame:
             if self.clock <= 0:
                 break
             dead = how in ("dead", "ft") or (how == "score" and self.period >= 4 and self.clock <= 120)
+            if dead:
+                self.check_injuries()
             if self.manager is not None and self._manager_break(dead, offense):
                 continue                       # the coach's timeout handled this break
             if dead:
@@ -757,10 +828,11 @@ class FullGame:
         while self.hc.score["home"] == self.hc.score["away"]:
             yield from self._period(self.jump_ball())
         self.log(None, "Final")
+        self.check_injuries(substitute=False)   # court time since the last dead ball
         boxes = [TeamBox(side.team.id, list(side.period_points), self.lines(side), side.possessions)
                  for side in (self.home, self.away)]
         result = GameResult(self.hc.score["home"], self.hc.score["away"], overtimes=max(0, self.period - 4))
-        self.result = GameSim(result, BoxScore(*boxes), self.events, [])
+        self.result = GameSim(result, BoxScore(*boxes), self.events, self.injuries())
 
     # ------------------------------------------------------------------ a human coach
     def attach_manager(self, side_key: str) -> dict:
@@ -793,7 +865,7 @@ class FullGame:
         for out_id, in_id in m["subs"]:
             out, inn = side.seats.get(out_id), side.seats.get(in_id)
             if (out is None or inn is None or not out.on_court or inn.on_court
-                    or self.fouled_out(inn)):
+                    or self.unavailable(inn)):
                 continue
             self._swap(side, side.lineup.index(out), out, inn, False)
             changed = True

@@ -226,8 +226,8 @@ class ManagerTests(unittest.TestCase):
         g.attach_manager("home")["auto_subs"] = False
         g.run()
         home_subs = [x for x in g.sub_log if x[1] == "home"]
-        fouled_out = sum(1 for s in g.home.roster if g.fouled_out(s))
-        self.assertEqual(len(home_subs), fouled_out)
+        forced = sum(1 for s in g.home.roster if g.unavailable(s) and not s.on_court)   # fouled out or hurt
+        self.assertEqual(len(home_subs), forced)
         self.assertTrue([x for x in g.sub_log if x[1] == "away"])
 
     def test_coach_timeout_and_sub_are_applied(self):

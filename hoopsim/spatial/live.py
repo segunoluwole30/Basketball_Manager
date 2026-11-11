@@ -8,7 +8,9 @@ needs (``next_chunk``), so the coach's commands shape what happens next:
   run.
 * **sub**: player in for player out, at the next dead ball (or timeout).
 * **auto_subs**: on, the bench coach keeps running the rotation; off, only
-  forced changes (a player fouling out) are made for him.
+  forced changes (a player fouling out or getting hurt) are made for him.
+  A hurt player leaves at the dead ball where it happened and can't come back;
+  queued subs involving him are dropped.
 * **tactics**: pace, three-point rate, crashing the glass (1-20), offensive focus
   and defensive scheme. They hold for this game only: the team's saved tactics
   come back when it ends.
@@ -78,7 +80,7 @@ class LiveMatch:
         return {"possessions": chunk, "next": after + len(chunk),
                 "done": self.done and after + len(chunk) >= len(self.fg.possessions), "state": self.state()}
 
-    NOTE_WORDS = ("Sub:", "Timeout", "Start of", "fouls out", "foul to stop")
+    NOTE_WORDS = ("Sub:", "Timeout", "Start of", "fouls out", "foul to stop", "is hurt")
 
     def _notes(self, i: int) -> list[str]:
         """Bench news logged since the previous recorded possession (subs, timeouts...)."""
@@ -89,7 +91,7 @@ class LiveMatch:
                 if any(w in e.text for w in self.NOTE_WORDS)]
 
     def finish(self) -> GameSim:
-        """Play out the rest and return the result (injury rolls, replay included)."""
+        """Play out the rest and return the result (injuries, replay included)."""
         if self.sim is None:
             for _ in self._gen:
                 pass
@@ -117,6 +119,8 @@ class LiveMatch:
                 raise LiveError("pick a player on the floor and one on the bench")
             if not out.on_court or inn.on_court:
                 raise LiveError(f"{out.p.name} must be on the floor and {inn.p.name} on the bench")
+            if inn.injury is not None:
+                raise LiveError(f"{inn.p.name} is injured ({inn.injury.description})")
             if self.fg.fouled_out(inn):
                 raise LiveError(f"{inn.p.name} has fouled out")
             m["subs"] = [(o, i) for o, i in m["subs"] if o != out_id and i != in_id] + [(out_id, in_id)]
@@ -167,7 +171,9 @@ class LiveMatch:
                 players.append({
                     "id": s.p.id, "name": s.p.name, "num": s.p.jersey_number, "pos": s.p.position.value,
                     "on_court": s.on_court, "energy": round(s.energy, 3), "pf": fg.pf(s),
-                    "fouled_out": fg.fouled_out(s), "min": round(s.seconds / 60, 1),
+                    "fouled_out": fg.fouled_out(s), "injured": s.injury is not None,
+                    "injury": s.injury.description if s.injury is not None else None,
+                    "min": round(s.seconds / 60, 1),
                     "pts": int(c["pts"]), "reb": int(c["orb"] + c["drb"]), "ast": int(c["ast"]),
                     "fgm": int(c["fgm"]), "fga": int(c["fga"]), "tpm": int(c["tpm"]), "tpa": int(c["tpa"]),
                     "ftm": int(c["ftm"]), "fta": int(c["fta"]), "tov": int(c["tov"]), "pm": s.plus_minus,
