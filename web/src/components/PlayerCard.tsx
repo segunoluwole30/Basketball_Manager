@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useFetch, useGame } from "../context";
-import { CA, Fetched, money, MoneyInput, potText, Rating, Table } from "./ui";
+import { CA, Fetched, money, MoneyInput, potText, Rating } from "./ui";
+import { PlayerHistory } from "./PlayerHistory";
 
 const TENDENCIES: { key: string; field: string; label: string }[] = [
   { key: "three", field: "three_point", label: "Threes" },
@@ -162,24 +163,7 @@ export function PlayerCard() {
                 </>
               )}
 
-              {p.career.length > 0 && (
-                <>
-                  <h3>Career</h3>
-                  <Table dense rows={p.career.map((c: any, i: number) => ({ ...c, i }))} rowKey={(c) => c.i}
-                    columns={[
-                      { key: "season", label: "Season", num: true, render: (c) => <>{c.season}{c.playoffs ? <span className="muted small"> PO</span> : null}</> },
-                      { key: "team", label: "Team" },
-                      { key: "age", label: "Age", num: true },
-                      { key: "ca", label: "CA", num: true },
-                      { key: "gp", label: "GP", num: true },
-                      { key: "mpg", label: "MPG", num: true },
-                      { key: "ppg", label: "PPG", num: true },
-                      { key: "rpg", label: "RPG", num: true },
-                      { key: "apg", label: "APG", num: true },
-                      { key: "fg_pct", label: "FG%", num: true, render: (c) => c.fg_pct.toFixed(3) },
-                    ]} />
-                </>
-              )}
+              {!p.is_prospect && <PlayerHistory id={p.id} />}
 
               <div className="card-actions">
                 {p.ask && state?.phase !== "offseason" && <SignForm card={p} />}

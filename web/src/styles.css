@@ -276,7 +276,7 @@ ul.plain li { padding: 3px 0; }
 .instructions .row { margin-top: 8px; }
 
 /* ---------- modal ---------- */
-.modal-back { position: fixed; inset: 0; background: rgba(10, 12, 18, 0.45); z-index: 30; display: grid; place-items: center; padding: 16px; }
+.modal-back { position: fixed; inset: 0; background: rgba(10, 12, 18, 0.45); z-index: 30; display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; padding: 16px; }
 .modal { background: var(--panel); border-radius: 10px; border: 1px solid var(--border); width: min(520px, 100%); max-height: calc(100vh - 32px); display: flex; flex-direction: column; }
 .modal-wide { width: min(1000px, 100%); }
 .modal-head { display: flex; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); }
@@ -358,6 +358,28 @@ ul.plain li { padding: 3px 0; }
 .linescore { width: auto; margin-bottom: 10px; }
 .totals-line { margin: 4px 0 8px; }
 
+/* ---------- stats ---------- */
+.filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+.leaders li.leader-me { background: var(--row-me); font-weight: 600; border-radius: 3px; box-shadow: inset 3px 0 0 var(--accent); padding-left: 4px; margin-left: -4px; }
+.key-me { display: inline-block; width: 10px; height: 10px; vertical-align: -1px; background: var(--row-me); box-shadow: inset 3px 0 0 var(--accent); border: 1px solid var(--border); }
+.leader-q { margin-top: 6px; }
+.show-phone { display: none; }
+.row-progress td { font-style: italic; }
+.history-block .tabs { margin-bottom: 6px; }
+.chart-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 6px; }
+.chart { margin: 0; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px 4px; min-width: 0; }
+.chart-title { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart-grid { stroke: var(--border); stroke-width: 1; }
+.chart-axis { fill: var(--muted); font-size: 9.5px; font-variant-numeric: tabular-nums; }
+.chart-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart-dot { fill: var(--accent); stroke: var(--panel-2); stroke-width: 2; }
+.chart-dot-partial { fill: var(--panel-2); stroke: var(--accent); }
+.chart-cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 2; }
+.chart-hit { fill: transparent; cursor: default; outline: none; }
+.chart-hit:focus-visible { stroke: var(--accent); stroke-width: 1; }
+.chart-readout { min-height: 16px; font-variant-numeric: tabular-nums; }
+
 /* ---------- offseason ---------- */
 .stepper { list-style: none; display: flex; flex-wrap: wrap; gap: 4px; padding: 0; margin: 0 0 12px; counter-reset: step; }
 .stepper li { counter-increment: step; padding: 5px 12px 5px 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 16px; color: var(--muted); font-weight: 600; font-size: 12px; }
@@ -392,6 +414,9 @@ ul.plain li { padding: 3px 0; }
   .slider-row { grid-template-columns: 90px 1fr 26px; }
   .slider-word { grid-column: 1 / -1; }
   .court { grid-template-columns: 1fr 1fr; grid-template-areas: "pg sg" "sf pf" "c c"; }
+  .hide-phone { display: none; }
+  .show-phone { display: inline; }
+  .chart-row { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* Watching a game live: full screen over the app (no spoilers behind it). */

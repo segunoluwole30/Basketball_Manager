@@ -22,7 +22,7 @@ const URL = process.argv[2] || 'http://localhost:8123/';
   for (let i = 0; i < 3; i++) { await page.getByRole('button', { name: 'Next day' }).click(); await page.waitForTimeout(400); }
   await page.getByRole('button', { name: 'Week' }).click(); await page.waitForTimeout(1500);
   await page.screenshot({ path: SHOTS + '02-home.png' });
-  for (const s of ['squad', 'tactics', 'transfers', 'league', 'offseason']) {
+  for (const s of ['squad', 'tactics', 'transfers', 'league', 'stats', 'offseason']) {
     await page.goto(URL + '#/' + s); await page.waitForTimeout(900);
     await page.screenshot({ path: SHOTS + `03-${s}.png`, fullPage: false });
   }

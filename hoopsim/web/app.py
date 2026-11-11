@@ -308,6 +308,24 @@ def create_app(session: Optional[GameSession] = None) -> FastAPI:
     def offseason_auto(body: AutoBody = Body(default=AutoBody())):
         return run(game.auto, body.scope)
 
+    # -- stats pages (read-only) --------------------------------------------------------
+    @app.get("/api/stats/leaders")
+    def stats_leaders(playoffs: bool = False, pos: Optional[str] = None,
+                      season: Optional[int] = None, limit: int = 10):
+        return run(game.stats_leaders, playoffs, pos, season, limit)
+
+    @app.get("/api/stats/teams")
+    def stats_teams(playoffs: bool = False, season: Optional[int] = None):
+        return run(game.stats_teams, playoffs, season)
+
+    @app.get("/api/players/{pid}/history")
+    def player_history(pid: int):
+        return run(game.player_history, pid)
+
+    @app.get("/api/team/gamelog")
+    def team_gamelog(team_id: Optional[int] = None):
+        return run(game.team_gamelog, team_id)
+
     # -- front end ---------------------------------------------------------------------
     @app.get("/api/{rest:path}")
     def api_404(rest: str):

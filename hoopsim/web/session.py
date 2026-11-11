@@ -1349,3 +1349,203 @@ class GameSession:
         except (TypeError, ValueError, KeyError, IndexError):
             raise UserError(f"couldn't read that answer for {kind}")
         raise UserError(f"unknown decision {kind}")
+
+    # -- stats pages (read-only) ---------------------------------------------------------
+    def _stat_seasons(self) -> list[int]:
+        lg = self._lg()
+        return sorted({lg.season, *(h["season"] for h in lg.history)}, reverse=True)
+
+    def _stat_season(self, season: Optional[int]) -> int:
+        lg = self._lg()
+        if season is None:
+            return lg.season
+        season = int(season)
+        if season not in self._stat_seasons():
+            raise UserError(f"no stats for the {season} season", 404)
+        return season
+
+    def _stats_memo(self, kind: str, season: int, playoff: bool, build):
+        """Cache a stat table until a game is played (or box scores are pruned)."""
+        lg = self._lg()
+        games = [g for g in lg.games.values() if g.season == season and g.playoff == playoff]
+        key = (kind, season, playoff, lg.current_date.isoformat(), lg.phase.value,
+               sum(1 for g in games if g.played), sum(1 for g in games if g.box_score is not None))
+        memo = self.__dict__.get("_stats_cache")
+        if memo is None or memo[0] is not lg:
+            memo = (lg, {})
+            self.__dict__["_stats_cache"] = memo
+        cache = memo[1]
+        if key not in cache:
+            if len(cache) > 32:
+                cache.clear()
+            cache[key] = build()
+        return cache[key]
+
+    def _player_totals(self, season: int, playoff: bool) -> dict:
+        from ..stats_tables import player_totals
+        return self._stats_memo("players", season, playoff,
+                                lambda: player_totals(self._lg(), season, playoff))
+
+    @staticmethod
+    def _rounded(line: dict) -> dict:
+        out = {}
+        for k, v in line.items():
+            if isinstance(v, float):
+                pct = k.endswith(("_pct", "_rate")) or k in ("efg", "ts", "usg", "fga_share", "opp_efg")
+                out[k] = round(v, 3 if pct else 1)
+            else:
+                out[k] = v
+        return out
+
+    def stats_leaders(self, playoffs: bool = False, pos: Optional[str] = None,
+                      season: Optional[int] = None, limit: int = 10) -> dict:
+        """League leaders per game, shooting and advanced, with qualifiers."""
+        from ..stats_tables import LEADER_CATEGORIES, min_games, player_line
+        lg = self._lg()
+        season = self._stat_season(season)
+        playoff = bool(playoffs)
+        if pos and pos not in {p.value for p in POSITIONS}:
+            raise UserError(f"position must be one of {', '.join(p.value for p in POSITIONS)}")
+        limit = max(1, min(50, int(limit)))
+        totals = self._player_totals(season, playoff)
+        need = min_games(lg, season, playoff, totals)
+        lines = {}
+        for pid, t in totals.items():
+            p = lg.players.get(pid)
+            if p is None or t["gp"] < need or (pos and p.position.value != pos):
+                continue
+            lines[pid] = player_line(t)
+        cats = []
+        for key, label, kind, extra in LEADER_CATEGORIES:
+            pool = [pid for pid, line in lines.items() if line[key] is not None
+                    and (extra is None or line[extra[0]] >= extra[1])]
+            pool.sort(key=lambda pid: (-lines[pid][key], -lines[pid]["gp"], pid))
+            rows = []
+            for pid in pool[:limit]:
+                p, t = lg.players[pid], totals[pid]
+                team = lg.teams.get(t["team_id"])
+                rows.append({"player_id": pid, "name": p.name, "pos": p.position.value,
+                             "team_id": t["team_id"], "team": team.abbreviation if team else "?",
+                             "gp": lines[pid]["gp"], "mpg": round(lines[pid]["mpg"], 1),
+                             "value": round(lines[pid][key], 3 if kind == "pct" else 1),
+                             "mine": t["team_id"] == lg.user_team_id})
+            cats.append({"key": key, "label": label, "kind": kind, "rows": rows,
+                         "qualifier": f"{need}+ games" + (f", {extra[2]}" if extra else ""),
+                         "advanced": key in ("ts", "usg", "fga_share", "pts36", "trb36", "ast36")})
+        return {"season": season, "seasons": self._stat_seasons(), "playoffs": playoff, "pos": pos,
+                "positions": [p.value for p in POSITIONS], "min_games": need, "categories": cats,
+                "from_box_scores": any(t.get("context") for t in totals.values()),
+                "user_team_id": lg.user_team_id}
+
+    def stats_teams(self, playoffs: bool = False, season: Optional[int] = None) -> dict:
+        """Per-team table: points, pace, ratings and the four factors."""
+        from ..stats_tables import team_line, team_totals
+        lg = self._lg()
+        season = self._stat_season(season)
+        playoff = bool(playoffs)
+        totals = self._stats_memo("teams", season, playoff, lambda: team_totals(lg, season, playoff))
+        rows = []
+        for tid, t in totals.items():
+            team = lg.teams[tid]
+            rows.append({"team_id": tid, "abbr": team.abbreviation, "name": team.full_name,
+                         "conference": team.conference, "mine": tid == lg.user_team_id,
+                         **self._rounded(team_line(t)),
+                         "totals": {k: (round(v, 2) if isinstance(v, float) else v) for k, v in t.items()}})
+        rows.sort(key=lambda r: -(r["net"] or 0))
+        league = None
+        if totals:
+            agg: dict = {}
+            for t in totals.values():
+                for k, v in t.items():
+                    agg[k] = agg.get(k, 0) + v
+            league = self._rounded(team_line(agg))
+        note = None
+        if not rows:
+            played = any(g.played for g in lg.games.values() if g.season == season and g.playoff == playoff)
+            note = ("Team stats come from box scores, which are kept for the current season only."
+                    if season != lg.season or played else "No games played yet.")
+        return {"season": season, "seasons": self._stat_seasons(), "playoffs": playoff,
+                "teams": rows, "league": league, "note": note, "user_team_id": lg.user_team_id}
+
+    def player_history(self, pid: int) -> dict:
+        """Season-by-season career table (plus the season in progress) and chart points."""
+        from ..stats_tables import player_line
+        lg = self._lg()
+        p = self._find_player(int(pid))
+
+        def row(t: dict, season: int, playoff: bool, team_id, age, ca, in_progress: bool) -> dict:
+            team = lg.teams.get(team_id) if team_id is not None else None
+            line = self._rounded(player_line(t))
+            return {"season": season, "playoffs": playoff, "team_id": team_id,
+                    "team": team.abbreviation if team else "?", "age": age, "ca": ca,
+                    "in_progress": in_progress,
+                    "totals": {k: int(t[k]) for k in ("pts", "fgm", "fga", "tpm", "tpa", "ftm", "fta",
+                                                      "orb", "drb", "ast", "stl", "blk", "tov")},
+                    **{k: line[k] for k in ("gp", "gs", "mpg", "pts", "trb", "ast", "stl", "blk", "tov",
+                                            "fg_pct", "tp_pct", "ft_pct", "efg", "ts", "pts36")}}
+
+        rows = []
+        for c in sorted(p.career, key=lambda c: (c["season"], c["playoffs"])):
+            t = {**c, "seconds": c["min"] * 60}
+            rows.append(row(t, c["season"], c["playoffs"], c.get("team_id"), c.get("age"), c.get("ca"), False))
+        done = {(r["season"], r["playoffs"]) for r in rows}
+        if p.id in lg.players:
+            for playoff in (False, True):
+                if (lg.season, playoff) in done:
+                    continue
+                t = self._player_totals(lg.season, playoff).get(p.id)
+                if t and t.get("context"):
+                    rows.append(row(t, lg.season, playoff, t["team_id"], p.age(lg.current_date),
+                                    p.current_ability, True))
+        rows.sort(key=lambda r: (r["season"], r["playoffs"]))
+        chart = [{"season": r["season"], "ppg": r["pts"], "rpg": r["trb"], "apg": r["ast"],
+                  "ca": r["ca"], "in_progress": r["in_progress"]} for r in rows if not r["playoffs"]]
+        if not chart or chart[-1]["season"] < lg.season:
+            chart.append({"season": lg.season, "ppg": None, "rpg": None, "apg": None,
+                          "ca": p.current_ability, "in_progress": True})
+        return {"player_id": p.id, "name": p.name, "pos": p.position.value, "ca": p.current_ability,
+                "seasons": rows, "chart": chart,
+                "ability_source": "season-end snapshots; the last point is his ability now"}
+
+    def team_gamelog(self, team_id: Optional[int] = None) -> dict:
+        """Every game a team has played this season: result, score, record, top scorer."""
+        lg = self._me()
+        tid = lg.user_team_id if team_id is None else int(team_id)
+        if tid not in lg.teams:
+            raise UserError(f"no team {tid}", 404)
+        games = sorted((g for g in lg.games.values() if g.season == lg.season
+                        and tid in (g.home_team_id, g.away_team_id)), key=lambda g: (g.playoff, g.day, g.id))
+        rows, record = [], {False: [0, 0], True: [0, 0]}
+        for g in games:
+            if not g.played:
+                continue
+            at_home = g.home_team_id == tid
+            mine = g.result.home_score if at_home else g.result.away_score
+            theirs = g.result.away_score if at_home else g.result.home_score
+            won = mine > theirs
+            record[g.playoff][0 if won else 1] += 1
+            opp = lg.teams[g.away_team_id if at_home else g.home_team_id]
+            top = None
+            if g.box_score:
+                box = g.box_score.home if at_home else g.box_score.away
+                played = [x for x in box.lines if x.seconds > 0]
+                if played:
+                    best = max(played, key=lambda x: (x.pts, x.trb + x.ast, -x.player_id))
+                    pl = lg.players.get(best.player_id)
+                    top = {"player_id": best.player_id, "name": pl.name if pl else "?", "pts": best.pts,
+                           "trb": best.trb, "ast": best.ast}
+            w, l = record[g.playoff]
+            rows.append({"id": g.id, "day": g.day, "playoff": g.playoff,
+                         "date": (season_start(g.season) + timedelta(days=g.day)).isoformat(),
+                         "at_home": at_home, "opponent_id": opp.id, "opponent": opp.abbreviation,
+                         "opponent_name": opp.full_name, "team_score": mine, "opp_score": theirs,
+                         "won": won, "ot": g.result.overtimes, "margin": mine - theirs,
+                         "record": f"{w}-{l}", "top_scorer": top,
+                         "has_box": g.box_score is not None, "has_replay": g.id in lg.replays})
+        reg = [r for r in rows if not r["playoff"]]
+        return {"team_id": tid, "abbr": lg.teams[tid].abbreviation, "name": lg.teams[tid].full_name,
+                "season": lg.season, "games": rows, "record": record[False],
+                "playoff_record": record[True],
+                "remaining": sum(1 for g in games if not g.played and not g.playoff),
+                "points_for": sum(r["team_score"] for r in reg),
+                "points_against": sum(r["opp_score"] for r in reg)}

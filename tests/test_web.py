@@ -256,6 +256,182 @@ class WebApiTests(unittest.TestCase):
         self.assertIn('<div id="root">', r.text)
         self.assertEqual(self.client.get("/squad").status_code, 200)              # client-side routes
 
+    # -- stats pages ------------------------------------------------------
+    def sim_days(self, days):
+        """Sim at least ``days`` days of the regular season (trade offers pause the sim)."""
+        target = self.session._days_played() + days
+        for _ in range(50):
+            if self.session._days_played() >= target or self.get("/api/state")["stage"] != "regular_season":
+                return
+            self.post("/api/sim", {"mode": "days", "days": target - self.session._days_played()})
+
+    def sim_season_and_playoffs(self):
+        for _ in range(50):
+            if self.post("/api/sim", {"mode": "end"})["state"]["stage"] == "season_over":
+                break
+        self.post("/api/playoffs/start")
+        self.post("/api/playoffs/sim", {"mode": "all"})
+
+    def test_stats_leaders_are_sorted_and_qualified(self):
+        from hoopsim.stats import season_totals
+        me = self.new_game()
+        self.sim_days(8)
+        d = self.get("/api/stats/leaders")
+        self.assert_no_secrets(d)
+        totals = season_totals(self.session.league)
+        most = max(sum(1 for g in self.session.league.games.values() if g.played and not g.playoff
+                       and tid in (g.home_team_id, g.away_team_id)) for tid in self.session.league.teams)
+        self.assertEqual(d["min_games"], max(1, round(0.6 * most)))
+        need_volume = {"fg_pct": ("fga", 5), "tp_pct": ("tpa", 2), "ft_pct": ("fta", 2), "ts": ("fga", 5)}
+        keys = {c["key"] for c in d["categories"]}
+        self.assertTrue({"pts", "trb", "ast", "stl", "blk", "fg_pct", "tp_pct", "ft_pct", "ts", "usg",
+                         "fga_share", "pts36"} <= keys)
+        for c in d["categories"]:
+            values = [r["value"] for r in c["rows"]]
+            self.assertEqual(values, sorted(values, reverse=True), c["key"])
+            for r in c["rows"]:
+                t = totals[r["player_id"]]
+                self.assertGreaterEqual(t["gp"], d["min_games"])
+                self.assertEqual(r["gp"], t["gp"])
+                self.assertEqual(r["mine"], t["team_id"] == me)
+                if c["key"] in need_volume:
+                    field, per_game = need_volume[c["key"]]
+                    self.assertGreaterEqual(t[field] / t["gp"], per_game)
+                if c["key"] in ("usg", "fga_share", "pts36", "trb36", "ast36"):
+                    self.assertGreaterEqual(t["seconds"] / 60 / t["gp"], 15)
+        pts = next(c for c in d["categories"] if c["key"] == "pts")
+        self.assertTrue(pts["rows"])
+        top = pts["rows"][0]
+        self.assertAlmostEqual(top["value"], totals[top["player_id"]]["pts"] / totals[top["player_id"]]["gp"], places=1)
+        fg = next(c for c in d["categories"] if c["key"] == "fg_pct")
+        for r in fg["rows"]:
+            t = totals[r["player_id"]]
+            self.assertAlmostEqual(r["value"], t["fgm"] / t["fga"], places=3)
+        # Nobody qualified is left out of a counting list that isn't full
+        qualified = [pid for pid, t in totals.items() if t["gp"] >= d["min_games"]]
+        self.assertEqual(len(pts["rows"]), min(10, len(qualified)))
+        # Position filter and the playoffs (none yet)
+        guards = self.get("/api/stats/leaders?pos=PG")
+        for c in guards["categories"]:
+            for r in c["rows"]:
+                self.assertEqual(self.session.league.players[r["player_id"]].position.value, "PG")
+        self.assertFalse(any(c["rows"] for c in self.get("/api/stats/leaders?playoffs=true")["categories"]))
+        self.assertEqual(self.client.get("/api/stats/leaders?pos=XX").status_code, 400)
+        self.assertEqual(self.client.get("/api/stats/leaders?season=1900").status_code, 404)
+
+    def test_team_ratings_match_box_scores(self):
+        self.new_game()
+        self.sim_days(6)
+        d = self.get("/api/stats/teams")
+        lg = self.session.league
+        games = [g for g in lg.games.values() if g.season == lg.season and g.played and not g.playoff]
+        self.assertEqual(len(d["teams"]), len(lg.teams))
+        self.assertTrue(any(r["mine"] for r in d["teams"]))
+        by_id = {r["team_id"]: r for r in d["teams"]}
+
+        def tot(box):
+            t = box.totals()
+            return t, t.fga + 0.44 * t.fta - t.orb + t.tov
+
+        for tid, row in by_id.items():
+            pts = opp = poss = 0.0
+            fgm = tpm = fga = orb = opp_drb = gp = wins = 0
+            for g in games:
+                if tid not in (g.home_team_id, g.away_team_id):
+                    continue
+                mine, theirs = ((g.box_score.home, g.box_score.away) if g.home_team_id == tid
+                                else (g.box_score.away, g.box_score.home))
+                (m, pm), (o, po) = tot(mine), tot(theirs)
+                gp += 1
+                wins += g.winner_id() == tid
+                pts += m.pts
+                opp += o.pts
+                poss += (pm + po) / 2
+                fgm, tpm, fga, orb, opp_drb = fgm + m.fgm, tpm + m.tpm, fga + m.fga, orb + m.orb, opp_drb + o.drb
+                score = g.result.home_score if g.home_team_id == tid else g.result.away_score
+                self.assertEqual(m.pts, score)                     # box totals are the final score
+            self.assertEqual((row["gp"], row["w"]), (gp, wins))
+            self.assertEqual(row["totals"]["pts"], pts)
+            self.assertEqual(row["totals"]["opp_pts"], opp)
+            self.assertAlmostEqual(row["totals"]["poss"], poss, places=1)
+            self.assertAlmostEqual(row["ppg"], pts / gp, places=1)
+            self.assertAlmostEqual(row["ortg"], 100 * pts / poss, places=1)
+            self.assertAlmostEqual(row["drtg"], 100 * opp / poss, places=1)
+            self.assertAlmostEqual(row["efg"], (fgm + 0.5 * tpm) / fga, places=3)
+            self.assertAlmostEqual(row["orb_pct"], orb / (orb + opp_drb), places=3)
+            self.assertTrue(60 < row["pace"] < 140)
+        # League-wide, points for equal points against and the average ratings agree
+        self.assertEqual(sum(r["totals"]["pts"] for r in d["teams"]), sum(r["totals"]["opp_pts"] for r in d["teams"]))
+        self.assertAlmostEqual(d["league"]["ortg"], d["league"]["drtg"], places=1)
+        nets = [r["net"] for r in d["teams"]]
+        self.assertEqual(nets, sorted(nets, reverse=True))
+
+    def test_player_history_matches_career_lines(self):
+        from hoopsim.stats import season_totals
+        me = self.new_game()
+        self.sim_days(4)
+        lg = self.session.league
+        pid = max(season_totals(lg).items(), key=lambda kv: kv[1]["pts"])[0]
+        h = self.get(f"/api/players/{pid}/history")
+        self.assert_no_secrets(h)
+        live = [r for r in h["seasons"] if r["in_progress"] and not r["playoffs"]]
+        self.assertEqual(len(live), 1)
+        t = season_totals(lg)[pid]
+        self.assertEqual((live[0]["gp"], live[0]["totals"]["pts"]), (t["gp"], t["pts"]))
+        self.assertEqual(h["chart"][-1]["ca"], lg.players[pid].current_ability)
+        self.sim_season_and_playoffs()
+        p = lg.players[pid]
+        h = self.get(f"/api/players/{pid}/history")
+        self.assertEqual(len(h["seasons"]), len(p.career))
+        for row, c in zip(h["seasons"], sorted(p.career, key=lambda c: (c["season"], c["playoffs"]))):
+            self.assertFalse(row["in_progress"])
+            self.assertEqual((row["season"], row["playoffs"], row["team"], row["gp"], row["ca"]),
+                             (c["season"], c["playoffs"], c["team"], c["gp"], c["ca"]))
+            for k in ("pts", "fgm", "fga", "ast", "tov"):
+                self.assertEqual(row["totals"][k], c[k])
+            self.assertAlmostEqual(row["pts"], c["pts"] / c["gp"], places=1)
+            self.assertAlmostEqual(row["trb"], (c["orb"] + c["drb"]) / c["gp"], places=1)
+        reg = [c for c in p.career if not c["playoffs"]]
+        self.assertEqual([x["season"] for x in h["chart"]], [c["season"] for c in reg])
+        self.assertEqual(h["chart"][-1]["ca"], reg[-1]["ca"])
+        # Box scores are pruned now: leaders come from career lines, team stats say why they're empty
+        leaders = self.get("/api/stats/leaders")
+        self.assertFalse(leaders["from_box_scores"])
+        self.assertTrue(next(c for c in leaders["categories"] if c["key"] == "pts")["rows"])
+        teams = self.get("/api/stats/teams")
+        self.assertEqual(teams["teams"], [])
+        self.assertIn("box scores", teams["note"])
+        self.assertEqual(self.client.get("/api/players/999999/history").status_code, 404)
+        log = self.get("/api/team/gamelog")
+        self.assertTrue(log["games"])
+        self.assertTrue(all(g["top_scorer"] is None and not g["has_box"] for g in log["games"]))
+        self.assertEqual(log["team_id"], me)
+
+    def test_game_log_matches_the_schedule(self):
+        me = self.new_game()
+        self.sim_days(5)
+        log = self.get("/api/team/gamelog")
+        sched = [g for g in self.get("/api/schedule")["games"] if g["played"]]
+        self.assertEqual([g["id"] for g in log["games"]], [g["id"] for g in sched])
+        lg = self.session.league
+        for row, g in zip(log["games"], sched):
+            self.assertEqual(f"{row['team_score']}-{row['opp_score']}", g["score"])
+            self.assertEqual(row["won"], g["won"])
+            self.assertEqual(row["opponent_id"], g["opponent_id"])
+            self.assertEqual(row["at_home"], g["at_home"])
+            self.assertEqual(row["has_box"], g["has_box"])
+            self.assertEqual(row["has_replay"], g["has_replay"])
+            box = lg.games[row["id"]].box_score
+            lines = (box.home if row["at_home"] else box.away).lines
+            self.assertEqual(row["top_scorer"]["pts"], max(l.pts for l in lines))
+            self.assertIn(row["top_scorer"]["player_id"], {l.player_id for l in lines})
+        self.assertEqual(log["record"], self.get("/api/state")["record"])
+        self.assertEqual(log["games"][-1]["record"], "-".join(map(str, log["record"])))
+        self.assertEqual(log["remaining"], len([g for g in self.get("/api/schedule")["games"] if not g["played"]]))
+        other = next(t for t in lg.teams if t != me)
+        self.assertEqual(self.get(f"/api/team/gamelog?team_id={other}")["team_id"], other)
+        self.assertEqual(self.client.get("/api/team/gamelog?team_id=999").status_code, 404)
+
 
 if __name__ == "__main__":
     unittest.main()

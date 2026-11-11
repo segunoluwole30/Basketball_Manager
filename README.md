@@ -172,16 +172,27 @@ package (`hoopsim/web/static/`), so Node isn't needed to play.
 | Screen | What's on it |
 |---|---|
 | **Home** | record, conference standings, next games and recent results, team leaders, injuries, and an inbox: results, injuries, trades, offers from AI teams (accept or decline), season news. The top bar sims a day, a week, to the trade deadline or to the end of the regular season, then runs the playoffs (a day, a round or all). |
-| **Squad** | sortable roster tables (overview, ratings, stats, contracts) for any team, finances. Click any name for the player card: attributes, scouted potential with its range, scouting notes, ability by position, player instructions, season and career stats. |
+| **Squad** | sortable roster tables (overview, ratings, stats, contracts) for any team, finances. Click any name for the player card: attributes, scouted potential with its range, scouting notes, ability by position, player instructions, this season's line and a career section: small charts of points, rebounds and assists per game and current ability by season (ability from end-of-season snapshots, plus today's), and a season-by-season table for the regular season and the playoffs. |
 | **Tactics** | starting five by position (with each player's ability at that slot), minutes that must total 240 (with a "balance" helper), the assistant-coach toggle, team tactics and player instructions. |
 | **Transfers** | free agents with their asks and a contract form that shows how you'd pay (cap space, mid-level exception, minimum); a trade builder with live salary-matching and roster feedback and the other team's verdict. |
 | **League** | standings, leaders, schedule and results with box scores (current season), a daily scoreboard, the playoff bracket and past seasons. |
+| **Stats** | *League leaders*: per-game points, rebounds, assists, steals and blocks, FG%, 3P% and FT%, and advanced lists (true shooting %, usage %, share of team FGA, points/rebounds/assists per 36), filtered by season, regular season or playoffs, and position; your players are highlighted. To qualify a player needs 60% of the most games any team has played (4 games in the playoffs), plus 5 FGA, 2 3PA or 2 FTA per game for the shooting lists and 15 minutes per game for the rate lists. *Team stats*: a sortable table of points for and against, pace, offensive, defensive and net rating and the four factors for offence and defence (eFG%, TOV%, ORB%/DRB%, FT rate, 3PA rate). *Game log*: every game a team has played this season with the score, running record and top scorer, linked to the box score and, for recorded games, the viewer. |
 | **Offseason** | one screen per step: team options, re-signing (asks and the chance he stays), the draft board pick by pick, every free-agency round, trade offers and roster cuts. Any decision, a whole step or the rest of the summer can be handed to your assistant. |
 
 The offseason runs as resumable steps (`start_offseason`, `offseason_pending`,
 `answer_offseason` in `season.py`); `run_offseason` drives the same steps with a
 `Manager`, so the terminal game and the AI behave exactly as before. The API is
 under `/api` (interactive docs at `/api/docs`).
+
+The stats pages are read-only (`/api/stats/leaders`, `/api/stats/teams`,
+`/api/players/{id}/history`, `/api/team/gamelog`) and computed from box scores in
+`hoopsim/stats_tables.py`, cached until the next game is played. Possessions per
+team-game are estimated as FGA + 0.44 FTA - ORB + TOV and averaged over the two
+teams, so a game's teams share one count; ratings are points per 100 of those
+possessions and pace is possessions per 48 minutes. Box scores are only kept for
+the season being played, so past seasons' leaders come from the players' career
+lines (without the usage numbers, which need team totals) and team stats cover the
+current season only.
 
 Front-end development (React + TypeScript + Vite, source in `web/`):
 
