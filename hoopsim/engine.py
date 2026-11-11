@@ -190,6 +190,7 @@ class GameSim:
     box_score: BoxScore
     play_by_play: list[PlayEvent]
     injuries: list[tuple[int, Injury]] = field(default_factory=list)  # (player id, injury)
+    replay: Optional[bytes] = None      # spatial games: zlib'd viewer JSON (user team's games)
 
 
 # --------------------------------------------------------------------------
@@ -928,6 +929,9 @@ class _GameSim:
 # --------------------------------------------------------------------------
 # Public API
 # --------------------------------------------------------------------------
+REPLAYS_KEPT = 10   # recorded spatial games of the user's team kept in the save
+
+
 def simulate_game(league: League, game: Game, rng: Optional[random.Random] = None, *,
                   record_pbp: bool = False, tuning: Tuning = DEFAULT_TUNING) -> GameSim:
     """Simulate ``game`` without changing the league (on the league's match engine)."""
@@ -947,6 +951,10 @@ def play_game(league: League, game_id: int, rng: Optional[random.Random] = None,
     game.result, game.box_score = sim.result, sim.box_score
     for pid, injury in sim.injuries:
         league.players[pid].injury = injury
+    if sim.replay is not None:
+        league.replays[game_id] = sim.replay
+        for old in sorted(league.replays)[:-REPLAYS_KEPT]:     # keep the most recent few
+            del league.replays[old]
     return sim
 
 

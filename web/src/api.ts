@@ -132,6 +132,7 @@ export interface GameView {
   away: string;
   played: boolean;
   has_box: boolean;
+  has_replay?: boolean;
   home_score?: number;
   away_score?: number;
   ot?: number;

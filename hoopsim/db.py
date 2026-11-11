@@ -16,8 +16,9 @@ from pathlib import Path
 
 from .models import Game, League, LeagueRules, Phase, Player, Series, Team
 
-SCHEMA_VERSION = 3   # v2 adds phase, playoffs and history; v3 an offseason in progress and the inbox
-READABLE_VERSIONS = (1, 2, 3)
+SCHEMA_VERSION = 4   # v2 adds phase, playoffs and history; v3 an offseason in progress and the inbox;
+                     # v4 replays of the user's spatial games
+READABLE_VERSIONS = (1, 2, 3, 4)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -47,6 +48,10 @@ CREATE TABLE IF NOT EXISTS games (
     data         TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS games_season_day ON games(season, day);
+CREATE TABLE IF NOT EXISTS replays (
+    game_id INTEGER PRIMARY KEY,
+    data    BLOB NOT NULL
+);
 """
 
 
@@ -62,6 +67,7 @@ def save_league(league: League, path: str | Path) -> None:
     conn = _connect(path)
     try:
         with conn:  # one transaction: all or nothing
+            conn.execute("DELETE FROM replays")
             conn.execute("DELETE FROM games")
             conn.execute("DELETE FROM players")
             conn.execute("DELETE FROM teams")
@@ -96,6 +102,8 @@ def save_league(league: League, path: str | Path) -> None:
                 [(g.id, g.season, g.day, g.home_team_id, g.away_team_id, int(g.playoff),
                   json.dumps(g.to_dict())) for g in league.games.values()],
             )
+            conn.executemany("INSERT INTO replays VALUES (?, ?)",
+                             [(gid, data) for gid, data in league.replays.items() if gid in league.games])
     finally:
         conn.close()
 
@@ -129,6 +137,7 @@ def load_league(path: str | Path) -> League:
             league.add_player(Player.from_dict(json.loads(data)))
         for (data,) in conn.execute("SELECT data FROM games ORDER BY id"):
             league.add_game(Game.from_dict(json.loads(data)))
+        league.replays = {gid: bytes(data) for gid, data in conn.execute("SELECT game_id, data FROM replays")}
         return league
     finally:
         conn.close()

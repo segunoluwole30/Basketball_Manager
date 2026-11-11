@@ -93,6 +93,15 @@ Differences on the spatial engine, for now (`spatial/season_game.py`):
 - Morale doesn't change game-day form.
 - `game --pbp` has no text play-by-play. Watch the game instead
   (`python -m hoopsim watch --full`).
+
+**Watching your games.** On the spatial engine, your team's games record their
+movement. In the browser, recorded games show a **watch** link next to **box**
+(on Home → Recent results, and on League → Schedule). It opens the match viewer
+for the whole game, with quarter buttons and the box score. A replay is about
+0.8 MB compressed, so only your 10 most recent are kept in the save
+(`engine.REPLAYS_KEPT`; save files are schema v4, and v1–v3 still load). Other
+teams' games, and statistical-engine games, aren't recorded. Replaying them on
+the spatial engine wouldn't reproduce the result in the standings.
 - The full-game numbers (pace ~103, ~116 points, three share ~.36) are in the
   "Full games" section below.
 

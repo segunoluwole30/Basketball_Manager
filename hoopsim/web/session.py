@@ -622,7 +622,8 @@ class GameSession:
         v = {"id": g.id, "day": g.day, "playoff": g.playoff,
              "date": (season_start(g.season) + timedelta(days=g.day)).isoformat(),
              "home_id": home.id, "home": home.abbreviation, "away_id": away.id, "away": away.abbreviation,
-             "played": g.played, "has_box": g.box_score is not None}
+             "played": g.played, "has_box": g.box_score is not None,
+             "has_replay": g.id in lg.replays}
         if g.result:
             v.update({"home_score": g.result.home_score, "away_score": g.result.away_score,
                       "ot": g.result.overtimes})
@@ -885,6 +886,19 @@ class GameSession:
         games = sorted((g for g in lg.games.values() if g.season == lg.season and g.day == d and g.played),
                        key=lambda g: g.id)
         return {"day": d, "days": played_days, "games": [self._game_view(g) for g in games]}
+
+    def replay_page(self, game_id: int) -> str:
+        """The match viewer for a recorded game (spatial engine, the user's team)."""
+        from ..spatial.export import build_html
+        from ..spatial.season_game import replay_data
+        lg = self._lg()
+        if int(game_id) not in lg.games:
+            raise UserError(f"no game {game_id}", 404)
+        data = replay_data(lg, int(game_id))
+        if data is None:
+            raise UserError("no recording of that game: only your team's most recent games on the "
+                            "spatial engine are kept", 404)
+        return build_html(data)
 
     def box_score(self, game_id: int) -> dict:
         lg = self._lg()

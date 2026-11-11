@@ -695,6 +695,7 @@ class League:
     offseason: Optional[dict] = None                        # an offseason in progress (season.py)
     last_offseason: Optional[dict] = None                   # the last finished offseason's report
     inbox: list[dict] = field(default_factory=list)         # news for the user (web interface)
+    replays: dict[int, bytes] = field(default_factory=dict)  # game id -> zlib'd viewer JSON (spatial, user team)
 
     # -- id allocation ------------------------------------------------------
     def next_player_id(self) -> int:

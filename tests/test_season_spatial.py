@@ -62,3 +62,38 @@ class SpatialSeasonTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReplayTests(unittest.TestCase):
+    def test_user_games_are_recorded_saved_and_capped(self):
+        from hoopsim import engine
+        league = short_spatial_league(days=40)
+        league.user_team_id = 1
+        mine = sorted((g for g in league.games.values() if 1 in (g.home_team_id, g.away_team_id)),
+                      key=lambda g: g.id)
+        other = next(g for g in league.games.values() if 1 not in (g.home_team_id, g.away_team_id))
+        play_game(league, other.id, random.Random(0))
+        self.assertNotIn(other.id, league.replays)
+        old_keep = engine.REPLAYS_KEPT
+        engine.REPLAYS_KEPT = 2
+        try:
+            for i, g in enumerate(mine[:3]):
+                play_game(league, g.id, random.Random(i))
+        finally:
+            engine.REPLAYS_KEPT = old_keep
+        self.assertEqual(sorted(league.replays), [g.id for g in mine[1:3]])   # oldest dropped
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "lg.db"
+            save_league(league, path)
+            back = load_league(path)
+            self.assertEqual(back.replays, league.replays)
+        from hoopsim.spatial.season_game import replay_data
+        data = replay_data(league, mine[2].id)
+        self.assertEqual({p["period"] for p in data["possessions"]} >= {1, 2, 3, 4}, True)
+
+    def test_statistical_leagues_record_nothing(self):
+        league = generate_league(seed=4, num_teams=4)
+        league.user_team_id = 1
+        g = next(g for g in league.games.values() if 1 in (g.home_team_id, g.away_team_id))
+        play_game(league, g.id, random.Random(0))
+        self.assertEqual(league.replays, {})

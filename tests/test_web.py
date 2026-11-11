@@ -273,6 +273,27 @@ class WebMatchEngineTests(unittest.TestCase):
         self.post("/api/new", {"seed": 7, "num_teams": 4, "match_engine": "spatial"})
         self.assertEqual(self.session.league.rules.match_engine, "spatial")
 
+    def test_watch_your_spatial_games(self):
+        choices = self.post("/api/new", {"seed": 7, "num_teams": 4, "match_engine": "spatial"})["teams"]
+        short_season(self.session, games=4)
+        me = choices[0]["id"]
+        self.post("/api/new/team", {"team_id": me})
+        lg = self.session.league
+        while not any(g.played for g in lg.games.values() if me in (g.home_team_id, g.away_team_id)):
+            self.post("/api/sim", {"mode": "day"})
+        mine = [g for g in lg.games.values() if g.played and me in (g.home_team_id, g.away_team_id)]
+        others = [g for g in lg.games.values() if g.played and me not in (g.home_team_id, g.away_team_id)]
+        self.assertTrue(all(g.id in lg.replays for g in mine))
+        self.assertTrue(all(g.id not in lg.replays for g in others))
+        view = self.client.get(f"/api/game/{mine[0].id}").json()
+        self.assertTrue(view["has_replay"])
+        page = self.client.get(f"/api/replay/{mine[0].id}")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("text/html", page.headers["content-type"])
+        self.assertIn("window.GAME", page.text)
+        if others:
+            self.assertEqual(self.client.get(f"/api/replay/{others[0].id}").status_code, 404)
+
     def test_unknown_engine_is_refused(self):
         r = self.client.post("/api/new", json={"seed": 7, "num_teams": 4, "match_engine": "arcade"})
         self.assertGreaterEqual(r.status_code, 400)

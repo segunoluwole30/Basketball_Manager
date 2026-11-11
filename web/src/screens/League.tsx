@@ -120,7 +120,12 @@ function GamesTable({ games, onBox, me }: { games: GameView[]; onBox: (id: numbe
         { key: "score", label: "Score", sort: (g) => g.day, render: (g) => (g.played ? `${g.away_score} – ${g.home_score}${g.ot ? ` (${g.ot}OT)` : ""}` : "–") },
         { key: "home", label: "Home", desc: false, render: (g) => <span className={g.home_id === me ? "me" : ""}>{g.home}</span> },
         { key: "res", label: "", render: (g) => (g.won === undefined ? (g.playoff ? <span className="muted small">PO</span> : "") : <b className={g.won ? "good" : "bad"}>{g.won ? "W" : "L"}</b>) },
-        { key: "box", label: "", render: (g) => (g.has_box ? <button className="link small" onClick={(e) => { e.stopPropagation(); onBox(g.id); }}>box</button> : "") },
+        { key: "box", label: "", render: (g) => (
+          <span className="row gap">
+            {g.has_box && <button className="link small" onClick={(e) => { e.stopPropagation(); onBox(g.id); }}>box</button>}
+            {g.has_replay && <a className="link small" href={`/api/replay/${g.id}`} target="_blank" rel="noopener" onClick={(e) => e.stopPropagation()}>watch</a>}
+          </span>
+        ) },
       ]} />
   );
 }

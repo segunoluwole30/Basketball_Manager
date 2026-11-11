@@ -83,6 +83,7 @@ export function GameList({ games, onBox }: { games: GameView[]; onBox?: (id: num
             <>
               <span className={g.won ? "good" : "bad"}><b>{g.won ? "W" : "L"}</b> {g.score}{g.ot ? ` (${g.ot}OT)` : ""}</span>
               {g.has_box && onBox && <button className="link small" onClick={() => onBox(g.id)}>box</button>}
+              {g.has_replay && <a className="link small" href={`/api/replay/${g.id}`} target="_blank" rel="noopener">watch</a>}
             </>
           ) : <span className="muted small">{g.playoff ? "playoff" : `day ${g.day}`}</span>}
         </li>

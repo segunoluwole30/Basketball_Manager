@@ -16,8 +16,10 @@ Differences from the statistical engine, for now:
 """
 from __future__ import annotations
 
+import json
 import math
 import random
+import zlib
 from typing import Optional
 
 from ..engine import DEFAULT_TUNING, GameSim
@@ -36,8 +38,11 @@ def _model() -> DecisionModel:
     return _MODEL
 
 
-def simulate_spatial(league: League, game: Game, rng: random.Random, record: bool = False) -> GameSim:
-    """Play ``game`` as a full spatial game, without changing the league."""
+def simulate_spatial(league: League, game: Game, rng: random.Random, record: Optional[bool] = None) -> GameSim:
+    """Play ``game`` as a full spatial game, without changing the league. ``record``
+    (default: the user's team is playing) keeps the movement for the viewer."""
+    if record is None:
+        record = league.user_team_id in (game.home_team_id, game.away_team_id)
     fg = FullGame(league, game.home_team_id, game.away_team_id, rng, record=record, model=_model())
     sim = fg.run()
     t = DEFAULT_TUNING
@@ -52,4 +57,13 @@ def simulate_spatial(league: League, game: Game, rng: random.Random, record: boo
                     * (1 + 1.5 * (1 - s.energy)))
             if rng.random() < 1 - math.exp(-rate * s.seconds):
                 injuries.append((s.p.id, draw_injury(rng)))
-    return GameSim(sim.result, sim.box_score, sim.play_by_play, injuries)
+    replay = None
+    if record:
+        replay = zlib.compress(json.dumps(fg.to_dict(), separators=(",", ":")).encode(), 9)
+    return GameSim(sim.result, sim.box_score, sim.play_by_play, injuries, replay)
+
+
+def replay_data(league: League, game_id: int) -> Optional[dict]:
+    """The viewer data of a recorded game (None if it wasn't recorded or was dropped)."""
+    blob = league.replays.get(game_id)
+    return json.loads(zlib.decompress(blob)) if blob else None

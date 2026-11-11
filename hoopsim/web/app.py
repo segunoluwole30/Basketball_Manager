@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import Body, FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -232,6 +232,10 @@ def create_app(session: Optional[GameSession] = None) -> FastAPI:
     @app.get("/api/game/{game_id}")
     def box_score(game_id: int):
         return run(game.box_score, game_id)
+
+    @app.get("/api/replay/{game_id}", response_class=HTMLResponse)
+    def replay(game_id: int):
+        return HTMLResponse(run(game.replay_page, game_id))
 
     @app.get("/api/history")
     def history():
