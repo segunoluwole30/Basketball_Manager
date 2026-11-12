@@ -236,7 +236,7 @@ class AnimatedPlayersTests(unittest.TestCase):
         self.assertIn("const ht = pl.ht > 0 ? pl.ht : b[0]", src)
         self.assertIn("const wt = pl.wt > 0 ? pl.wt : b[1]", src)
         self.assertIn("const ws = pl.ws > 0 ? pl.ws : ht", src)
-        self.assertIn("o.morphTargetInfluences[0] = Math.max(-0.8, Math.min(1.5, (ph.girth - 1) / (body.bulk_girth - 1)));", src)
+        self.assertIn("o.morphTargetInfluences[0] = Math.max(-0.8, Math.min(1, (ph.girth - 1) / (body.bulk_girth - 1)));", src)
         self.assertIn('bones[sd + "Arm"].scale.setScalar(arm);', src)
         self.assertIn("function skinOf(pl)", src)                  # a stored skin tone wins over the name's
         # exported pages carry no builds: nothing to look players up in
