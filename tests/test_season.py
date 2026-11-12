@@ -66,6 +66,30 @@ class InjuryTests(unittest.TestCase):
         self.assertEqual(len(starters), 5)
         self.assertEqual(sum(minutes.values()), 240)
 
+    def test_minutes_follow_ability(self):
+        """Minutes by ability, not starting spot: the best play most, stars far above their
+        teammates get star minutes (capped), and the spread is NBA-like."""
+        from hoopsim.lineup import STAR_CAP, STARTER_EDGE
+        league = generate_league(seed=3, num_teams=6)
+        for tid in league.teams:
+            roster = league.roster(tid)
+            starters, minutes = plan_rotation(roster, 9)
+            self.assertEqual(sum(minutes.values()), 240)
+            ranked = sorted(minutes, key=lambda pid: -(league.players[pid].current_ability
+                                                       + STARTER_EDGE * (pid in starters)))
+            mins = [minutes[pid] for pid in ranked]
+            self.assertEqual(mins, sorted(mins, reverse=True))
+            self.assertTrue(30 <= mins[0] <= STAR_CAP and 22 <= mins[4] <= 29 and mins[-1] <= 20, mins)
+        roster = league.roster(min(league.teams))
+        best = max(roster, key=lambda p: p.current_ability)
+        before = plan_rotation(roster, 9)[1][best.id]
+        for a in ("finishing", "close_range", "mid_range", "three_point", "passing", "ball_handling",
+                  "vision", "perimeter_defense", "basketball_iq", "speed"):
+            setattr(best.attributes, a, 20)                      # make him a superstar
+        after = plan_rotation(roster, 9)[1][best.id]
+        self.assertGreater(after, before)
+        self.assertLessEqual(after, STAR_CAP)
+
 
 class DevelopmentTests(unittest.TestCase):
     def test_young_grow_old_decline(self):

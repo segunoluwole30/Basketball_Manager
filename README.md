@@ -1521,8 +1521,26 @@ compared with 2025-26 (players with 30+ games and 15+ minutes):
 | team wins vs 2025-26, correlation | 0.63 | 0.76 |
 | team wins vs 2025-26, mean miss | 9.1 | 7.9 |
 
-The rest is the engine's: the minutes shape gives about 120 players 30+ minutes
-(NBA: ~65), and the best scorers average close to 40 points, as in generated leagues.
+The best scorers still average close to 40 points, as in generated leagues; that is the
+engine's. (The minutes shape, which gave about 130 players 30+ minutes, is fixed: see
+"Minutes" below.)
+
+**Minutes** (`hoopsim/lineup.py` `plan_rotation`). The coach shares out the 240 minutes by
+ability rank, not starting spot, along the 2025-26 NBA curve (a team's best player about
+34, then 31.5, 29.5, 28, 26, 24, 21.5, 19.5, 17.5). A player far better than his
+teammates gets more, up to 38; a starter counts as 12 ability points better when
+ranking, so a strong sixth man can still out-play a weak starter. Over a simulated
+season (players with 40+ games):
+
+| | NBA 2025-26 | before | now |
+|---|---|---|---|
+| players with 30+ mpg | 71 | 132 | 79-86 |
+| 34+ / 36+ mpg | 18 / 3 | 23 / 0 | 18-26 / 2-3 |
+| most mpg | 38.0 | 35.8 | 36.5-36.7 |
+| team's 1st / 3rd / 5th / 8th man (mpg) | 33.6 / 29.7 / 26.2 / 19.6 | 34.2 / 32.7 / 29.9 / 19.5 | 34.4 / 30.2 / 27.5 / 20.9 |
+
+The statistical engine stays 17/17 within tolerance and the spatial measure 13/13 (seed
+1; the starter-minutes target is now the real ~31 in games started, from an estimate of 33).
 
 **Career history.** With history on (the default), `--fetch` also gets every season since
 2003-04, one page per season, plus every draft since 2003. That is about 45 more pages,

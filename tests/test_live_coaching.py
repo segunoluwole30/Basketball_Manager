@@ -125,10 +125,12 @@ class ShoutTests(unittest.TestCase):
 
     def test_protect_the_paint(self):
         t = self.run_with("paint")
-        # ~+0.045 over 48 games since README "Defence that recovers" (+0.017 to +0.061 per
-        # 12-game batch; these seeds +0.038), so the bar sits inside that (was +0.04).
-        self.assertGreater(share(t, "away", "three"), share(self.base, "away", "three") + 0.025)
-        self.assertLess(share(t, "away", "rim"), share(self.base, "away", "rim") + 0.01)
+        # Threes +0.044 and rim shots -0.040 over 72 games since minutes follow ability
+        # (README "Minutes"), but per 12-game batch threes run -0.021 to +0.065 (these
+        # seeds: +0.039 and -0.021) and rim shots -0.010 to -0.078. So: more threes and
+        # clearly fewer rim shots (was threes +0.025 and rim below +0.01).
+        self.assertGreater(share(t, "away", "three"), share(self.base, "away", "three"))
+        self.assertLess(share(t, "away", "rim"), share(self.base, "away", "rim") - 0.01)
 
     def test_foul_now(self):
         t = coached_games({"foul": {}}, seeds=(5,), user="away")    # the away side trails this one

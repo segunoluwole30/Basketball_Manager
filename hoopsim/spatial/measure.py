@@ -180,7 +180,9 @@ FULLGAME_TARGETS = {
     "fta_per_100": (23.6, 3.0),
     "pf_per_100": (20.0, 2.0),
     "tov_per_100": (14.6, 1.5),
-    "starter_minutes": (33.0, 3.0),
+    # 2025-26 per-game: starters average 28.4 mpg over all their games, about 31 in
+    # the games they start (was an estimate of 33).
+    "starter_minutes": (31.0, 3.0),
     "top_minutes": (36.0, 3.0),
     # 2025-26 Advanced Stats, League Average: 3PA rate, eFG%, ORB%.
     "three_share": (0.415, 0.025),
