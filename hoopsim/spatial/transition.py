@@ -49,7 +49,8 @@ WING_LANE = (19.5, 20.5)    # the ball-side wing stopping at the 45 instead of t
 class OpenCourtTuning:
     sprint: float = 1.40            # open-court top speed, relative to half-court speed
     dribble_sprint: float = 1.28    # pushing the ball
-    jog: float = 0.74               # walking it up (an NBA walk-up: ~4-5 s from baseline to half court; was 0.55, then 0.70)
+    brisk: float = 1.0              # ... bringing it up briskly into early offence (SpatialParams.early_offense)
+    jog: float = 0.62               # walking it up (an NBA walk-up: ~4-5 s from baseline to half court; was 0.55, then 0.70, then 0.74; README "Shots with room": early offence brings some up briskly)
     push_after_steal: float = 0.92
     push_after_drb: float = 0.39     # was 0.38 (README "Patient offence"), then 0.43 (README "Defence that recovers")
     push_after_score: float = 0.08   # was 0.06
@@ -64,6 +65,7 @@ class OpenCourtTuning:
     numbers_distance: float = 9.0      # more attackers than defenders back: attack to here
     attack_distance: float = 30.0      # no advantage: hand over by here at the latest
     walk_up_y: float = 38.0         # walking it up: hand over here
+    early_handover_y: float = 45.0  # ... early offence: the half court takes over as he crosses half court
     ahead_margin: float = 9.0       # a teammate this much nearer the rim is "ahead"
     ahead_open: float = 7.0         # ... and needs this much room
     ahead_steal: float = 0.08       # interception chance scale for an ahead pass
@@ -72,6 +74,9 @@ class OpenCourtTuning:
     # The ball-side wing stops at the wing this often instead of running to the corner
     # (both wings in the corners made half of early-offence threes corner threes; was 0).
     ball_side_wing: float = 0.7
+    # ... and the weak-side wing (half of early-offence threes were still corner threes,
+    # NBA ~24% of all threes; README "Shots with room"; was 0).
+    weak_side_wing: float = 0.7
     # Early offence: after a push, the half court keeps the runners on their lanes
     # (corners, trail spot) instead of re-forming the set.
     early_spots: bool = True
@@ -173,6 +178,13 @@ class OpenCourt:
             a.next_think = a.reaction * 0.5 + rng.uniform(0.0, 0.15)
         self.push = self.decide_push() if push is None else push
         self.result.pushed = self.push
+        # Early offence (SpatialParams.early_offense): a walk-up brought up briskly into
+        # a quick hitter before the defence has matched up, by tactics (pace).
+        self.early = False
+        ep = game.p.early_offense
+        if not self.push and ep > 0 and how in ("score", "drb", "steal") and self.clock >= 24:
+            pace = game.teams[side].tactics.pace
+            self.early = rng.random() < ep * max(0.3, 1.0 + 0.1 * (pace - 10))
         self.lanes = self.assign_lanes()
         self.roles: dict[int, tuple] = {}
         self.next_roles = 0.0
@@ -227,7 +239,8 @@ class OpenCourt:
             # to the elbow if he can't.
             sides = [-ball_side, ball_side]
             for a, s in zip(sorted(guards, key=lambda a: a.x * -ball_side, reverse=True), sides):
-                lane = WING_LANE if s == ball_side and self.rng.random() < self.t.ball_side_wing else CORNER_LANE
+                wing = self.t.ball_side_wing if s == ball_side else self.t.weak_side_wing
+                lane = WING_LANE if wing > 0 and self.rng.random() < wing else CORNER_LANE
                 lanes[id(a)] = (s * lane[0], lane[1])
             for i, a in enumerate(sorted(bigs, key=lambda a: C.dist_to_rim(a.pos))):
                 if i == 0:
@@ -286,10 +299,14 @@ class OpenCourt:
         if a is self.holder:
             if self.now < self.ready_at:
                 return 0.5
-            return self.t.dribble_sprint if self.push else self.t.jog
+            return self.t.dribble_sprint if self.push else self.walk_speed
         if a in self.defense:
             return self.t.sprint
-        return self.t.sprint if self.push else self.t.jog
+        return self.t.sprint if self.push else self.walk_speed
+
+    @property
+    def walk_speed(self) -> float:
+        return self.t.brisk if self.early else self.t.jog
 
     def update_ball(self) -> None:
         if self.inbound and self.now >= self.inbound["at"]:
@@ -459,7 +476,7 @@ class OpenCourt:
         if self.now >= t.max_seconds:
             return self.hand_over()
         if not self.push:
-            return h.y <= t.walk_up_y and self.hand_over()
+            return h.y <= (t.early_handover_y if self.early else t.walk_up_y) and self.hand_over()
         if self.kicked and self.now - self.caught_at < 0.3:
             return self.hand_over()            # catch and shoot (or attack the closeout)
         back, ahead = self.advantage(h)
@@ -537,7 +554,9 @@ class OpenCourt:
         r = self.result
         used = max(0.0, self.now - self.shot_from)
         back, ahead = self.advantage(h)
-        if not self.push:
+        if not self.push and self.early:
+            mode, decide, r.advantage = "probe", self.rng.uniform(0.1, 0.3), "early"
+        elif not self.push:
             mode, decide, r.advantage = "setup", self.rng.uniform(0.4, 1.0), "walk"
         elif back == 0:
             mode, decide, r.advantage = "drive", 0.3, "breakaway"
@@ -564,6 +583,8 @@ class OpenCourt:
         }
         if spots:
             r.start["spots"] = spots
+        if self.early and not self.push:
+            r.start["early"] = True
         if self.last_passer is not None and self.now - self.caught_at < 2.0:
             r.start["passer"] = self.last_passer               # for the assist (and catch and shoot)
             r.start["caught"] = self.caught_at - self.now

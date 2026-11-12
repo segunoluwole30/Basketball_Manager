@@ -121,6 +121,9 @@ DEFAULT_TUNING = SpatialTuning()
 # Perimeter spots sit just outside the arc (23.75 ft; 22 ft in the corners).
 SPOTS_4OUT = [(0.0, 30.0), (19.0, 22.0), (-19.0, 22.0), (-22.6, 4.5), (6.0, 7.0)]
 FIVE_OUT_C = (22.6, 4.5)
+# Four out "high": two guards at the slots, the wings at the low 45s just above the
+# corners, the four man at the other slot; nobody in the corners (``four_high``).
+FOUR_HIGH = [(11.0, 26.5), (21.5, 17.5), (-21.5, 17.5), (-11.0, 26.5)]
 POST_BLOCK = (6.5, 8.0)        # a big who can score inside sets up on the low block
 DUNKER = (5.0, 4.0)            # one who can't waits under the rim for dump-offs
 # Perimeter spots for re-spacing (fill and replace): top, slots, wings, corners.
@@ -396,6 +399,8 @@ class HalfCourtGame:
             spots[4] = POST_BLOCK if self.can_post(self.offense[4]) else DUNKER
         if focus == "inside" and self.can_post(self.offense[3]):
             spots[3] = (-POST_BLOCK[0], POST_BLOCK[1])          # both bigs inside: three out, two in
+        elif not five_out and self.p.four_high > 0 and rng.random() < self.p.four_high:
+            spots[:4] = FOUR_HIGH                               # four out, all above the break
         for i, a in enumerate(self.offense):
             sx, sy = spots[i]
             a.spot = (-sx if mirror else sx, sy)
@@ -426,6 +431,7 @@ class HalfCourtGame:
         self.forced_entry: Optional[tuple] = None   # a called set (plays.plan), from ``start["entry"]``
         self.first_shot_at: Optional[float] = None
         self.set_defense = True                # a set half-court defence (not a flow out of transition)
+        self.early = False                     # early offence: the first good look (``early_offense``)
         if start:
             self.apply_start(start)
         pg = self.offense[0]
@@ -484,8 +490,12 @@ class HalfCourtGame:
             self.take_shot(self.holder, r["moving"], released=r["catch"])
         boost = 1.08 if self.mode == "drive" else 0.35 if self.mode == "post" else 1.0
         p, now, holder, closing = self.p, self.now, self.holder, self.closing
+        planting = self.mode == "release" and p.release_stop > 0
         for a in self.offense:
-            a.move(dt, now, boost if a is holder else 1.0)
+            if planting and a is holder:
+                a.move(dt, now, 1.0, p.release_stop, 1.0)      # the jump stop: plant and rise
+            else:
+                a.move(dt, now, boost if a is holder else 1.0)
         for a in self.defense:                 # defenders brake in time to stop where they aim
             if a in closing:
                 a.move(dt, now, p.closeout_speed, p.closeout_burst, p.defender_brake)
@@ -572,8 +582,11 @@ class HalfCourtGame:
                 if not self.pnr["set"]:
                     a.target(self.pnr["point"])
                 elif self.now > self.pnr["set_time"] + 0.15:
-                    side = 1 if self.pnr["point"][0] >= 0 else -1
-                    a.target((side * 2.0, 5.5))                  # roll hard to the rim
+                    if self.pnr.get("pop") is not None:
+                        a.target(self.pnr["pop"])                # pop to the arc
+                    else:
+                        side = 1 if self.pnr["point"][0] >= 0 else -1
+                        a.target((side * 2.0, 5.5))              # roll hard to the rim
                 continue
             if self.cutter is a:
                 if self.now > a.cut_until:
@@ -731,6 +744,8 @@ class HalfCourtGame:
         if p.patience <= 0 or kind not in ("shoot", "drive", "post", "hold") or self.situation is not None \
                 or not self.set_defense:
             return 0.0
+        if self.early and self.shot_clock > p.early_until:
+            return 0.0                                   # early offence: take the first good look
         span = max(0.5, p.patience_full - p.patience_none)
         f = max(0.0, min(1.0, (self.shot_clock - p.patience_none) / span))
         if f <= 0.0:
@@ -841,19 +856,22 @@ class HalfCourtGame:
             if self.mode == "release" and self.holder is not None and (
                     man is self.holder or C.dist(d.pos, self.holder.pos) < 8):
                 # Get a hand up: lunge in as far as the shooting motion allows, but
-                # contests end at hand's length, not body to body.
-                gap = C.dist(d.pos, self.holder.pos)
+                # contests end at hand's length, not body to body. On a gathered
+                # finish, where he will go up (the defence reads the gather).
+                at = self.release.get("spot") or self.holder.pos
+                gap = C.dist(d.pos, at)
                 p = self.p
+                stop = self.contest_stop(d)
                 if p.contest_run > 0 and gap > p.contest_run:
                     # Still closing out: keep sprinting at him to get a hand up (not
                     # easing off when he rises), stopping a stride off him.
-                    d.target(C.toward(self.holder.pos, d.pos, max(p.contest_reach, p.contest_stop)))
+                    d.target(C.toward(at, d.pos, max(p.contest_reach, stop)))
                     self.closing.add(d)
                 else:
                     # Already there: a step in with the hand up (no further in than the
                     # contest stop unless he was already that tight).
-                    stop = min(gap, p.contest_stop)
-                    d.target(C.toward(self.holder.pos, d.pos, max(p.contest_reach, gap - p.contest_lunge, stop)))
+                    stop = min(gap, stop)
+                    d.target(C.toward(at, d.pos, max(p.contest_reach, gap - p.contest_lunge, stop)))
             elif self.play is not None and (deny := plays.defense_target(self, d)) is not None:
                 d.target(deny)                                   # denying the entry pass
             elif d is stunter:
@@ -867,7 +885,9 @@ class HalfCourtGame:
             elif d is tagger and threat is not None:
                 d.target(C.toward(RIM, threat.pos, min(3.0, C.dist_to_rim(threat.pos))))   # tag the cutter
             elif self.pnr and d is self.guarded_by(self.pnr["screener"]) \
-                    and self.holder is not None and not self.pnr.get("switch"):
+                    and self.holder is not None and not self.pnr.get("switch") \
+                    and not (self.pnr.get("pop") is not None
+                             and now > self.pnr["set_time"] + self.p.pop_recover):
                 # Drop coverage: don't follow the screener out. Wait at the nail
                 # (between ball and rim), then sink to protect the rim once he comes off it.
                 depth = self.p.drop_depth if self.pnr["set"] else 14.0
@@ -893,6 +913,16 @@ class HalfCourtGame:
                 d.target(self.off_ball_spot(man, ball, sag))
                 if self.p.offball_track > 0:
                     d.track = (ball, sag)
+
+    def contest_stop(self, d: Agent) -> float:
+        """How far off a rising shooter this defender's contest stops (``contest_stop``):
+        each closeout is a little different (``contest_spread``, fixed per defender and
+        shot), so contests are spread over a range rather than piled at one distance."""
+        p = self.p
+        if p.contest_spread <= 0 or self.mode != "release":
+            return p.contest_stop
+        u = (hash((self.index[id(d)], round(self.release["at"] * 10))) % 997) / 996.0
+        return p.contest_stop + p.contest_spread * (2.0 * u - 1.0)
 
     def off_ball_sag(self, man: Agent, ball: tuple[float, float], sag_shift: float = 0.0,
                      zone: Optional[bool] = None) -> float:
@@ -968,6 +998,11 @@ class HalfCourtGame:
             return
         if self.dribble_turnover(h):
             return
+        if self.early and self.shot_clock <= self.p.early_until and self.mode == "probe":
+            # No good early look: into the half-court set after all.
+            self.early = False
+            if self.play is None and self.pnr is None:
+                self.play = plays.plan(self)
         if self.play is not None and self.mode == "probe":
             plays.handler_step(self)                 # running the entry
             return
@@ -976,6 +1011,9 @@ class HalfCourtGame:
         if self.mode == "pullup":
             if C.dist(h.pos, self.pull_point) < 1.5 or now - self.mode_since > 1.0:
                 self.take_shot(h, moving=False)
+            elif self.contact_ahead(h, plant=True):
+                self.stats["pullup_stops"] += 1
+                self.take_shot(h, moving=False)              # stop short of him and rise
             return
         if self.mode == "post":
             d_rim = C.dist_to_rim(h.pos)
@@ -1000,10 +1038,16 @@ class HalfCourtGame:
                 return
             if self.charge_check(h):
                 return
+            if d_rim < self.p.gather_range and self.contact_ahead(h):
+                self.stats["gathers"] += 1
+                self.take_shot(h, moving=False, finish="runner")   # pick it up before the contact
+                return
             if self.pnr and self.pnr.get("attack") and d_rim <= 15.5:
                 self.pnr["attack"] = False
                 side = 1 if h.x >= 0 else -1
                 h.target((side * 2.5, 6.0))                      # at the nail: keep going if it's there
+            elif self.p.finish_room > 0 and d_rim < 14.0:
+                self.open_side(h)
             if now - self.mode_since > 3.5 or (now - self.mode_since > 1.0 and math.hypot(h.vx, h.vy) < 2.0):
                 h.spot = C.clamp(C.toward(RIM, h.pos, max(18.0, d_rim)))
                 h.target(h.spot)
@@ -1028,7 +1072,7 @@ class HalfCourtGame:
         now, rng, sc = self.now, self.rng, self.shot_clock
         options: list[tuple[str, tuple, list[float]]] = []      # (kind, action, features)
         d_rim = C.dist_to_rim(h.pos)
-        moving = self.mode == "drive"
+        moving = self.mode == "drive" and not self.behind_screen(h)
         if d_rim < 30:
             # Judge the contest by where the nearest defender will be at release.
             spot = self.finish_point(h)
@@ -1046,6 +1090,9 @@ class HalfCourtGame:
             pull = self.pull_up_option(h)
             if pull is not None:
                 options.append(pull)
+            step = self.step_back_option(h)
+            if step is not None:
+                options.append(step)
             options.append(("drive", ("drive",), self.drive_features(h)))
             if self.pnr is None and self.pnr_used < 3 and d_rim > 15:
                 bigs = [a for a in (self.offense[3], self.offense[4]) if a is not h]
@@ -1135,6 +1182,34 @@ class HalfCourtGame:
         feats = [1.0, ep, 0.0, 1.0, max(0.0, 6.0 - self.shot_clock) / 6.0]
         return ("shoot", ("pullup", MID_ZONE, point), feats)
 
+    def step_back_option(self, h: Agent) -> Optional[tuple]:
+        """A shooter guarded up close at the arc creates his own three: a step back (or
+        a side step) away from his man into a pull-up three above the break."""
+        p = self.p
+        if p.step_back <= 0 or h.a("three_point") < p.step_back_shooter:
+            return None
+        d_rim = C.dist_to_rim(h.pos)
+        if not 19.0 <= d_rim <= 26.0 or h.y < C.CORNER_THREE_Y:
+            return None                                   # above the break only
+        on = self.guarded_by(h)
+        gap = C.dist(on.pos, h.pos)
+        if gap > 6.0:
+            return None                                   # nobody to step away from: just shoot it
+        ax, ay = h.x - on.x, h.y - on.y
+        n = math.hypot(ax, ay) or 1.0
+        point = (h.x + ax / n * p.step_back, h.y + ay / n * p.step_back)
+        r = C.dist_to_rim(point)
+        if r < 24.25:                                     # ... drifting out to the arc
+            point = C.toward(RIM, point, 24.25)
+        point = C.clamp(point)
+        if not C.is_three(point) or C.dist_to_rim(point) > 26.5 or point[1] < C.CORNER_THREE_Y:
+            return None
+        # His man has to react before he can follow: the step buys about half of itself.
+        contest = gap + 0.5 * C.dist(point, h.pos) + 0.03 * (h.a("ball_handling") - on.a("perimeter_defense"))
+        ep = self.shot_value(h, p=point, contest_d=max(0.0, contest), defender=on, catch=False)
+        feats = [1.0, ep, 1.0, 1.0, max(0.0, 6.0 - self.shot_clock) / 6.0]
+        return ("shoot", ("pullup", THREE_ZONE, point), feats)
+
     def just_caught(self, moving: bool) -> bool:
         """Shooting straight off a pass (no dribble move in between)?"""
         return not moving and self.now - self.catch_time < 1.2
@@ -1169,13 +1244,65 @@ class HalfCourtGame:
         return target, flight, lob
 
     def finish_point(self, h: Agent) -> tuple[float, float]:
-        """A catch near the rim is finished with a gather step toward it."""
+        """A catch near the rim is finished with a gather step toward it. With
+        ``finish_room`` the gather is angled (a euro step, a reverse, a runner off one
+        foot) to the release point with the best shot, never into a defender's body,
+        and taken as real steps (``begin_gather``)."""
         d = C.dist_to_rim(h.pos)
         # A roller or cutter catching on the move goes straight up from further out.
         reach = 11.0 if self.catch_source in ("roll", "cut") else 8.0
+        room = self.p.finish_room
         if self.mode != "post" and self.just_caught(False) and d < reach:
-            return C.toward(RIM, h.pos, max(1.5, d - (5.0 if reach > 8 else 3.0)))
+            step = min(5.0 if reach > 8 else 3.0, d - 1.5)
+            if room <= 0 or step <= 0:
+                return C.toward(RIM, h.pos, max(1.5, d - (5.0 if reach > 8 else 3.0)))
+            return self.best_finish(h, step, (0.0, 30.0, -30.0, 60.0, -60.0))
         return h.pos
+
+    def open_side(self, h: Agent) -> None:
+        """Near the basket a driver heads for the side of the rim with more room (a
+        change of direction, a euro step) rather than into the man in his path."""
+        tx = h.tx
+        best, best_room = None, -1.0
+        for side in (-1.0, 1.0):
+            goal = (side * 2.5, 6.0)
+            room = min(C.point_segment_distance(d.pos, h.pos, goal) for d in self.defense)
+            if side * tx > 0:
+                room += self.p.finish_room          # keep going his way unless the other side is clearly better
+            if room > best_room:
+                best, best_room = goal, room
+        h.target(best)
+
+    def best_finish(self, h: Agent, step: float, angles: tuple) -> tuple[float, float]:
+        """The release point a gather of up to ``step`` ft can reach (headed toward the
+        rim, turned by one of ``angles`` degrees) with the best shot, valued with the
+        nearest defender where he will be when it goes up. Points inside a defender's
+        body (1.6 ft) are out."""
+        bx, by = RIM[0] - h.x, RIM[1] - h.y
+        n = math.hypot(bx, by) or 1.0
+        bx, by = bx / n, by / n
+        cands = []
+        for a in angles:
+            c, s = math.cos(math.radians(a)), math.sin(math.radians(a))
+            ux, uy = bx * c - by * s, bx * s + by * c
+            for f in (1.0, 0.5):
+                p = C.clamp((h.x + ux * step * f, h.y + uy * step * f))
+                if p[1] >= 1.0:
+                    cands.append(p)
+        best, best_v = None, -1.0
+        for p in cands:
+            # Where the defenders will be when he gets there (they keep coming).
+            t = max(0.15, min(0.35, C.dist(h.pos, p) / 10.0))
+            defender = min(self.defense, key=lambda d: C.dist((d.x + d.vx * t, d.y + d.vy * t), p))
+            dd = C.dist((defender.x + defender.vx * t, defender.y + defender.vy * t), p)
+            if dd < 1.6:
+                continue                                  # he'd be stepping into the man
+            v = self.shot_value(h, p=p, contest_d=dd, defender=defender)
+            if v > best_v:
+                best, best_v = p, v
+        if best is None:                                  # boxed in: the old straight step
+            return C.toward(RIM, h.pos, max(1.5, C.dist_to_rim(h.pos) - step))
+        return best
 
     def post_threat(self, h: Agent) -> float:
         on = self.guarded_by(h)
@@ -1282,6 +1409,38 @@ class HalfCourtGame:
                 return True
         return False
 
+    def contact_ahead(self, h: Agent, plant: bool = False) -> bool:
+        """Is a defender in front of the ball handler about to be in his body (within
+        ``gather_contact`` of the 1.6 ft personal space on the next step)? A driver
+        picks the ball up then (layup, runner or floater from where he is) and a
+        pull-up shooter stops short, rather than finishing through the man. ``plant``:
+        a jump shot, which still carries him the length of his stop."""
+        reach = self.p.gather_contact
+        if reach <= 0:
+            return False
+        speed = math.hypot(h.vx, h.vy)
+        if speed > 2.0:
+            hx, hy = h.vx / speed, h.vy / speed
+        else:
+            hx, hy = RIM[0] - h.x, RIM[1] - h.y
+            n = math.hypot(hx, hy) or 1.0
+            hx, hy = hx / n, hy / n
+        dt = self.t.dt
+        for d in self.defense:
+            dx, dy = d.x - h.x, d.y - h.y
+            gap = math.hypot(dx, dy)
+            if gap > 5.0 or gap < 1.6 + 0.4 or dx * hx + dy * hy < 0.5 * gap:
+                continue                     # not within 60 degrees of his path, or already on him
+            closing = max(0.0, ((h.vx - d.vx) * dx + (h.vy - d.vy) * dy) / (gap or 1.0))
+            if plant:
+                stop = h.accel * max(1.0, self.p.release_stop)
+                closing_by = closing * dt + speed * speed / (2.0 * stop)
+            else:
+                closing_by = closing * 2 * dt              # a help defender can step in quickly
+            if gap - closing_by < 1.6 + reach:
+                return True
+        return False
+
     def charge_check(self, h: Agent) -> bool:
         """A defender with his feet set in the driver's path can take a charge: a help
         defender who rotated over, or the on-ball defender who beat him to the spot.
@@ -1371,12 +1530,39 @@ class HalfCourtGame:
             hold = 0.5 + 0.06 * (scr.a("strength") - on.a("strength")) + 0.03 * (scr.a("basketball_iq") - 10)
             on.stuck_until = self.now + max(0.2, min(1.4, hold))
             self.say(f"{h.p.name} comes off the screen")
+        self.pnr["pop"] = self.pop_spot(h, scr)
+        if self.pnr["pop"] is not None:
+            self.stats["pops"] += 1
         self.start_drive(h)
         # Come off downhill toward the free-throw line and read the big: pull up if
         # he drops, hit the roller if he steps up, keep going if there's a lane.
         h.target(C.toward(RIM, h.pos, min(15.0, C.dist_to_rim(h.pos))))
         self.pnr["attack"] = True
-        self.next_decision = self.now + 0.25
+        self.next_decision = self.now + (0.1 if self.behind_screen(h) else 0.25)
+
+    def behind_screen(self, h: Agent) -> bool:
+        """Coming off a screen still behind the arc, a shooter can stop and rise (the
+        pull-up three when his man goes under or is caught): a set shot off the
+        dribble, not one on the move (``step_back`` on, shooters of
+        ``step_back_shooter``+)."""
+        pnr = self.pnr
+        return (self.p.step_back > 0 and pnr is not None and pnr["set"] and not pnr.get("switch")
+                and self.now - pnr["set_time"] < 0.6 and h.a("three_point") >= self.p.step_back_shooter
+                and C.is_three(h.pos))
+
+    def pop_spot(self, h: Agent, scr: Agent) -> Optional[tuple[float, float]]:
+        """A screener who can shoot pops to the arc above the break (on the side the
+        handler left) instead of rolling: the pick-and-pop. None: he rolls."""
+        p = self.p
+        if p.pop_shooter <= 0 or scr.a("three_point") < p.pop_shooter:
+            return None
+        # Bigger shooters pop more often; the rest still roll some of the time.
+        if self.rng.random() >= min(0.9, 0.5 + 0.08 * (scr.a("three_point") - p.pop_shooter)):
+            return None
+        sx = scr.x + (scr.x - h.x) * 2.0
+        ang = math.atan2(max(scr.y, 16.0) - RIM[1], sx - RIM[0])
+        ang = max(math.radians(40), min(math.radians(140), ang))
+        return C.clamp((RIM[0] + 24.6 * math.cos(ang), RIM[1] + 24.6 * math.sin(ang)))
 
     def routine(self, h: Agent, mate: Agent, target: tuple[float, float]) -> bool:
         """A routine perimeter pass: short, from a passer under no pressure, to a man
@@ -1495,17 +1681,39 @@ class HalfCourtGame:
             if C.dist(d.pos, h.pos) < 12:
                 d.next_think = min(d.next_think, self.now + d.reaction * self.p.reaction_scale * 0.5)
 
+    def begin_gather(self, h: Agent, moving: bool, spot: tuple[float, float]) -> None:
+        """A finish with a gather (``finish_room``): he takes his steps to the release
+        point before going up, and the defence keeps moving meanwhile; the shot (and
+        the contest) is where he really is when it goes up."""
+        self.release = {"mode": self.mode, "moving": moving, "catch": self.just_caught(moving),
+                        "at": self.now + max(0.15, min(0.35, C.dist(h.pos, spot) / 10.0)), "spot": spot}
+        self.mode = "release"
+        h.target(spot)
+        for d in self.defense:
+            if C.dist(d.pos, h.pos) < 12:
+                d.next_think = min(d.next_think, self.now + d.reaction * self.p.reaction_scale * 0.5)
+
     def take_shot(self, h: Agent, moving: bool, finish: Optional[str] = None,
                   released: Optional[bool] = None) -> None:
-        """``released``: None to start a shot; for a jumper, the catch flag once it's released."""
+        """``released``: None to start a shot; for a jumper (or a gathered finish), the
+        catch flag once it's released."""
         rng, t = self.rng, self.t
         if self.first_shot_at is None:
             self.first_shot_at = self.now
         lob = finish == "lob"
         post = self.mode == "post"
-        spot = C.toward(RIM, h.pos, min(1.5, C.dist_to_rim(h.pos))) if lob else self.finish_point(h)
-        if released is None and not lob and not post and C.zone(spot) in (MID_ZONE, THREE_ZONE):
+        gathered = released is not None and "spot" in self.release
+        runner = finish == "runner"
+        if gathered or runner:
+            spot = h.pos                       # he took his steps (or goes up off them now): from where he is
+        else:
+            spot = C.toward(RIM, h.pos, min(1.5, C.dist_to_rim(h.pos))) if lob else self.finish_point(h)
+        if released is None and not lob and not post and not runner and C.zone(spot) in (MID_ZONE, THREE_ZONE):
             self.begin_release(h, moving)
+            return
+        if (released is None and not lob and not post and not runner and self.p.finish_room > 0
+                and C.dist(spot, h.pos) > 0.25):
+            self.begin_gather(h, moving, spot)
             return
         catch = released if released is not None else (None if lob else self.just_caught(moving))
         defender, dd = self.nearest_defender(spot)
@@ -1519,7 +1727,7 @@ class HalfCourtGame:
             verb = "rises for the alley-oop"
         elif post:
             verb = "hook shot" if z in (RIM_ZONE, CLOSE_ZONE) else "turnaround jumper"
-        elif spot != h.pos:
+        elif spot != h.pos or gathered:
             verb = "gathers and goes up"
         source = ("lob" if lob else "post" if post else "putback" if self.now - self.orb_time < 2.0
                   else "drive" if self.mode == "drive"
@@ -1534,7 +1742,7 @@ class HalfCourtGame:
                 self.count_attempt(h, z)
                 self.credit(defender, "blk")
                 self.stats["blocks"] += 1
-                self.act(h, self.finish_action(h, z, spot, dd, lob, post, released), defender)
+                self.act(h, self.finish_action(h, z, spot, dd, lob, post, None if gathered else released), defender)
                 self.act(defender, "block", h)
                 self.say(f"{h.p.name} {verb}... BLOCKED by {defender.p.name}!")
                 land = C.clamp((h.x + rng.uniform(-6, 6), h.y + rng.uniform(2, 8)))
@@ -1561,7 +1769,7 @@ class HalfCourtGame:
                              data={"shooter": h, "made": made, "points": points, "zone": z, "fouled": fouled,
                                    "defender": defender, "assisted": assisted, "passer": self.last_passer,
                                    "shot_d": shot_d, "bucket": bucket, "ctx": ctx})
-        self.act(h, self.finish_action(h, z, spot, dd, lob, post, released), defender)
+        self.act(h, self.finish_action(h, z, spot, dd, lob, post, None if gathered else released), defender)
         if dd < 6.0:
             self.act(defender, "contest", h)
         self.holder = None
@@ -1887,8 +2095,9 @@ class HalfCourtGame:
         self.bonus = start.get("bonus", False)
         self.situation = start.get("situation")
         self.forced_entry = start.get("entry")
+        self.early = bool(start.get("early"))   # early offence out of a brisk walk-up
         mode = start.get("mode")
-        if mode in ("probe", "drive"):
+        if mode in ("probe", "drive") and not self.early:
             self.set_defense = False           # early offence: attack before the defence sets
         if mode is not None:
             self.next_decision = start.get("decide_in", 0.0)

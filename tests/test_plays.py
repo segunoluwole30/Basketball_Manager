@@ -52,7 +52,9 @@ class SetPlayTests(unittest.TestCase):
         g = game()
         g.play_possession("home")
         g.result = None
-        g.shot_clock = 9.0
+        # Below MIN_CLOCK (8.5 s). This was 9.0, which only passed while no perimeter man
+        # happened to be open for a swing where the last possession left everyone.
+        g.shot_clock = 8.0
         self.assertIsNone(plays.plan(g))
         g.shot_clock, g.situation = 18.0, {"hold": True}
         self.assertIsNone(plays.plan(g))

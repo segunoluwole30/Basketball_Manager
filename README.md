@@ -1150,6 +1150,143 @@ Still off:
   The tests' shout bars were re-measured on 48 games. The shout samples grew from 12
   to 24 games because the shot-mix shouts now move by +0.02 to +0.09 per 12-game batch.
 
+### Shots with room
+After "Defence that recovers" the audit still had three shot-profile gaps: 13.4% of
+shots with a defender within 2 ft (NBA 5-11%) and 24.2% at 4-6 ft (NBA 28-36%), 30% of
+threes from the corners (NBA 20-28%), and 11.5% of shots with 24-18 s on the shot clock
+(NBA 14-24%). Logging every attempt (what kind of shot, how it started, who was
+closest and where, the pass before it, the possession's start) showed:
+* **Contact shots were collisions, not contests.** 8% of all attempts were at exactly
+  1.6 ft, the personal space. Drives ran into the man in front until 4.5 ft from the
+  rim and finished through him. Pull-up jumpers decided to rise at 2.5-3 ft from their
+  man while still moving at ~8 ft/s, then slid into him during the 0.5 s release (they
+  eased to a stop over ~3 ft): 38% of pull-ups were very tight. Catches near the rim
+  were finished from a gather point up to 5 ft closer to the rim that the body never
+  reached, often straight through the defender.
+* **The audit measurement is right.** NBA tracking measures closest-defender distance
+  between player centres, so 0-2 ft means bodies touching, like the engine's 1.6 ft.
+  But the shot model judged a gathered finish from that gather point, while the audit
+  measured from the shooter's feet: taking the gather point instead put 15.7% inside
+  2 ft (some under 1 ft, inside the defender's body). The fix was to make the gather
+  real (below), not to change what the audit measures. Now the shot goes up where the
+  shooter stands, and the model and the audit see the same distance (lobs excepted).
+* **Threes were contested at 3-4 ft too often.** Contests stopped at `contest_stop`
+  = 3.0 ft, so 28% of threes were "tight" (NBA ~11%) and the 4-6 ft bucket was short.
+  The real closeout stops about an arm's length plus a step short of the shooter,
+  leaving him landing room.
+* **Corner threes: half court fine, transition and pull-ups not.** In set offence
+  33% of catch-and-shoot threes were from the corners, about the NBA's share. But only
+  19-22% of threes came off the dribble (NBA about a third, nearly all above the
+  break). Half of transition threes were corner threes, because both wings ran to the
+  corners. And the 4-out four man always sat in a corner. Screeners never popped,
+  and there was no step-back.
+* **Early offence didn't exist.** Walk-ups handed over at ~18.5 s and set offence first
+  probed at ~17.4 s. With patience in full until 16 s, 98% of early shots were
+  transition.
+
+Changes (all in `SpatialParams`, off in `LEGACY_PARAMS`, which still reproduces the
+legacy pin):
+* **Gather before contact** (`gather_contact` 0.6 ft, `gather_range` 6 ft): a driver
+  whose next step would put a man in front of him within 0.6 ft of body contact picks
+  the ball up and goes up now (a runner or a layup). A pull-up shooter stops short of
+  his man, counting the distance his stop still carries him.
+* **Planted jumpers** (`release_stop` 2): a jump shooter stops in his gather at twice
+  his acceleration limit, a jump stop, instead of drifting into his man. Pull-ups very
+  tight: 38% → ~10%. The audit's acceleration 99th percentile is unchanged (20.1).
+* **Finishes with room** (`finish_room`): a catch near the rim is finished from the
+  best release point an angled gather can reach (straight, ±30° or ±60°, a full or
+  half step). The choice uses where the defenders will be when he gets there, and
+  never a point inside a body. The gather is now real: he takes the steps
+  (0.15-0.35 s) and the shot goes up from where he arrives, while the defence keeps
+  moving and contests at the release point. Near the basket a driver heads for the
+  side of the rim with more room, and keeps his side unless the other is
+  `finish_room` ft clearer.
+* **Contests spread** (`contest_stop` 3.0 → 4.0 ft, `contest_spread` ±0.75 ft, fixed per
+  defender and shot): a closeout stops 3.25-4.75 ft off the shooter instead of at
+  exactly 3 ft. Threes contested inside 4 ft: 28% → ~25%, 4-6 ft: 33% → ~38%.
+* **Threes above the break:** a step-back (`step_back` 3 ft): a shooter (three rating
+  12+) guarded within 6 ft above the break can step back or aside into a pull-up
+  three. The same shooters can rise behind a screen while the arc is still in front
+  of them: a set shot off the dribble, not one on the move. A screener with a three
+  rating of 13+ pops to the arc above the break instead of rolling (`pop_shooter`,
+  more often the better he shoots). His dropping man recovers to him 0.8 s after the
+  screen (`pop_recover`). 40% of four-out sets put all four above the break
+  (`four_high`: slots and low wings, corners empty). In transition the weak-side
+  wing stops at the 45 70% of the time (`OpenCourtTuning.weak_side_wing`, as the
+  ball-side wing already did).
+* **Early offence** (`early_offense` 0.3, `early_until` 17 s): 30% of walk-ups (at pace
+  10, ±10% per point of pace) are brought up briskly (`brisk` 1.0 instead of `jog`) and
+  handed over at half court. There is no set and no patience while the shot clock is
+  above 17 s: a drag screen, an early drive or the first open three. With nothing
+  there, the team goes into its set as usual (`plays.plan`), so these possessions
+  aren't shorter unless the early look comes. Measure reports them as
+  `open_court_early`.
+* **Rebalancing:** `patience` 0.3 → 0.5, `patience_full` 16 → 17 and `patience_three`
+  0.8 → 1.0. With roomier contests more looks cleared the bar, and late-clock shots
+  had fallen to 13.5% and passes to 2.4. `three_make_adj` -0.0204 → -0.023. Walk-up
+  `jog` 0.74 → 0.62: early offence shortened possessions, and pace had risen to ~103.
+* Decision values were **not** retrained. A 3-round resumed retrain took the full-game
+  three share to .47 and points to 111 (out of tolerance), so the previous values
+  were kept. All the changes were checked on the three measure seeds with them.
+
+Audit, 48 games (seed 7):
+
+| | before | after | NBA |
+|---|---|---|---|
+| closest defender 0-2 / 2-4 / 4-6 / 6+ ft | 13.4 / 34.2 / 24.2 / 28.1% | 10.0 / 33.3 / 29.4 / 27.3% | 5-11 / 28-38 / 28-36 / 22-32% |
+| rim / short / mid / threes | 35.5 / 13.2 / 9.5 / 41.8% | 29.2 / 17.8 / 9.2 / 43.9% | 28-36 / 12-20 / 9-16 / 38-44% |
+| corner threes, share of threes | 30.0% | 23.0% | 20-28% |
+| shots with 24-18 / 7-0 s on the shot clock | 11.5 / 16.7% | 15.5 / 17.7% | 14-24 / 16-26% |
+| passes per half-court possession | 2.66 | 2.79 | 2.5-3.6 |
+| acceleration 99th percentile | 20.0 ft/s² | 20.1 | 8-22 |
+| ok / watch / off | 19 / 6 / 1 | 24 / 1 / 1 | |
+
+Full games, 64 per league (`measure --games 64 --jobs 2`, seeds 0 / 1 / 2):
+
+| | before | after | NBA 2025-26 |
+|---|---|---|---|
+| pace | 96.9 / 99.0 / 101.0 | 98.0 / 100.6 / 103.1 | 99.4 |
+| points | 110.5 / 117.9 / 116.5 | 111.4 / 116.8 / 117.5 | 115.6 |
+| points per 100 | 113.8 / 118.6 / 115.2 | 113.5 / 115.9 / 113.9 | 115.8 |
+| eFG | .554 / .560 / .562 | .551 / .545 / .555 | .546 |
+| 3P% | .36 / .37 / .36 | .37 / .36 / .36 | .36 |
+| three share | .394 / .426 / .427 | .395 / .438 / .446 | .415 |
+| turnovers per 100 | 14.8 / 13.1 / 13.1 | 14.4 / 13.2 / 13.3 | 14.6 |
+| FTA per 100 | 26.0 / 26.1 / 23.6 | 22.7 / 24.3 / 21.6 | 23.6 |
+| ORB% | .255 / .281 / .224 | .257 / .279 / .230 | .260 |
+| transition share | .153 / .165 / .172 | .160 / .164 / .174 | .150 |
+| within tolerance (of 13) | 12 / 13 / 9 | 12 / 13 / 7 | |
+
+The means are all within tolerance (pace 100.6, points 115.2, eFG .550, three share
+.426, ORB% .255). Seed 2, the fastest league, is out on pace (103.1), three share, ORB%,
+transition and fouls. A full game takes ~1.07 s (was ~1.05-1.10).
+
+Tests: `tests/test_shot_mix.py` covers each mechanism (gathers, planted pull-ups,
+angled finishes never inside a body, the open side, step-back and pop spots above the
+break, four-high spacing, the contest spread). It also runs three paired full-game
+checks on 24 games (seed 3), with effect sizes measured on seeds 3 and 11. Very
+tight 8.6 / 10.0% with the finishing changes against 11.8 / 12.9% without. Early
+shots 15.1 / 15.6% with early offence against 11.5 / 11.5% without. Corner threes
+21.9 / 25.4% against 26.9 / 30.2% with four-high, step-backs and pops off.
+
+Still off or worth watching:
+* **Very tight shots are ~10%**, inside the NBA range but not by much. The rest are
+  catches at the dunker spot with the man on the catcher (about a third of gathered
+  catches), drives finished with the on-ball man riding the driver's hip, post-ups
+  and lobs. Those are real contact shots.
+* **Pace is ~1.5 possessions higher than before** (early offence) and the three share
+  ~.01 higher. Free throws are down (fewer bodies run into at the rim). The rim share
+  sits at 29-31%, the low end of the NBA range, because runners and angled finishes
+  moved some rim attempts to the short paint.
+* **The press forces fewer extra turnovers**: press/man 1.10-1.27 per three games
+  (was 1.22-1.33). Handlers now step back, gather and pull up short of a man who is up
+  on them. The test pools six games.
+* Other tests re-measured: inbound steals with a lane-jumping defence pool six games
+  (seeds 1 and 2 now have none). The "look for threes" shout checks that rim and short
+  shots fall (-0.053) instead of mid-range: mid-range moves by ~0 now, even with twice
+  the penalty. The set-play clock check uses a clock below `MIN_CLOCK`. The transition
+  lane test allows both wings at the 45.
+
 ### Where the defence picks up
 On a walk-up (after a make, or a team that doesn't push), the defence gets back and waits
 instead of picking up the ball full court:
