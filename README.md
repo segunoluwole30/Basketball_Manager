@@ -117,6 +117,23 @@ coach panel. A replay is about
 teams' games, and statistical-engine games, aren't recorded. Replaying them on
 the spatial engine wouldn't reproduce the result in the standings.
 
+**2D / 3D.** The viewer's **2D | 3D** switch (remembered between games) swaps the
+flat court for a 3D one: a to-scale 94×50 ft floor with the same lines, backboards and
+10 ft rims with nets, low-poly players in team colours with their numbers on the jersey
+and over their heads (surnames too with **Names**), and the ball at its real height with
+a shadow, so shots arc and lobs hang. Cameras: **Broadcast** (a sideline camera that
+follows the ball), **Baseline** (behind the attacking team) and **Overhead**; drag to
+turn, scroll to zoom, double-click to go back to the preset. It renders the same frame as
+the 2D view, so playback, highlights, transitions and live coaching work the same.
+Players move along a smooth curve through the ten-a-second positions, with a light
+damping that never leaves them more than 0.6 ft from where the simulation has them, and
+face where they run (or the ball when they stand). 2D stays the default: the 3D view is
+only built when picked, and without WebGL the switch is disabled with a note. With
+reduced motion on, the cameras hold still instead of following. It uses three.js r160
+(MIT), vendored in `spatial/vendor/` and inlined once into every viewer page as inert
+text that only runs when 3D is switched on (about 650 KB per page; pass `three=False`
+to `export.build_html` for a 2D-only page), so replays and live games work offline.
+
 **Highlights** (`spatial/highlights.py`). The viewer has Football Manager-style
 highlight modes for full games: **Key**, **Extended** and **Full**. Your choice is
 remembered between games.
@@ -278,7 +295,7 @@ times a second. `watch` shows half-court possessions; `watch --full` plays whole
 games with transition and substitutions (see *Full games* below).
 `watch` writes a self-contained page (`hoopsim_watch.html`): a to-scale court,
 players and ball, scoreboard and shot clock, commentary, play-by-play, and
-pause/speed/skip controls.
+pause/speed/skip controls, in 2D or 3D (see *2D / 3D* above).
 
 - **Offence**: four-out spacing (five-out when the centre can shoot). The ball
   handler re-evaluates every few tenths of a second: shoot, drive, pass, call a
@@ -299,7 +316,7 @@ pause/speed/skip controls.
 ### Full games (`fullgame.py`, `transition.py`)
 
 ```bash
-python -m hoopsim watch --full                   # a whole spatial game in the viewer (~2.5 MB page)
+python -m hoopsim watch --full                   # a whole spatial game in the viewer (~4 MB page)
 python -m hoopsim watch --full --quarter 4       # just the 4th quarter (5 = first overtime)
 python -m hoopsim.spatial.measure --games 60 --jobs 2   # full-game numbers against NBA averages
 ```
