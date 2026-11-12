@@ -906,20 +906,21 @@ window.GAME = /*GAME_DATA*/null;
   const HAIR_DARK = ["#0d0b0a", "#0d0b0a", "#1c130d"], HAIR_ANY = ["#0d0b0a", "#1c130d", "#3a2416", "#6a4a2c", "#a8854e", "#7d3a1c"];
   function lookOf(pl, tone) {
     const L = pl.look && typeof pl.look === "object" ? pl.look : {};
-    const roll = (salt) => (hash(pl.name + salt) % 1000) / 1000;
+    const mix = (x) => { x = Math.imul(x ^ (x >>> 15), 0x2c1b3c6d); x = Math.imul(x ^ (x >>> 12), 0x297a2d39); return (x ^ (x >>> 15)) >>> 0; };
+    const roll = (salt) => (mix(hash(pl.name + salt)) % 1000) / 1000;   // 0..1, his own for each choice
     const weighted = (list, x) => { let tot = 0; for (const e of list) tot += e[1]; x *= tot; for (const e of list) if ((x -= e[1]) < 0) return e[0]; return list[0][0]; };
     const side = (salt) => (roll(salt) < 0.5 ? "L" : "R");
     const light = tone === 2 || tone === 4, shades = light ? HAIR_ANY : HAIR_DARK;
     const has = (k) => Object.prototype.hasOwnProperty.call(L, k);
     return {
       hair: has("hair") ? L.hair : weighted(light ? HAIR_STYLES.filter((e) => e[0] !== "afro" && e[0] !== "locs" && e[0] !== "flattop").concat([["short", 20]]) : HAIR_STYLES, roll("hair")),
-      hairColor: has("hairColor") ? L.hairColor : shades[hash(pl.name + "hc") % shades.length],
+      hairColor: has("hairColor") ? L.hairColor : shades[mix(hash(pl.name + "hc")) % shades.length],
       beard: has("beard") ? !!L.beard : roll("beard") < 0.38,
-      band: has("band") ? L.band : roll("band") < 0.14 ? ["white", "black", "team"][hash(pl.name + "bc") % 3] : null,
+      band: has("band") ? L.band : roll("band") < 0.14 ? ["white", "black", "team"][mix(hash(pl.name + "bc")) % 3] : null,
       sleeve: has("sleeve") ? L.sleeve : roll("sleeve") < 0.22 ? side("ss") : null,
       leg: has("leg") ? L.leg : roll("leg") < 0.18 ? (roll("lb") < 0.35 ? "both" : side("ls")) : null,
       wrist: has("wrist") ? L.wrist : roll("wrist") < 0.3 ? (roll("wb") < 0.3 ? "both" : side("ws")) : null,
-      gear: has("gear") ? L.gear : ["black", "white", "team"][hash(pl.name + "gc") % 3],
+      gear: has("gear") ? L.gear : ["black", "white", "team"][mix(hash(pl.name + "gc")) % 3],
       shoes: has("shoes") ? L.shoes : weighted([["black", 34], ["white", 34], ["team", 20], ["#b0b4bb", 6], ["#c8372d", 6]], roll("shoes")),
     };
   }
