@@ -176,6 +176,8 @@ def _features(league: League, team_id: int) -> dict:
         "post": max(0.5 * a(p, "close_range") + 0.3 * a(p, "strength") + 0.2 * a(p, "passing") for p in bigs),
         "rim": max(a(p, "interior_defense") + a(p, "blocking") for p in bigs) / 2,
         "star": cas[0] - cas[1], "handle": a(roster[0], "ball_handling"),
+        # How the team already plays (a league file's real tendencies; random in generated leagues).
+        "tempo": league.teams[team_id].tactics.pace, "threes": league.teams[team_id].tactics.three_point_rate,
     }
 
 
@@ -183,11 +185,11 @@ def _features(league: League, team_id: int) -> dict:
 # league (so every league spreads its teams over the systems): (base, {feature: weight}).
 OFFENSE_FIT = {
     "balanced": (0.7, {}),
-    "pace_space": (0.4, {"shoot": 1.0, "speed": 0.3}),
-    "seven_seconds": (-0.3, {"speed": 0.9, "shoot": 0.6}),
+    "pace_space": (0.4, {"shoot": 1.0, "speed": 0.3, "threes": 0.5}),
+    "seven_seconds": (-0.3, {"speed": 0.9, "shoot": 0.6, "tempo": 0.9}),
     "motion": (0.0, {"pass": 1.0, "star": -0.3}),
-    "triangle": (-0.3, {"mid": 0.7, "post": 0.5, "pass": 0.2}),
-    "grit_grind": (-0.2, {"reb": 0.6, "def": 0.5, "shoot": -0.5}),
+    "triangle": (-0.3, {"mid": 0.7, "post": 0.5, "pass": 0.2, "threes": -0.3}),
+    "grit_grind": (-0.4, {"reb": 0.6, "def": 0.5, "shoot": -0.5, "tempo": -0.6, "threes": -0.6}),
     "inside_out": (-0.1, {"post": 1.0, "shoot": 0.2}),
     "heliocentric": (0.0, {"star": 1.0, "handle": 0.3}),
 }
@@ -248,3 +250,23 @@ def assign_ai_systems(league: League, rng: random.Random, sliders: float = 0.5,
             continue
         o, d = choose_for_team(league, tid, rng, z)
         apply(team.tactics, offense=o, defense=d, sliders=0.0 if tid in keep_sliders else sliders)
+
+
+# --------------------------------------------------------------------------
+# Scoring options: 1st, 2nd and 3rd
+# --------------------------------------------------------------------------
+# Extra shot share by rank (statistical engine: shot-choice weight multiplier) and the
+# spatial engine's nudges (points of option value): teammates look for him, and he
+# looks for his own shot. Smaller than "get him the ball" so a defence can still
+# take him away.
+OPTION_SHOTS = (1.45, 1.25, 1.12)
+OPTION_PASS = (0.065, 0.04, 0.02)
+OPTION_SELF = (0.035, 0.02, 0.01)
+LATE_GAME_FIRST = 2.5        # the 1st option's extra share when it's time for a big shot
+
+
+def option_ranks(tactics: Tactics, on_floor: list[int]) -> dict[int, int]:
+    """{player id: 0, 1, 2} for the scoring options on the floor, moved up when someone
+    ahead of them is off the floor (the 2nd option is the 1st while the star sits)."""
+    ids = [pid for pid in getattr(tactics, "scoring_options", []) if pid in on_floor]
+    return {pid: rank for rank, pid in enumerate(ids[:3])}

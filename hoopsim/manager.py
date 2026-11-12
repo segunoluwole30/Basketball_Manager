@@ -184,7 +184,26 @@ TACTIC_KEYS = {
     "pace": "pace", "three": "three_point_rate", "crash": "crash_offensive_glass",
     "depth": "rotation_depth", "focus": "offensive_focus", "defense": "defensive_scheme",
     "system": "offense_system", "defense_system": "defense_system",
+    "options": "scoring_options",
 }
+
+
+def parse_options(league: League, team_id: int, value) -> list[int]:
+    """1st/2nd/3rd scoring options: player ids (a list, or "12,34"); blanks are skipped.
+    Raises ValueError unless they're distinct players on the team, at most three."""
+    if value is None or value == "":
+        return []
+    items = value.split(",") if isinstance(value, str) else list(value)
+    ids = [int(x) for x in items if x not in (None, "", "none", 0, "0")]
+    if len(ids) > 3:
+        raise ValueError("at most three scoring options")
+    if len(set(ids)) != len(ids):
+        raise ValueError("a player can only be one scoring option")
+    roster = {p.id for p in league.roster(team_id)}
+    for pid in ids:
+        if pid not in roster:
+            raise ValueError(f"player {pid} isn't on your roster")
+    return ids
 
 
 def set_tactics(league: League, **changes) -> tuple[bool, str]:
@@ -201,6 +220,12 @@ def set_tactics(league: League, **changes) -> tuple[bool, str]:
             apply(t, **{kw: value})
     for key, value in changes.items():
         if key in ("system", "defense_system"):
+            continue
+        if key == "options":
+            try:
+                t.scoring_options = parse_options(league, _user_team(league).id, value)
+            except ValueError as e:
+                return False, str(e)
             continue
         attr = TACTIC_KEYS.get(key)
         if attr is None:
@@ -226,7 +251,9 @@ def describe_tactics(league: League) -> str:
     from .systems import DEFENSE, OFFENSE
     return (f"{OFFENSE[t.offense_system].name} / {DEFENSE[t.defense_system].name}: "
             f"pace {t.pace}, three {t.three_point_rate}, focus {t.offensive_focus.value}, "
-            f"defense {t.defensive_scheme.value}, crash {t.crash_offensive_glass}, depth {t.rotation_depth}")
+            f"defense {t.defensive_scheme.value}, crash {t.crash_offensive_glass}, depth {t.rotation_depth}"
+            + (", options " + " > ".join(league.players[pid].name for pid in t.scoring_options
+                                         if pid in league.players) if t.scoring_options else ""))
 
 
 TENDENCY_KEYS = {

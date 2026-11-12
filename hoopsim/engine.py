@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from .injuries import draw_injury
-from .systems import defense_style, offense_style
+from .systems import LATE_GAME_FIRST, OPTION_SHOTS, defense_style, offense_style, option_ranks
 from .lineup import lineup_is_usable, plan_rotation
 from .models import (
     BoxScore, DefensiveScheme, Game, GameResult, Injury, League, OffensiveFocus, Player,
@@ -553,9 +553,15 @@ class _GameSim:
                                 - 0.03 * (ig.p.tendencies.passing - 10)
                                 + (0.35 * (ig.r("three_point") - 10) if need_three or heave else 0))
                        for ig in offense.lineup]
+            ranks = option_ranks(offense.tactics, [ig.p.id for ig in offense.lineup])
             if style.star and not (need_three or heave):     # heliocentric: the star takes his shots
-                best = max(range(5), key=lambda i: _offense_skill(offense.lineup[i]))
+                first = next((i for i, ig in enumerate(offense.lineup) if ranks.get(ig.p.id) == 0), None)
+                best = first if first is not None else max(range(5), key=lambda i: _offense_skill(offense.lineup[i]))
                 weights[best] *= 1 + style.star
+            for i, ig in enumerate(offense.lineup):          # the coach's 1st, 2nd and 3rd options
+                r = ranks.get(ig.p.id)
+                if r is not None:
+                    weights[i] *= OPTION_SHOTS[r] * (LATE_GAME_FIRST if r == 0 and late_clock else 1.0)
             slot = rng.choices(range(5), weights)[0]
         shooter = offense.lineup[slot]
         defender = self._defender(offense, defense, slot)

@@ -253,7 +253,8 @@ Your team
   lineup             starters and minutes                 auto on|off  assistant sets the lineup?
   start A B C D E    set starters (PG SG SF PF C ids)     minutes ID=MIN ...   set minute targets
   tactics [k=v ...]  system=pace_space|seven_seconds|motion|triangle|grit_grind|inside_out|heliocentric|balanced
-                     defense_system=man|switch|drop|zone|press  pace=1-20 three=1-20 crash=1-20 depth=5-15 focus=inside|balanced|perimeter
+                     defense_system=man|switch|drop|zone|press  options=ID,ID,ID (1st,2nd,3rd scoring options; options= clears)
+                     pace=1-20 three=1-20 crash=1-20 depth=5-15 focus=inside|balanced|perimeter
                      defense=man|switch|zone|press
   instruct ID k=v    player instructions: three mid drive post pass cut (1-20, 10 = normal)
   finances           payroll, cap room, contracts

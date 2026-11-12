@@ -526,3 +526,5 @@ ul.plain li { padding: 3px 0; }
 .system-head { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
 .fit-stars { color: var(--accent); font-size: 12px; letter-spacing: 1px; white-space: nowrap; }
 .fit-stars .muted { color: var(--border); }
+.options-row { display: flex; flex-wrap: wrap; gap: 10px 16px; margin: 4px 0; }
+.option-pick { display: flex; flex-direction: column; gap: 3px; font-size: 13px; min-width: 180px; }

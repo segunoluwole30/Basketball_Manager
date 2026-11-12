@@ -152,7 +152,8 @@ function TeamTactics({ t }: { t: any }) {
   const { act, busy } = useGame();
   const [v, setV] = useState<any>(t);
   useEffect(() => setV(t), [t]);
-  const changed = ["pace", "three", "crash", "depth", "focus", "defense", "system", "defense_system"].some((k) => v[k] !== t[k]);
+  const changed = ["pace", "three", "crash", "depth", "focus", "defense", "system", "defense_system"].some((k) => v[k] !== t[k])
+    || v.options.join() !== t.options.join();
   const pickOffense = (s: any) => setV({ ...v, system: s.key, pace: s.sliders.pace, three: s.sliders.three, crash: s.sliders.crash, focus: s.sliders.focus });
   const pickDefense = (s: any) => setV({ ...v, defense_system: s.key, defense: s.sliders.defense });
   const offName = t.systems.offense.find((s: any) => s.key === v.system)?.name;
@@ -165,6 +166,23 @@ function TeamTactics({ t }: { t: any }) {
         <SystemPicker side="Offence" list={t.systems.offense} value={v.system} fit={t.fit.offense} onPick={pickOffense} />
         <div className="slider-label">Defensive system</div>
         <SystemPicker side="Defence" list={t.systems.defense} value={v.defense_system} fit={t.fit.defense} onPick={pickDefense} />
+        <div className="slider-label">Scoring options <span className="muted small">(optional: leave blank to let the game flow)</span></div>
+        <div className="options-row">
+          {["1st", "2nd", "3rd"].map((label, i) => (
+            <label key={label} className="option-pick">{label} option
+              <select value={v.options[i] ?? ""} aria-label={`${label} scoring option`}
+                onChange={(e) => {
+                  const next = [...v.options];
+                  next[i] = e.target.value ? +e.target.value : null;
+                  setV({ ...v, options: next.filter((x: any, j: number) => x && next.indexOf(x) === j) });
+                }}>
+                <option value="">None</option>
+                {t.roster.map((p: any) => <option key={p.id} value={p.id}>{p.name} ({p.pos})</option>)}
+              </select>
+            </label>
+          ))}
+        </div>
+        <p className="muted small">Teammates look for your options and they look for their shot: the 1st most, then the 2nd and 3rd. When you hold for the last shot, it goes to the 1st option. If one sits, the next moves up.</p>
         <p className="muted small">A system sets the sliders below and keeps its style while selected: the shots it hunts, how the ball moves, which sets it runs and how often it runs. ★ = how well it suits your roster.</p>
         {SLIDERS.map((s) => (
           <label key={s.key} className="slider-row">
@@ -194,7 +212,7 @@ function TeamTactics({ t }: { t: any }) {
         </div>
         <div className="row gap">
           <button className="btn btn-primary btn-small" disabled={!changed || busy}
-            onClick={() => act(() => api.post("/api/tactics", { system: v.system, defense_system: v.defense_system, pace: v.pace, three: v.three, crash: v.crash, depth: v.depth, focus: v.focus, defense: v.defense }), "Tactics saved")}>
+            onClick={() => act(() => api.post("/api/tactics", { system: v.system, defense_system: v.defense_system, options: v.options, pace: v.pace, three: v.three, crash: v.crash, depth: v.depth, focus: v.focus, defense: v.defense }), "Tactics saved")}>
             Save tactics
           </button>
           <button className="btn btn-small btn-ghost" disabled={!changed} onClick={() => setV(t)}>Reset</button>

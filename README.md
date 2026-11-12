@@ -1119,6 +1119,33 @@ on a system, the statistical league stays calibrated: 98.8 possessions, 111 poin
 42% threes, against 98.4, 111 and 42% all-Balanced. The spatial engine runs about 2
 possessions a game faster (104 against 102; the NBA is 99.4); points stay on target.
 
+### Scoring options (Tactics → Scoring options)
+Name a 1st, 2nd and 3rd scoring option, or leave any of them blank to let the game
+flow. With all three blank, play is exactly as before.
+
+**What an option changes:**
+* **Statistical engine:** his weight when the team picks a shooter goes up (×1.45 /
+  ×1.25 / ×1.12 for the 1st / 2nd / 3rd).
+* **Spatial engine:** teammates value passing to him more and he values his own shot
+  more. This is a standing, smaller version of the "get him the ball" shout, so a good
+  defence can still take him away.
+* **Late in the clock:** when the team holds for a last shot, the 1st option's share
+  is boosted a further 2.5×.
+* **When an option sits:** if he's injured or on the bench, the next option moves up.
+  A Heliocentric offence's star is the 1st option if you set one.
+
+**Where to set it:** the live Coach panel changes the options for one game; the CLI
+command is `tactics options=12,34,56` (`options=` clears them).
+
+**Measured** on a fixed team, with only the options changed:
+* **Making the 4th-best starter the 1st option:** his share of the team's shots goes
+  from 15% to 20% (statistical engine, 600 games) and from 9% to 13% (spatial engine,
+  36 games).
+* **Team efficiency** stays the same within noise: on the spatial engine, feeding the
+  top three scored 103.8 points per 100 possessions against 101.9 without options
+  (60 games).
+* **Turnovers** rise by about 1 per 100 possessions, from forcing the ball to them.
+
 ## All-Star Weekend (`hoopsim/allstar.py`, web: **League → All-Star**)
 Seasons long enough for an All-Star break (60+ games) get the NBA's mid-February
 weekend. Everything happens on its date as you sim:

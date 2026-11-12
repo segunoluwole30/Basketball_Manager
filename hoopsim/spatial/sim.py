@@ -29,7 +29,8 @@ from typing import Optional
 
 from ..lineup import plan_rotation
 from ..models import League, Player
-from ..systems import defense_style, offense_style
+from ..systems import (LATE_GAME_FIRST, OPTION_PASS, OPTION_SELF, defense_style, offense_style,
+                       option_ranks)
 from . import court as C
 from . import plays
 from .court import CLOSE_ZONE, MID_ZONE, RIM, RIM_ZONE, THREE_ZONE
@@ -1683,10 +1684,12 @@ class HalfCourtGame:
     def system_bias(self, h: Agent, kind: str, action: tuple) -> float:
         """The offence's coaching system (systems.py): standing nudges to its players'
         choices, smaller than a shout (more threes, post feeds, pass the ball...)."""
-        st = offense_style(self.teams[self.side].tactics)
+        tactics = self.teams[self.side].tactics
+        st = offense_style(tactics)
+        b = self.option_bias(h, kind, action, tactics) if tactics.scoring_options else 0.0
         if not st.bias and not st.star_ball:
-            return 0.0
-        bias, b = st.bias, 0.0
+            return b
+        bias = st.bias
         if kind == "shoot":
             zone = action[1]
             b += bias.get("three" if zone == THREE_ZONE else "mid" if zone == MID_ZONE else "inside", 0.0)
@@ -1708,9 +1711,30 @@ class HalfCourtGame:
                 b += bias.get("early", 0.0)
         return b
 
+    def option_bias(self, h: Agent, kind: str, action: tuple, tactics) -> float:
+        """The coach's 1st, 2nd and 3rd scoring options: teammates look for them and they
+        look for their own shot; the 1st option most, and all the more when the team is
+        holding for the last shot of a period."""
+        ranks = option_ranks(tactics, [a.p.id for a in self.agents[self.side]])
+        if not ranks:
+            return 0.0
+        late = LATE_GAME_FIRST if self.situation is not None else 1.0
+        b = 0.0
+        if kind == "pass":
+            r = ranks.get(action[1].p.id)
+            if r is not None:
+                b += OPTION_PASS[r] * (late if r == 0 else 1.0)
+        r = ranks.get(h.p.id)
+        if r is not None and kind in ("shoot", "drive", "post", "pnr"):
+            b += OPTION_SELF[r] * (late if r == 0 else 1.0)
+        return b
+
     def star(self, side: str) -> Agent:
-        """The best player of ``side`` on the floor (heliocentric offences feed him)."""
-        return max(self.agents[side], key=lambda a: a.p.current_ability)
+        """The best player of ``side`` on the floor (heliocentric offences feed him), or
+        the coach's 1st scoring option when he's on it."""
+        ranks = option_ranks(self.teams[side].tactics, [a.p.id for a in self.agents[side]])
+        first = next((a for a in self.agents[side] if ranks.get(a.p.id) == 0), None)
+        return first or max(self.agents[side], key=lambda a: a.p.current_ability)
 
     def shout_defense(self) -> tuple[float, float]:
         """The defence's shout: (extra on-ball cushion in ft, extra sag toward the paint).

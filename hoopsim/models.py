@@ -366,6 +366,8 @@ class Tactics:
     minutes_targets: dict[int, int] = field(default_factory=dict)  # player id -> mpg
     offense_system: str = "balanced"   # coaching systems (systems.py): style beyond the sliders
     defense_system: str = "man"
+    # 1st, 2nd and 3rd scoring options (player ids, in order; empty = let the game flow)
+    scoring_options: list[int] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         for name in ("pace", "three_point_rate", "crash_offensive_glass"):
@@ -388,6 +390,7 @@ class Tactics:
             "starters": list(self.starters),
             "offense_system": self.offense_system,
             "defense_system": self.defense_system,
+            "scoring_options": list(self.scoring_options),
             # JSON object keys must be strings
             "minutes_targets": {str(k): v for k, v in self.minutes_targets.items()},
         }
@@ -404,6 +407,7 @@ class Tactics:
             starters=list(d.get("starters", [])),
             offense_system=d.get("offense_system", "balanced"),
             defense_system=d.get("defense_system", "man"),
+            scoring_options=[int(x) for x in d.get("scoring_options", [])],
             minutes_targets={int(k): v for k, v in d.get("minutes_targets", {}).items()},
         )
 

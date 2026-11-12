@@ -953,6 +953,19 @@ window.GAME = /*GAME_DATA*/null;
       return l;
     };
     box.append(system("system", "Offence"), system("defense_system", "Defence"));
+    // 1st, 2nd and 3rd scoring options (blank = let the game flow)
+    const opts = (t.options || []).slice();
+    ["1st option", "2nd option", "3rd option"].forEach((label, i) => {
+      const l = document.createElement("label"); l.className = "t";
+      l.innerHTML = `<span>${label}</span><select><option value="">None</option>${me.players.map((p) =>
+        `<option value="${p.id}" ${opts[i] === p.id ? "selected" : ""}>${p.name}</option>`).join("")}</select><span></span>`;
+      l.children[1].addEventListener("change", (e) => {
+        const next = opts.slice(); next[i] = e.target.value ? +e.target.value : null;
+        const ids = next.filter((x, j) => x && next.indexOf(x) === j);
+        command({ type: "tactics", changes: { options: ids } });
+      });
+      box.append(l);
+    });
     box.append(slider("pace", "Pace"), slider("three", "Threes"), slider("crash", "Crash glass"),
       select("focus", "Focus", ["inside", "balanced", "perimeter"]), select("defense", "Scheme", ["man", "switch", "zone", "press"]));
     tac.appendChild(box);

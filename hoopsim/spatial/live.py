@@ -212,6 +212,14 @@ class LiveMatch:
                     except ValueError as e:
                         raise LiveError(str(e))
                     changed.append(key.replace("_", " "))
+            if "options" in changes:                   # 1st/2nd/3rd scoring options, this game
+                raw = changes.pop("options") or []
+                ids = [int(x) for x in raw if x not in (None, "", 0)]
+                mine = {s.p.id for s in side.seats.values()} if hasattr(side, "seats") else set(ids)
+                if len(ids) > 3 or len(set(ids)) != len(ids) or not set(ids) <= mine:
+                    raise LiveError("scoring options: up to three different players from your team")
+                t.scoring_options = ids
+                changed.append("scoring options")
             for key, value in changes.items():
                 attr = LIVE_TACTICS.get(key)
                 if attr is None:
@@ -350,7 +358,8 @@ class LiveMatch:
                         "endgame": dict(m["endgame"])},
             "tactics": {"pace": t.pace, "three": t.three_point_rate, "crash": t.crash_offensive_glass,
                         "focus": t.offensive_focus.value, "defense": t.defensive_scheme.value,
-                        "system": t.offense_system, "defense_system": t.defense_system},
+                        "system": t.offense_system, "defense_system": t.defense_system,
+                        "options": list(t.scoring_options)},
         }
 
     def header(self) -> dict:

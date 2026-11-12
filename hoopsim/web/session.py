@@ -493,6 +493,9 @@ class GameSession:
                 "depth": t.rotation_depth, "focus": t.offensive_focus.value,
                 "defense": t.defensive_scheme.value,
                 "system": t.offense_system, "defense_system": t.defense_system,
+                "options": [pid for pid in t.scoring_options
+                            if pid in lg.players and lg.players[pid].team_id == lg.user_team_id],
+                "roster": [{"id": p.id, "name": p.name, "pos": p.position.value} for p in lg.roster(lg.user_team_id)],
                 "systems": describe_systems(), "fit": fit_for_team(lg, lg.user_team_id),
                 "choices": {"focus": [f.value for f in OffensiveFocus],
                             "defense": [d.value for d in DefensiveScheme]}}
