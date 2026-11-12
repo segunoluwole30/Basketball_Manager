@@ -247,7 +247,8 @@ class DeterminismTests(unittest.TestCase):
         return sim.result, sim.box_score.to_dict(), sim.injuries, g.sub_log
 
     def test_same_seed_same_game_and_injuries(self):
-        a, b = self.run_game(5, boosted(20)), self.run_game(5, boosted(20))
+        seed = next(s for s in range(5, 40) if self.run_game(s, boosted(20))[2])   # a game with an injury
+        a, b = self.run_game(seed, boosted(20)), self.run_game(seed, boosted(20))
         self.assertTrue(a[2])
         self.assertEqual(a, b)
 

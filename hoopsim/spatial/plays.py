@@ -149,6 +149,12 @@ def start_next(g: "HalfCourtGame", play: dict) -> bool:
             bigs = ([a for a in g.offense if a.slot >= 3 and a is not h and a not in corners]
                     or [a for a in g.offense if a is not h and a not in corners])
             ok = bool(corners and bigs)
+        elif kind == "handoff":                # the nearest perimeter man comes to get it
+            wings = wings or sorted((m for m in _perimeter(g) if m is not h), key=lambda m: C.dist(m.pos, h.pos))[:1]
+            ok = bool(wings)
+        elif kind == "swing":
+            swing_to = swing_to or [m for m in _perimeter(g) if m is not h]
+            ok = bool(swing_to)
         else:
             ok = any(k == kind for k, _ in options)
         if ok:

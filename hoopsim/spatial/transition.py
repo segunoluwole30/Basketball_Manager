@@ -79,6 +79,11 @@ class OpenCourtTuning:
     inbound_hard_cap: float = 10.0  # throw it in by then whatever happens
     inbound_steal: float = 0.06     # interception chance scale for a throw-in through a denial
     inbound_decide: tuple = (1.5, 3.0)  # after the throw-in: seconds to get into the offence
+    # Where the defence picks up (feet from the basket it defends; half court is 47).
+    # A man or switching defence meets the ball around half court and matches up in its
+    # own half; a zone sits back near the top of the key; only a press picks up full court.
+    pickup: dict = field(default_factory=lambda: {
+        "man": (50.0, 40.0), "switch": (50.0, 40.0), "zone": (36.0, 30.0)})   # (ball, off the ball)
 
 
 DEFAULT_OPEN_TUNING = OpenCourtTuning()
@@ -346,9 +351,34 @@ class OpenCourt:
     def aim(self, a: Agent, p: tuple[float, float]) -> None:
         a.tx, a.ty = C.clamp(p, full=True)
 
+    @property
+    def press(self) -> bool:
+        return self.defense_scheme == "press"
+
+    @property
+    def defense_scheme(self) -> str:
+        other = "away" if self.side == "home" else "home"
+        return self.g.teams[other].tactics.defensive_scheme.value
+
+    def pickup_lines(self) -> tuple[float, float]:
+        """(ball, off the ball): how far from their basket defenders come to meet the
+        offence (a press: everywhere)."""
+        if self.push:                      # a fast break: sprint back and stop the ball wherever it is
+            return (FULL + 10.0, FULL + 10.0)
+        return self.t.pickup.get(self.defense_scheme, (FULL + 10.0, FULL + 10.0))
+
+    def held_back(self, goal: tuple[float, float], line: float, d: Agent) -> tuple[float, float]:
+        """Don't come out past the pick-up line (but a defender already beyond it keeps
+        retreating toward it rather than standing still)."""
+        if goal[1] <= line:
+            return goal
+        x = goal[0] * (0.6 if goal[1] > line + 10 else 0.85)       # stay between the ball and the rim
+        return (x, line)
+
     def defense_targets(self) -> None:
         now = self.now
         ball = self.ball_pos()
+        ball_line, off_line = self.pickup_lines()
         if now >= self.next_roles:
             self.next_roles = now + 0.3
             self.assign_roles(ball)
@@ -363,9 +393,10 @@ class OpenCourt:
                 bx = max(-4.0, min(4.0, ball[0] * 0.2))
                 self.aim(d, (bx, 7.0))
             elif kind == "ball":
-                self.aim(d, C.toward(ball, RIM, min(6.0, C.dist_to_rim(ball))))
+                self.aim(d, self.held_back(C.toward(ball, RIM, min(6.0, C.dist_to_rim(ball))), ball_line, d))
             else:
-                self.aim(d, C.toward(target.pos, RIM, min(4.0, C.dist_to_rim(target.pos))))
+                self.aim(d, self.held_back(C.toward(target.pos, RIM, min(4.0, C.dist_to_rim(target.pos))),
+                                           off_line, d))
 
     def assign_roles(self, ball: tuple[float, float]) -> None:
         """Deepest defender to the rim, nearest (of the rest) to the ball, the others to
@@ -838,12 +869,18 @@ class DeadBallInbound(OpenCourt):
         up the ball and get between your man and the rim."""
         now = self.now
         ball = self.ball_pos()
+        ball_line, off_line = self.pickup_lines()
         for i, d in enumerate(self.defense):
             if now < d.next_think:
                 continue
             d.next_think = now + d.reaction * 0.8
             man = self.offense[i]
-            if not self.caught:
+            if not self.caught and not self.frontcourt and not self.press:
+                # A backcourt throw-in against a set (non-pressing) defence: let them
+                # throw it in and match up back in your own half.
+                line = ball_line if man is self.inbounder else off_line
+                goal = self.held_back(C.toward(man.pos, RIM, min(4.0, C.dist_to_rim(man.pos))), line, d)
+            elif not self.caught:
                 if man is self.inbounder:
                     goal = self.inside_point(3.5)              # arms up in front of the ball
                 elif C.dist(man.pos, self.spot) > 30.0:
@@ -852,10 +889,10 @@ class DeadBallInbound(OpenCourt):
                     goal = C.toward(man.pos, self.inside_point(3.0), 2.2)            # deny the pass
             elif man is self.holder:
                 gap = 4.0 + 0.25 * max(0.0, ball[1] - 50.0)     # pick him up by half court
-                goal = C.toward(ball, RIM, min(gap, C.dist(ball, RIM)))
+                goal = self.held_back(C.toward(ball, RIM, min(gap, C.dist(ball, RIM))), ball_line, d)
             else:
                 far = 3.0 + 0.12 * C.dist(man.pos, ball)
-                goal = C.toward(man.pos, RIM, min(far, C.dist_to_rim(man.pos)))
+                goal = self.held_back(C.toward(man.pos, RIM, min(far, C.dist_to_rim(man.pos))), off_line, d)
             self.aim(d, goal)
 
     def hand_over(self) -> bool:

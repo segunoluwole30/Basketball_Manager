@@ -878,6 +878,27 @@ estimate yet below the real per-100 rate in full games, where fatigue and benche
 play. The full-game numbers come from Basketball-Reference and the half-court ones
 are estimates, so the full-game numbers decide.
 
+### Where the defence picks up
+On a walk-up (after a make, or a team that doesn't push), the defence gets back and waits
+instead of picking up the ball full court:
+* **Man or switch:** the ball is met around half court (50 ft from the basket) and the
+  others match up in their own half (40 ft).
+* **Zone:** sits back near the top of the key (36 and 30 ft).
+* **Press:** picks up the ball and denies the inbound full court.
+
+On a fast break, defenders still sprint back and stop the ball wherever it is.
+Backcourt side-out inbounds are let in unless the defence presses; frontcourt ones are
+still denied. Called plays out of a timeout fall back to the nearest available teammate,
+so the play the coach draws up nearly always runs.
+
+Over 24 games against the old behaviour:
+* **Pace:** 103.8 to 102.1, now within tolerance of the NBA's 99.4.
+* **Points:** 114.2 per team (target 115.6; the 1.5-point dip is within sample noise).
+* **Transition:** 1.22 points per possession (target 1.26).
+* **Calibration targets in tolerance:** 9 of 13, up from 7.
+* **Room on walk-ups:** a man defence leaves the handler ~17 ft in the backcourt, a
+  press ~5 ft.
+
 ### Pace: denial
 
 A set defence often overplays a shooter one pass away. On a swing, the receiver's
