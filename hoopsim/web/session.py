@@ -1039,8 +1039,8 @@ class GameSession:
                 "state": self.state()}
 
     def live_page(self) -> str:
-        from ..spatial.export import build_html
-        return build_html(self._live().header())
+        from ..spatial.export import PLAYER_ASSETS_URL, build_html
+        return build_html(self._live().header(), animation=PLAYER_ASSETS_URL)
 
     def live_next(self, after: int = 0, want: int = 2) -> dict:
         return self._live().next_chunk(after, want)
@@ -1126,7 +1126,7 @@ class GameSession:
     def replay_page(self, game_id: int, live: bool = False) -> str:
         """The match viewer for a recorded game (spatial engine, the user's team).
         ``live``: spoiler-free (the box score appears at the final buzzer)."""
-        from ..spatial.export import build_html
+        from ..spatial.export import PLAYER_ASSETS_URL, build_html
         from ..spatial.season_game import replay_data
         lg = self._lg()
         if int(game_id) >= allstar.EVENT_REPLAY_BASE:          # an All-Star Weekend exhibition
@@ -1134,10 +1134,10 @@ class GameSession:
             if data is None:
                 raise UserError("no recording of that game (exhibitions are recorded on the spatial or "
                                 "hybrid engine)", 404)
-            from ..spatial.export import build_html
+            from ..spatial.export import PLAYER_ASSETS_URL, build_html
             from ..spatial.highlights import annotate
             annotate(data.get("possessions", []))
-            return build_html(data)
+            return build_html(data, animation=PLAYER_ASSETS_URL)
         if int(game_id) not in lg.games:
             raise UserError(f"no game {game_id}", 404)
         data = replay_data(lg, int(game_id))
@@ -1147,7 +1147,7 @@ class GameSession:
         data["live"] = bool(live)
         from ..spatial.highlights import annotate
         annotate(data.get("possessions", []))       # older replays were saved without highlight levels
-        return build_html(data)
+        return build_html(data, animation=PLAYER_ASSETS_URL)
 
     def box_score(self, game_id: int) -> dict:
         lg = self._lg()

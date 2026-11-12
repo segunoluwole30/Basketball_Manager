@@ -255,6 +255,11 @@ aside { min-width: 0; display: flex; flex-direction: column; background: var(--p
         <input type="radio" name="labels" id="lblName" value="names"><label for="lblName" title="Numbers and surnames (L cycles)">Names</label>
         <input type="radio" name="labels" id="lblOff" value="off"><label for="lblOff" title="No labels: numbers on the jerseys only (L cycles)">Off</label>
       </div>
+      <div class="seg" id="bodySeg" role="radiogroup" aria-label="Players" hidden>
+        <span class="seglabel">Players</span>
+        <input type="radio" name="bodies" id="bodyAnim" value="animated" checked><label for="bodyAnim" title="Animated players: motion-capture clips driven by the play (B switches)">Animated</label>
+        <input type="radio" name="bodies" id="bodySimple" value="simple"><label for="bodySimple" title="Simple bodies: lighter on slow devices (B switches)">Simple</label>
+      </div>
       <div class="seg" id="arenaSeg" role="radiogroup" aria-label="Arena" hidden>
         <span class="seglabel">Arena</span>
         <input type="radio" name="arena" id="arenaFull" value="full" checked><label for="arenaFull" title="Stands full on both decks, scoreboard and lights">Full</label>
@@ -292,6 +297,7 @@ aside { min-width: 0; display: flex; flex-direction: column; background: var(--p
 </div>
 
 <script type="text/plain" id="three-src">/*THREE_JS*/</script>
+<script type="text/plain" id="player-assets">/*PLAYER_ASSETS*/</script>
 <script>
 window.GAME = /*GAME_DATA*/null;
 (function () {
@@ -844,6 +850,319 @@ window.GAME = /*GAME_DATA*/null;
   const wrapAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
   const RIM_X = L - 5.25;                                        // world X of the right rim
 
+  // ---- animated players (3D only). One rigged model with motion-capture clips
+  // (spatial/assets/player.glb, built by tools/build_player_assets.py), cloned per player.
+  // The page says where the files are in #player-assets: nothing (simple bodies only, the
+  // default for exported pages), {"url": ...} (fetched the first time 3D is shown) or
+  // {"embed": {...}} (carried in the page). The loader and SkeletonUtils are three.js r160's,
+  // run from blob modules that import the page's own copy of three.js.
+  let BODY_CFG = null;
+  try { BODY_CFG = JSON.parse(($("player-assets").textContent || "").trim() || "null"); } catch (e) {}
+  if (BODY_CFG && !BODY_CFG.url && !BODY_CFG.embed) BODY_CFG = null;
+  async function loadPlayerRig(threeUrl) {
+    const get = async (name, binary) => {
+      if (BODY_CFG.embed) {
+        const s = BODY_CFG.embed[name];
+        if (typeof s !== "string") throw new Error("missing " + name);
+        if (!binary) return s;
+        const raw = atob(s), u = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) u[i] = raw.charCodeAt(i);
+        return u.buffer;
+      }
+      const r = await fetch(BODY_CFG.url + name);
+      if (!r.ok) throw new Error(name + ": HTTP " + r.status);
+      return binary ? r.arrayBuffer() : r.text();
+    };
+    const [utils, loader, skel, glb] = await Promise.all([get("BufferGeometryUtils.js"), get("GLTFLoader.js"),
+                                                          get("SkeletonUtils.js"), get("player.glb", true)]);
+    const mod = (src) => URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
+    const three = (src) => src.replace(/from\s+'three'/g, "from " + JSON.stringify(threeUrl));
+    const utilsUrl = mod(three(utils));
+    const L = await import(mod(three(loader).replace(/from\s+'\.\.\/utils\/BufferGeometryUtils\.js'/, "from " + JSON.stringify(utilsUrl))));
+    const S = await import(mod(three(skel)));
+    const gltf = await new Promise((ok, bad) => new L.GLTFLoader().parse(glb, "", ok, bad));
+    const meta = gltf.parser.json.extras && gltf.parser.json.extras.hoopsim;
+    if (!meta || !meta.clips || !gltf.animations.length) throw new Error("player.glb has no clips");
+    return { gltf, meta, clone: S.clone };
+  }
+
+  // What each action cue plays: [clip, the clip mark that sits on the cue's frame, seconds
+  // after it, options]. face: who he turns to; reach: how high his hands must get (feet, or
+  // "ball": where the ball is then), which lifts the jump; ball: he carries it in the clip.
+  const CUE_CLIPS = {
+    pass: ["pass", "release", 0, { face: "other" }],
+    lob_pass: ["lob_pass", "release", 0, { face: "other" }],
+    inbound: ["lob_pass", "release", 0, { face: "other" }],
+    catch: ["catch", "release", 0, { face: "other" }],
+    intercept: ["catch", "release", 0, { face: "ball" }],
+    jumper: ["jumper", "gather", 0, { face: "rim" }],
+    jumper_release: ["jumper", "release", 0, { face: "rim" }],
+    fadeaway: ["jumper", "release", 0, { face: "rim" }],
+    heave: ["jumper", "release", 0, { face: "rim" }],
+    free_throw: ["free_throw", "release", 0, { face: "rim" }],
+    layup: ["layup", "release", 0, { face: "rim", reach: 9.2 }],
+    floater: ["floater", "release", 0, { face: "rim" }],
+    hook: ["layup", "release", 0, { face: "rim", yaw: 1.25, reach: 8.8 }],
+    dunk: ["rebound", "release", 0.2, { face: "rim", reach: 10.6, ball: "both" }],
+    alley_oop: ["rebound", "release", 0.2, { face: "rim", reach: 10.6 }],
+    contest: ["contest", "release", 0.2, { face: "other" }],
+    block: ["block", "release", 0.1, { face: "other", reach: "ball" }],
+    steal: ["steal", "release", 0, { face: "other" }],
+    foul: ["steal", "release", 0, { face: "other", w: 0.7 }],
+    take_charge: ["fall", "release", 0.3, { face: "other" }],
+    charge: ["plant", "release", 0, {}],
+    rebound: ["rebound", "release", 0, { face: "rim", reach: "ball" }],
+    rebound_jump: ["rebound", "release", 0, { face: "rim", reach: "ball", noBall: true }],
+  };
+  const POSE_CUES = { screen: "screen", post_up: "stance" };      // a stance he keeps while he stands there
+  const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
+  const smooth01 = (x) => { x = clamp01(x); return x * x * (3 - 2 * x); };
+
+  function createAnimator(THREE, rig, env) {
+    const CL = rig.meta.clips, H0 = rig.meta.height, clips = {};
+    for (const c of rig.gltf.animations) clips[c.name] = c;
+    clips.hold = clips.catch.clone(); clips.hold.name = "hold";   // the ball held in front: the end of the catch
+    CL.hold = { duration: CL.catch.duration, still: true };
+    const MOVING = ["walk", "jog", "sprint", "backpedal", "slide", "slide_m", "dribble_walk", "dribble_run"];
+    const slideTo = { 1: CL.slide.side > 0 ? "slide" : "slide_m", [-1]: CL.slide.side > 0 ? "slide_m" : "slide" };
+    const kit = new THREE.MeshLambertMaterial({ vertexColors: true });
+    const v1 = new THREE.Vector3(), v2 = new THREE.Vector3(), v3 = new THREE.Vector3(), v4 = new THREE.Vector3();
+
+    function attach(fg, pl, H, skin) {
+      const model = rig.clone(rig.gltf.scene);
+      model.scale.setScalar(H / H0);
+      const jersey = new THREE.MeshLambertMaterial({ map: env.jerseyTexture(pl, true) });
+      const bones = {};
+      model.traverse((o) => {
+        if (o.isBone) bones[o.name] = o;
+        if (!o.isMesh) return;
+        const nm = o.material.name;
+        o.material = nm === "skin" ? skin : nm === "jersey" ? jersey : nm === "shorts" ? env.teamMat[pl.side] : kit;
+        o.castShadow = env.shadows; o.frustumCulled = false;
+      });
+      fg.body.add(model);
+      fg.rig = { model, jersey, bones, mixer: new THREE.AnimationMixer(model), acts: {}, w: {}, k: H / H0,
+                 phase: (hash(fg.key || pl.name) % 100) / 100, free: hash(pl.name) % 7, carry: [], active: [],
+                 ax: 0, az: 0, anchored: false, hand: new THREE.Vector3(), grip: 0 };
+      return fg.rig;
+    }
+    function action(r, name) {
+      let a = r.acts[name];
+      if (!a) { a = r.acts[name] = r.mixer.clipAction(clips[name]); a.enabled = false; a.weight = 0; a.play(); }
+      return a;
+    }
+
+    // ---- cues: the possession's actions as clips on its clock. Older replays have no
+    // "actions": read the shots, passes and rebounds off the frames instead.
+    function inferActions(p) {
+      const fr = p.frames, out = [], fl = env.flights(p), shot = new Map(fl.map((x) => [x.rel + 1, x]));
+      for (let i = 1; i < fr.length; i++) {
+        const h = fr[i - 1][5];
+        if (h < 0 || fr[i][5] >= 0) continue;                       // the ball leaves his hands at frame i
+        const f = shot.get(i);
+        if (f) {
+          const d = Math.hypot(fr[i - 1][6 + 2 * h], fr[i - 1][7 + 2 * h] - 52.5) / 10;
+          out.push([i, h, d < 7 ? "layup" : "jumper_release", -1]);
+          if (f.made === false) {
+            let j = f.arr; while (j < fr.length && fr[j][5] < 0) j++;
+            if (j < fr.length) out.push([j, fr[j][5], "rebound", -1]);
+          }
+          continue;
+        }
+        let j = i; while (j < fr.length && fr[j][5] < 0) j++;
+        if (j >= fr.length || fr[j][5] === h) continue;
+        const to = fr[j][5];
+        out.push([i, h, "pass", to]);
+        out.push([j, to, (to < 5) === (h < 5) ? "catch" : "intercept", h]);
+      }
+      return out.sort((a, b) => a[0] - b[0]);
+    }
+    const cuesOf = new WeakMap();
+    function cues(p) {
+      if (cuesOf.has(p)) return cuesOf.get(p);
+      const dt = env.dt, fr = p.frames, n = fr.length, by = Array.from({ length: 10 }, () => []);
+      const acts = Array.isArray(p.actions) ? p.actions : inferActions(p);
+      for (let k = 0; k < acts.length; k++) {
+        const [f, pl, name, other] = acts[k];
+        if (!(pl >= 0 && pl < 10)) continue;
+        if (POSE_CUES[name]) { by[pl].push({ clip: POSE_CUES[name], t0: f * dt + 0.25, ofs: 0, dur: 3.2, pose: true, other }); continue; }
+        const m = CUE_CLIPS[name];
+        if (!m) continue;
+        // the gather is part of the jump shot: its release cue carries it
+        if (name === "jumper" && acts.some((x, j) => j > k && x[1] === pl && x[2] === "jumper_release" && x[0] - f < 20)) continue;
+        const c = CL[m[0]], o = m[3];
+        let fi = Math.min(n - 1, f);
+        // the rebound cue comes when it is won: he goes up when the ball reaches him
+        if (name === "rebound") for (let j = fi; j < Math.min(n, fi + 25); j++) if (fr[j][5] === pl) { fi = j; break; }
+        const cue = { clip: m[0], t0: fi * dt + m[2] - ((c.marks && c.marks[m[1]]) || 0), ofs: 0, dur: c.duration,
+                      face: o.face, other, yaw: o.yaw || 0, w: o.w || 1, hold: !!c.hold, reach: 0,
+                      ball: o.noBall ? null : o.ball || c.ball || null, name };
+        if (o.reach) cue.reach = o.reach === "ball" ? Math.min(11, Math.max(name === "rebound" ? 8.6 : 0, fr[fi][4] / 10 + 0.2)) : o.reach;
+        // a dunk is recorded as a shot that arcs up and drops in: he takes it to the rim himself
+        if (name === "dunk" || name === "alley_oop") { cue.slam = f * dt + 0.22; cue.name = "dunk"; }
+        by[pl].push(cue);
+      }
+      // a hard stop or cut at speed: plant the foot (found in the frames, not an action)
+      const P = CL.plant.marks.release;
+      for (let pl = 0; pl < 10; pl++) {
+        const cx = 6 + 2 * pl, vel = (i) => [(fr[i + 2][cx] - fr[i - 2][cx]) / (40 * dt), (fr[i + 2][cx + 1] - fr[i - 2][cx + 1]) / (40 * dt)];
+        for (let i = 5; i < n - 6; i++) {
+          const a = vel(i - 3), b = vel(i + 3), sa = Math.hypot(a[0], a[1]), sb = Math.hypot(b[0], b[1]);
+          if (sa < 11) continue;
+          const turn = Math.acos(Math.max(-1, Math.min(1, (a[0] * b[0] + a[1] * b[1]) / (sa * sb || 1))));
+          if (!(sb < 0.45 * sa || (turn > 1.7 && sb > 5))) continue;
+          const t = i * dt;
+          if (!by[pl].some((c) => !c.pose && t > c.t0 - 0.5 && t < c.t0 + c.dur + 0.3))
+            by[pl].push({ clip: a[0] * b[1] - a[1] * b[0] > 0 ? "plant" : "plant_m", t0: t - 0.3, ofs: P - 0.3, dur: 0.7, w: 0.8, yaw: 0, reach: 0, plant: true });
+          i += 14;
+        }
+        by[pl].sort((a, b) => a.t0 - b.t0);
+      }
+      cuesOf.set(p, by);
+      return by;
+    }
+    // how much of him a cue takes, tl seconds into it (eases in and out)
+    function envelope(c, tl) {
+      if (tl < 0 || tl > c.dur) return 0;
+      const fin = smooth01(tl / Math.min(0.2, c.dur / 3));
+      const fout = c.hold ? 1 : smooth01((c.dur - tl) / Math.min(0.28, c.dur / 3));
+      return Math.min(fin, fout) * (c.w || 1);
+    }
+    function reset(fg) { const r = fg.rig; r.carry = []; r.active = []; r.w = {}; r.grip = 0; r.anchored = false; }
+    // The possession moved on without a cut: clips still running play out on their own clock.
+    function carryOver(fg) {
+      const r = fg.rig;
+      r.carry = r.active.filter((a) => !a.c.pose && a.tl < a.c.dur).slice(-2).map((a) => ({ c: { ...a.c, hold: false }, tl: a.tl }));
+    }
+
+    // One player, one frame. q: his sample from setFrame (n, off, sp, vX, vZ: world velocity);
+    // s: the view's state (p, at: possession clock incl. the hold at its end, holder, ball).
+    // Sets the clip weights and times and returns what he should face (or null).
+    function update(fg, q, s, dtg, dta, fresh) {
+      const r = fg.rig, sp = q.sp, isHolder = s.holder === q, list = cues(s.p)[q.n] || [];
+      // -- one-shots: carried over from the last possession, then this possession's
+      const act = [];
+      r.carry = r.carry.filter((a) => (a.tl += dta) < a.c.dur);
+      for (const a of r.carry) act.push(a);
+      let pose = null, lastCatch = -9;
+      for (const c of list) {
+        const tl = s.at - c.t0;
+        if (c.name === "catch" && tl >= 0) lastCatch = tl - CL.catch.marks.release;
+        if (tl < 0 || tl > c.dur) continue;
+        if (c.pose) pose = c; else act.push({ c, tl });
+      }
+      r.active = act;
+      const top = act.slice(-2);
+      let used = 0, face = null, lift = 0, ballCue = null;
+      const W = {}, T = {};
+      for (let i = top.length - 1; i >= 0; i--) {
+        const { c, tl } = top[i], e = envelope(c, tl) * (1 - used);
+        if (e <= 0 || W[c.clip] !== undefined) continue;
+        W[c.clip] = e; T[c.clip] = Math.min(c.ofs + tl, CL[c.clip].duration - 0.001);
+        used += e;
+        if (i === top.length - 1) {
+          if (c.face) face = { to: c.face, other: c.other, yaw: c.yaw };
+          if (c.ball && isHolder) ballCue = c;
+          const m = CL[c.clip].marks;
+          if (c.reach && m && m.land) {
+            const need = Math.max(0, Math.min(3.6, c.reach - CL[c.clip].reach * r.k)), t = c.ofs + tl;
+            const g = m.gather !== undefined ? m.gather : 0;
+            lift = need * (t < m.release ? smooth01((t - g) / Math.max(0.05, m.release - g)) : smooth01((m.land - t) / Math.max(0.05, m.land - m.release)));
+          }
+        }
+      }
+      // -- how he stands and moves otherwise
+      const tgt = {};
+      const dribbling = isHolder && s.ballLow && !(lastCatch < 0.7 && sp < 4);
+      const h = fg.heading, fwd = sp > 0.01 ? (q.vX * Math.sin(h) + q.vZ * Math.cos(h)) / sp : 1;
+      const lat = sp > 0.01 ? (q.vX * Math.cos(h) - q.vZ * Math.sin(h)) / sp : 0;
+      const run = (m) => {                                        // forwards: walk, jog, sprint by speed
+        const a = CL.walk.speed, b = CL.jog.speed, c = CL.sprint.speed;
+        if (sp <= a) tgt.walk = (tgt.walk || 0) + m;
+        else if (sp <= b) { const k = (sp - a) / (b - a); tgt.walk = (tgt.walk || 0) + m * (1 - k); tgt.jog = m * k; }
+        else { const k = clamp01((sp - b) / (c - b)); tgt.jog = m * (1 - k); tgt.sprint = m * k; }
+      };
+      const go = clamp01((sp - 0.8) / 1.8);
+      if (dribbling) {
+        const a = CL.dribble_walk.speed, b = CL.dribble_run.speed * 0.8;
+        if (sp <= a) { tgt.dribble_idle = 1 - clamp01((sp - 0.8) / 2.4); tgt.dribble_walk = 1 - tgt.dribble_idle; }
+        else { const k = clamp01((sp - a) / (b - a)); tgt.dribble_walk = 1 - k; tgt.dribble_run = k; }
+      } else if (isHolder) {
+        tgt.hold = 1 - go; if (go > 0) run(go);
+      } else if (!q.off && sp < 7.5) {                             // on defence: stance, slides, backpedal
+        tgt.stance = 1 - go;
+        if (go > 0) {
+          const f2 = fwd * fwd, l2 = 1 - f2;
+          if (l2 > 0.02) tgt[slideTo[lat > 0 ? 1 : -1]] = go * l2;
+          if (fwd > 0) run(go * f2); else tgt.backpedal = go * f2;
+        }
+      } else {
+        const still = pose && sp < 3.5 ? pose.clip : q.off ? "idle" : "stance";
+        tgt[still] = 1 - go; if (go > 0) run(go);
+      }
+      // ease the weights (at once after a cut), then leave room for the one-shots
+      const kk = fresh ? 1 : 1 - Math.exp(-dtg / 0.13);
+      let sum = 0, rate = 0, mov = 0;
+      for (const name in tgt) if (r.w[name] === undefined) r.w[name] = 0;
+      for (const name in r.w) {
+        r.w[name] += ((tgt[name] || 0) - r.w[name]) * kk;
+        if (r.w[name] < 0.003 && !tgt[name]) { delete r.w[name]; const a = r.acts[name]; if (a) a.enabled = false; continue; }
+        sum += r.w[name];
+        if (CL[name].speed > 0) { mov += r.w[name]; rate += r.w[name] * Math.max(0.55, Math.min(1.5, sp / CL[name].speed)) / CL[name].duration; }
+      }
+      if (mov > 0) r.phase = (r.phase + rate / mov * dta) % 1;
+      r.free += dta;
+      const room = (1 - used) / (sum || 1);
+      for (const name of Object.keys(r.acts)) if (W[name] === undefined && r.w[name] === undefined) r.acts[name].enabled = false;
+      for (const name in r.w) {
+        if (W[name] !== undefined) continue;                      // (a one-shot never shares a clip with a loop)
+        const a = action(r, name), d = CL[name].duration;
+        a.enabled = true; a.weight = r.w[name] * room;
+        a.time = name === "hold" ? d - 0.02 : CL[name].speed > 0 ? r.phase * d : r.free % d;
+      }
+      for (const name in W) { const a = action(r, name); a.enabled = true; a.weight = W[name]; a.time = T[name]; }
+      r.mixer.update(0);
+      r.model.position.y = lift;
+      r.ballCue = ballCue; r.dribbling = dribbling && !ballCue;
+      // a dunk in progress: the ball stays in his hands to the rim, then drops through the net
+      r.slam = null;
+      for (const c of list) if (c.slam && s.at > c.t0 + CL[c.clip].marks.gather && s.at < c.slam + 1.2 && (isHolder || s.at >= c.slam - 0.3)) r.slam = c;
+      return face;
+    }
+
+    // Where the ball is in his hands (world). Dribbling: under the hand, bouncing off the
+    // floor between the clip's marks; otherwise between both hands or on the shooting hand.
+    function ballInHand(fg, out) {
+      const r = fg.rig, b = r.bones;
+      fg.root.updateMatrixWorld(true);
+      const palm = (side, v) => {
+        b[side + "Hand"].getWorldPosition(v); b[side + "ForeArm"].getWorldPosition(v4);
+        return v.add(v4.subVectors(v, v4).normalize().multiplyScalar(0.38 * r.k));
+      };
+      if (r.dribbling) {
+        let best = "dribble_idle", bw = -1;
+        for (const nm of ["dribble_idle", "dribble_walk", "dribble_run"]) if ((r.w[nm] || 0) > bw) { bw = r.w[nm] || 0; best = nm; }
+        const m = CL[best].dribble, d = CL[best].duration, t = r.acts[best] ? r.acts[best].time : 0;
+        palm(m.hand === "L" ? "Left" : "Right", out);
+        out.y -= 0.5;
+        for (const [rel, back] of m.bounces) {
+          const span = ((back - rel) % d + d) % d, u = (((t - rel) % d + d) % d) / span;
+          if (u >= 0 && u < 1) { out.y = 0.6 + Math.max(0, out.y - 0.6) * Math.pow(Math.abs(1 - 2 * u), 0.75); break; }
+        }
+        out.y = Math.max(0.6, out.y);
+        return out;
+      }
+      const mode = r.ballCue ? r.ballCue.ball : "both";
+      palm("Right", out);
+      if (mode === "both") { palm("Left", v3); out.add(v3).multiplyScalar(0.5); out.y += 0.2; }
+      else out.y += 0.35;
+      return out;
+    }
+    // is the shot released at this frame a dunk (so: no arc to trail)?
+    const dunkAt = (p, f) => cues(p).some((l) => l.some((c) => c.slam && Math.abs(c.slam - 0.32 - f * env.dt) < 0.3));
+    return { attach, update, ballInHand, cues, reset, carryOver, dunkAt, clips: CL, names: Object.keys(clips) };
+  }
+
   // ---- the arena round the 3D court: stands, crowd, benches, boards, roof. Built the first
   // time it's wanted (never for the 2D view). The stands are one merged mesh with baked
   // shading; the crowd is one instanced mesh per deck whose sway, standing and jumping happen
@@ -1379,13 +1698,20 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     const teamMat = { home: new THREE.MeshLambertMaterial(), away: new THREE.MeshLambertMaterial() };
     const ringMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.9, depthWrite: false });
     const figures = {};
-    function jerseyTexture(pl) {
+    function jerseyTexture(pl, rigged) {
       const c = document.createElement("canvas"); c.width = 256; c.height = 128;
       const x = c.getContext("2d");
       x.fillStyle = colors[pl.side]; x.fillRect(0, 0, 256, 128);
       x.fillStyle = "rgba(255,255,255,0.85)"; x.fillRect(0, 0, 256, 7);
       x.textAlign = "center"; x.textBaseline = "middle"; x.fillStyle = "#ffffff";
       const n = String(pl.num ?? "");
+      if (rigged) {                                               // back at u 0.25, front at 0.75, chest high
+        x.fillRect(0, 121, 256, 7);
+        x.translate(256, 0); x.scale(-1, 1);                      // (u runs right to left round the torso)
+        x.font = `700 46px ${colors.font}`; x.fillText(n, 192, 50);
+        x.font = `700 36px ${colors.font}`; x.fillText(n, 64, 46);
+        return canvasTex(c);
+      }
       x.font = `700 72px ${colors.font}`; x.fillText(n, 128, 68);   // back (u = 0.5)
       x.font = `700 44px ${colors.font}`; x.fillText(n, 0, 60); x.fillText(n, 256, 60);   // front (u = 0 = 1)
       return canvasTex(c);
@@ -1416,8 +1742,8 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       if (figures[key]) return figures[key];
       const H = (HEIGHT[pl.pos] || 6.6) + ((hash(pl.name) % 9) - 4) * 0.03;
       const skin = skinMats[hash(pl.name + "s") % skinMats.length];
-      const root = new THREE.Group(), body = new THREE.Group();     // root: where; body: which way
-      root.add(body);
+      const root = new THREE.Group(), turn = new THREE.Group(), body = new THREE.Group();   // root: where; turn: which way
+      root.add(turn); turn.add(body);                             // body: the simple figure (the animated one sits beside it)
       const hip = H * 0.47, torsoH = H * 0.35;
       const legs = [-1, 1].map((sd) => {
         const leg = new THREE.Group();
@@ -1449,7 +1775,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       label.center.set(0.5, 0); label.position.y = H + 0.6; label.renderOrder = 10;
       root.add(label);
       scene.add(root);
-      return (figures[key] = { root, body, legs, arms, label, jersey, pl, x: 0, z: 0, heading: 0,
+      return (figures[key] = { root, body: turn, simple: body, legs, arms, label, jersey, pl, key, H, skin, rig: null, x: 0, z: 0, heading: 0,
                                phase: hash(key) % 7, seen: -1, labelKey: "", tex: [null, null], theme: colorsVersion, aspect: 1 });
     }
     const ring = new THREE.Mesh(geo.ring, ringMat);                // under the ball handler
@@ -1623,7 +1949,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
           vx = (x - fx) * 1.5; vy = (y - fy) * 1.5;
           x = lerp(x, fx, g); y = lerp(y, fy, g);
         }
-        const q = { key, pl: order[n], x, y, vx, vy };
+        const q = { key, pl: order[n], x, y, vx, vy, n, off: (n < 5) === (p.offense === "home") };
         players.push(q);
         if (a[5] === n) holder = q;
       }
@@ -1698,7 +2024,9 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     let trailShown = null, trailAlpha = 0;           // what's drawn; its strength (fades on its own once left)
     const tv = new THREE.Vector3(), tt = new THREE.Vector3(), ts = new THREE.Vector3();
     function updateTrail(dtReal, g) {
-      const p = st.p, f = st.time / dt, fl = g > 0 ? null : flights(p).find((x) => f >= x.rel && f <= x.arr + TRAIL_FADE / dt);
+      const p = st.p, f = st.time / dt;
+      let fl = g > 0 ? null : flights(p).find((x) => f >= x.rel && f <= x.arr + TRAIL_FADE / dt);
+      if (fl && bodyMode === "animated" && anim.dunkAt(p, fl.rel)) fl = null;      // he carries it there
       if (!fl) {                                     // nothing up: let the last one go
         if (!trail.visible) return false;
         trailAlpha -= dtReal / 0.35;
@@ -1710,10 +2038,11 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       const rgb = TRAIL_RGB[!landed || fl.made === null ? "flying" : fl.made ? "made" : "miss"];
       const alpha = landed ? Math.max(0, 1 - (f - fl.arr) * dt / TRAIL_FADE) : 1;
       const to = Math.min(f, fl.arr), fr = p.frames, c = trailMid;
-      const n = Math.max(2, Math.min(TRAIL_N, Math.ceil((to - fl.rel) * 6) + 1));
+      const rel = Math.min(to, fl.rel + (bodyMode === "animated" ? 1 : 0));      // animated: from his hands, not his waist
+      const n = Math.max(2, Math.min(TRAIL_N, Math.ceil((to - rel) * 6) + 1));
       const camPos = camera.position;
       for (let k = 0; k < n; k++) {
-        const u = fl.rel + (to - fl.rel) * k / (n - 1);
+        const u = rel + (to - rel) * k / (n - 1);
         const [x, y] = toCourt(p, spline(fr, u, 2)[0], spline(fr, u, 3)[0]);
         const [wx, wz] = toWorld(x, y);
         c[k * 3] = wx; c[k * 3 + 1] = Math.max(0.6, spline(fr, u, 4)[0]); c[k * 3 + 2] = wz;
@@ -1746,6 +2075,20 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       trailGeo.attributes.color.needsUpdate = true;
     }
 
+    // ---- animated bodies: the rig arrives after the view is up (or never: simple bodies stay)
+    let anim = null, bodyMode = "simple", bodyAuto = false, onSlow = null;
+    let animP = null, over = 0, grip = 0, slowT = 0, slowN = 0;
+    const gripPos = new THREE.Vector3();
+    function setRig(rig) {
+      anim = createAnimator(THREE, rig, { dt, jerseyTexture, teamMat, shadows: !small, flights });
+      dirty = 3;
+    }
+    // "animated" needs the rig; auto: drop to simple bodies if this device can't keep up
+    function setBodies(mode, auto, slow) {
+      bodyMode = mode === "animated" && anim ? "animated" : "simple";
+      bodyAuto = !!auto; onSlow = slow || null; slowT = slowN = 0; grip = 0; dirty = 3;
+    }
+
     let frameNo = 0;
     function render(dtReal, rate) {
       if (!st) return;
@@ -1755,42 +2098,78 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       const snap = st.snap; st.snap = false;
       const seen = ++frameNo;
       let motion = 0, holderFig = null;
+      // The animation clock: the possession's own time, running on through the pause at
+      // its end (a rebounder lands, a charge falls) and frozen while playback is paused.
+      const useRig = bodyMode === "animated", live = playing || !!trans, dta = live ? dtg : 0;
+      const atEnd = st.time >= (st.p.frames.length - 1) * dt - 1e-6;
+      if (st.p !== animP || snap) {
+        if (anim) for (const key in figures) if (figures[key].rig) { if (snap || !animP) anim.reset(figures[key]); else anim.carryOver(figures[key]); }
+        animP = st.p; over = 0;
+      }
+      over = atEnd ? (playing && !trans ? Math.min(1.5, over + dtg) : over) : 0;
+      st.at = st.time + over; st.ballLow = st.ball.y <= 3.6;
+      const rimX = attacksLeft(st.p) ? -RIM_X : RIM_X;
+      if (useRig && live) {
+        dirty = 3;
+        slowT += dtReal; slowN++;
+        if (bodyAuto && slowN >= 120) {                // two seconds or so: under ~18 frames a second is too slow
+          if (slowT / slowN > 0.055 && onSlow) { const f = onSlow; onSlow = null; setTimeout(f, 0); }
+          slowT = slowN = 0;
+        }
+      }
       for (const q of st.players) {
         const fg = figure(q.key, q.pl);
         const [tx, tz] = toWorld(q.x, q.y);
+        const vX = q.vy, vZ = q.vx, sp = Math.hypot(vX, vZ);
+        q.vX = vX; q.vZ = vZ; q.sp = sp;
+        if (useRig && !fg.rig) anim.attach(fg, q.pl, fg.H, fg.skin);
+        if (fg.rig) fg.rig.model.visible = useRig;
+        fg.simple.visible = !useRig;
         // light damping on top of the spline, never more than 0.6 ft from the truth
         if (snap || fg.seen !== seen - 1 || Math.hypot(tx - fg.x, tz - fg.z) > 6) { fg.x = tx; fg.z = tz; fg.fresh = true; }
+        else if (useRig && sp < 1.2 && Math.hypot(tx - fg.x, tz - fg.z) < 0.45) fg.fresh = false;   // standing: feet stay planted
         else {
           const kk = 1 - Math.exp(-dtg / 0.07);
           fg.x += (tx - fg.x) * kk; fg.z += (tz - fg.z) * kk;
           const off = Math.hypot(tx - fg.x, tz - fg.z), lim = 0.6;
           if (off > lim) { fg.x = tx + (fg.x - tx) * lim / off; fg.z = tz + (fg.z - tz) * lim / off; }
           fg.fresh = false;
+          motion += Math.abs(tx - fg.x) + Math.abs(tz - fg.z);
         }
-        motion += Math.abs(tx - fg.x) + Math.abs(tz - fg.z);
         fg.seen = seen;
         fg.root.visible = true;
         fg.root.position.set(fg.x, 0, fg.z);
         // facing: where he runs; standing, the ball (the man with it squares up to his rim)
-        const vX = q.vy, vZ = q.vx, sp = Math.hypot(vX, vZ);
-        let want;
-        if (sp > 3) want = Math.atan2(vX, vZ);
-        else if (q === st.holder) want = Math.atan2((attacksLeft(st.p) ? -RIM_X : RIM_X) - fg.x, -fg.z);
+        let want, turnK = sp > 3 ? 7 : 4;
+        // (animated: a defender keeps facing the ball while he slides and backpedals)
+        if (sp > (useRig && !q.off ? 7.5 : 3)) want = Math.atan2(vX, vZ);
+        else if (q === st.holder) want = Math.atan2(rimX - fg.x, -fg.z);
         else want = Math.atan2(st.ball.x - fg.x, st.ball.z - fg.z);
+        if (useRig) {
+          // clips for what he's doing; some turn him: a shooter to the rim, a passer to his man
+          const face = anim.update(fg, q, st, dtg, dta, fg.fresh);
+          if (face) {
+            const o = face.to === "other" && st.players[face.other];
+            const [fx, fz] = face.to === "rim" ? [rimX, 0] : o ? toWorld(o.x, o.y) : [st.ball.x, st.ball.z];
+            if (Math.hypot(fx - fg.x, fz - fg.z) > 0.5) { want = Math.atan2(fx - fg.x, fz - fg.z) + face.yaw; turnK = 10; }
+          }
+        }
         if (fg.fresh) fg.heading = want;
         else {
           const d = wrapAngle(want - fg.heading);
-          fg.heading += d * (1 - Math.exp(-dtg * (sp > 3 ? 7 : 4)));
+          fg.heading += d * (1 - Math.exp(-dtg * turnK));
           motion += Math.abs(d);
         }
         fg.body.rotation.y = fg.heading;
-        // stride: legs and arms swing with speed, a little bob
-        const amp = Math.min(1, sp / 14) * 0.75;
-        fg.phase += sp * dtg * (2 * Math.PI / 9);
-        const sw = Math.sin(fg.phase) * amp;
-        fg.legs[0].rotation.x = sw; fg.legs[1].rotation.x = -sw;
-        fg.arms[0].rotation.x = -sw * 0.8; fg.arms[1].rotation.x = sw * 0.8;
-        fg.body.position.y = Math.abs(Math.cos(fg.phase)) * amp * 0.25;
+        if (!useRig) {
+          // stride: legs and arms swing with speed, a little bob
+          const amp = Math.min(1, sp / 14) * 0.75;
+          fg.phase += sp * dtg * (2 * Math.PI / 9);
+          const sw = Math.sin(fg.phase) * amp;
+          fg.legs[0].rotation.x = sw; fg.legs[1].rotation.x = -sw;
+          fg.arms[0].rotation.x = -sw * 0.8; fg.arms[1].rotation.x = sw * 0.8;
+          fg.simple.position.y = Math.abs(Math.cos(fg.phase)) * amp * 0.25;
+        }
         // the tag over his head: two textures each (plain, with the ball), made when the
         // label mode or the theme changes, swapped when the ball changes hands
         const hold = q === st.holder ? 1 : 0;
@@ -1812,19 +2191,37 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
         }
         if (fg.theme !== colorsVersion) {
           fg.jersey.map.dispose(); fg.jersey.map = jerseyTexture(fg.pl); fg.theme = colorsVersion;
+          if (fg.rig) { fg.rig.jersey.map.dispose(); fg.rig.jersey.map = jerseyTexture(fg.pl, true); }
         }
         if (hold) holderFig = fg;
       }
       for (const key in figures) if (figures[key].seen !== seen) figures[key].root.visible = false;
+      const t1 = performance.now();
       // the ball travels with its (smoothed) handler, bouncing on the dribble when he moves
       let bX = st.ball.x, bZ = st.ball.z, bY = st.ball.y;
       if (holderFig) {
         const [hx, hz] = toWorld(st.holder.x, st.holder.y);
         bX += holderFig.x - hx; bZ += holderFig.z - hz;
-        if (Math.hypot(st.holder.vx, st.holder.vy) > 4 && bY <= 3.6)
+        if (!useRig && Math.hypot(st.holder.vx, st.holder.vy) > 4 && bY <= 3.6)
           bY = 0.6 + (bY - 0.6) * Math.abs(Math.cos(st.time * Math.PI / 0.55));
         ring.visible = true; ring.position.x = holderFig.x; ring.position.z = holderFig.z;
       } else ring.visible = false;
+      // animated: the ball sits in his hands (and bounces under one on the dribble); once it
+      // leaves them it eases from the hand onto its recorded flight
+      let slamFig = null;
+      if (useRig) for (const q of st.players) { const f = figures[q.key]; if (f.rig && f.rig.slam) slamFig = f; }
+      if (slamFig) {
+        const c = slamFig.rig.slam, after = st.at - c.slam;
+        if (after < 0) anim.ballInHand(slamFig, gripPos);
+        else gripPos.set(rimX, Math.max(0.6, 9.7 - 16 * after * after), 0);      // through the net and down
+        grip = 1; ring.visible = false;
+      } else if (useRig && holderFig) { anim.ballInHand(holderFig, gripPos); grip = snap ? 1 : grip + (1 - grip) * (1 - Math.exp(-dtg / 0.05)); }
+      else grip = snap || !useRig ? 0 : Math.max(0, grip - dtg / 0.16);
+      if (grip > 0) {
+        const g = grip * grip * (3 - 2 * grip);
+        bX = lerp(bX, gripPos.x, g); bY = lerp(bY, gripPos.y, g); bZ = lerp(bZ, gripPos.z, g);
+        if (grip < 1 && !holderFig) dirty = Math.max(dirty, 1);
+      }
       bY = Math.max(0.6, bY);
       ball.position.set(bX, bY, bZ);
       ball.rotation.x += dtg * 6; ball.rotation.z += dtg * 2;
@@ -1841,9 +2238,9 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       if (dirty <= 0) return;                        // nothing moved: skip the GPU work
       dirty--;
       renderer.render(scene, camera);
-      perf.frames++; perf.ms += performance.now() - t0;
+      perf.frames++; perf.ms += performance.now() - t0; perf.players += t1 - t0;
     }
-    const perf = { frames: 0, ms: 0 };              // CPU time per rendered frame (see ?debug)
+    const perf = { frames: 0, ms: 0, players: 0 };  // CPU time per rendered frame, and the players' share (see ?debug)
     function resize(w, h) {
       aspect = w / h;
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -1855,9 +2252,16 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     // a new preset flies there on the camera's own damping (a dip to black if it turns right round)
     function setPreset(name) { preset = name; baseSide = 0; resetUser(); }
     function setLabels(mode) { labelMode = mode; dirty = 3; }
-    return { setFrame, render, resize, setPreset, setLabels, setArena, renderer, camera, scene,
+    return { setFrame, render, resize, setPreset, setLabels, setArena, setRig, setBodies, renderer, camera, scene,
+             bodies: () => ({ mode: bodyMode, rig: !!anim, auto: bodyAuto, clips: anim ? anim.names : [],
+                              players: st ? st.players.map((q) => { const fg = figures[q.key], r = fg && fg.rig;
+                                return { key: q.key, n: q.n, off: q.off, sp: +(q.sp || 0).toFixed(1), animated: !!(r && r.model.visible),
+                                         clips: r ? Object.keys(r.acts).filter((k) => r.acts[k].enabled).map((k) => k + ":" + r.acts[k].weight.toFixed(2)) : [] }; }) : [] }),
+             cues: (p) => (anim ? anim.cues(p) : null),
+             orbit: (yaw, pitch, zoom) => { user.yaw = yaw; user.pitch = pitch; user.zoom = zoom; dirty = 3; },
              get preset() { return preset; }, flights, trail: () => ({ visible: trail.visible, alpha: trailAlpha, rgb: trailShown && trailShown.rgb }),
-             stats: () => ({ frames: perf.frames, msPerFrame: perf.frames ? perf.ms / perf.frames : 0 }),
+             stats: () => ({ frames: perf.frames, msPerFrame: perf.frames ? perf.ms / perf.frames : 0,
+                             playersMsPerFrame: perf.frames ? perf.players / perf.frames : 0, bodies: bodyMode }),
              arena: () => (arena ? { level: arena.level, reacting: arena.reacting(), ...arena.crowd(), ...arena.stats() } : null) };
   }
 
@@ -1865,7 +2269,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
   const THREE_SRC = $("three-src");
   const HAS_LIB = !!(THREE_SRC && THREE_SRC.textContent.length > 10000);
   const NO_GL = "3D unavailable: this browser has no WebGL.";
-  let threeLib = null, camPreset = "broadcast";
+  let threeLib = null, threeUrl = null, camPreset = "broadcast";
   try { camPreset = localStorage.getItem("hoopsim-cam") || "broadcast"; } catch (e) {}
   const CAMS = ["broadcast", "baseline", "follow", "overhead"], LABELS = ["numbers", "names", "off"];
   if (!CAMS.includes(camPreset)) camPreset = "broadcast";
@@ -1886,21 +2290,60 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     const test = document.createElement("canvas");
     if (!window.WebGLRenderingContext || !(test.getContext("webgl2") || test.getContext("webgl"))) throw new Error("no WebGL");
     if (!threeLib) {
-      const url = URL.createObjectURL(new Blob([THREE_SRC.textContent], { type: "text/javascript" }));
-      try { threeLib = await import(url); } finally { URL.revokeObjectURL(url); }
+      // (the address is kept: the player loader's modules import three.js from it)
+      threeUrl = URL.createObjectURL(new Blob([THREE_SRC.textContent], { type: "text/javascript" }));
+      threeLib = await import(threeUrl);
     }
     const cv = $("court3d");
     view3d = createView3D(threeLib, cv);
     view3d.setPreset(camPreset);
     view3d.setArena(arenaQ);
     view3d.setLabels(labelMode);
+    if (rigData) { view3d.setRig(rigData); applyBodies(); }
     if (DEBUG) {
       window.hoopsim3D = view3d;
       view3d.seek = (n, time, play = false) => { goTo(n); t = Math.min(time, duration(P[poss])); setPlaying(play); drawFrame(); };
+      view3d.time = () => ({ poss, t });
     }
     cv.addEventListener("webglcontextlost", (e) => {
       e.preventDefault(); view3d = null; setView("2d", false); no3D("3D stopped: the graphics context was lost.");
     });
+  }
+  // Players in 3D: Animated (the rigged model and its clips, fetched the first time 3D is
+  // shown) or Simple (the low-poly bodies: also what you get if the files don't load, on
+  // a device that can't keep up, and in pages exported without them). Remembered.
+  let bodyPref = "auto", rigData = null, rigState = BODY_CFG ? "idle" : "none";
+  try { bodyPref = localStorage.getItem("hoopsim-bodies") || "auto"; } catch (e) {}
+  if (!["auto", "animated", "simple"].includes(bodyPref)) bodyPref = "auto";
+  function applyBodies() {
+    const on = bodyPref !== "simple" && rigState === "ready";
+    $("bodyAnim").checked = bodyPref !== "simple" && rigState !== "failed"; $("bodySimple").checked = !$("bodyAnim").checked;
+    if (view3d) view3d.setBodies(on ? "animated" : "simple", bodyPref === "auto", () => {
+      setBodyPref("simple"); setText("viewMsg", "Animated players were slow here: switched to simple bodies.");
+    });
+  }
+  function setBodyPref(v) {
+    bodyPref = v;
+    try { localStorage.setItem("hoopsim-bodies", v); } catch (e) {}
+    if (v !== "simple" && rigState === "idle") loadBodies(); else applyBodies();
+  }
+  async function loadBodies() {
+    if (rigState !== "idle" || !view3d) return;
+    rigState = "loading";
+    setText("viewMsg", "Loading players…");
+    try {
+      rigData = await loadPlayerRig(threeUrl);
+      rigState = "ready";
+      if (view3d) view3d.setRig(rigData);
+      setText("viewMsg", "");
+    } catch (e) {
+      console.warn("Animated players:", e);
+      rigState = "failed";
+      $("bodyAnim").disabled = true;
+      $("bodyAnim").nextElementSibling.title = "Animated players could not be loaded";
+      setText("viewMsg", "Animated players unavailable: using simple bodies.");
+    }
+    applyBodies();
   }
   function no3D(msg) {
     $("v3d").disabled = true;
@@ -1917,6 +2360,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       catch (e) { console.warn("3D view:", e); no3D(NO_GL); mode = "2d"; }
       viewBusy = false;
     }
+    if (mode === "3d" && bodyPref !== "simple" && rigState === "idle") loadBodies();
     viewMode = mode;
     $("v2d").checked = mode === "2d"; $("v3d").checked = mode === "3d";
     canvas.hidden = mode === "3d";
@@ -1924,6 +2368,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     $("camSeg").hidden = mode !== "3d";
     $("arenaSeg").hidden = mode !== "3d";
     $("labelSeg").hidden = mode !== "3d";
+    $("bodySeg").hidden = mode !== "3d" || !BODY_CFG;
     $("namesBox").hidden = mode === "3d";
     if (save) { try { localStorage.setItem("hoopsim-view", mode); } catch (e) {} }
     redrawAll();
@@ -1961,7 +2406,11 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       if (k >= "1" && k <= "4") setCam(CAMS[+k - 1]);
       else if (k === "c") setCam(CAMS[(CAMS.indexOf(camPreset) + 1) % CAMS.length]);
       else if (k === "l") setLabels(LABELS[(LABELS.indexOf(labelMode) + 1) % LABELS.length]);
+      else if (k === "b" && BODY_CFG && rigState !== "failed") setBodyPref($("bodyAnim").checked ? "simple" : "animated");
     });
+    document.querySelectorAll('input[name="bodies"]').forEach((el) =>
+      el.addEventListener("change", () => { if (el.checked) setBodyPref(el.value); }));
+    applyBodies();
     document.querySelectorAll('input[name="arena"]').forEach((el) => {
       el.checked = el.value === arenaQ;
       el.addEventListener("change", () => {
