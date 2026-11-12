@@ -21,7 +21,8 @@ from ..contracts import cap_room, max_contract, payment_route, payroll_for, team
 from ..db import load_league, save_league
 from ..engine import clear_healed, play_day, store_result, tick_injuries
 from ..generate import generate_league
-from .. import editor
+from .. import allstar, editor
+from ..news import post as post_news
 from ..models import MATCH_ENGINES
 from ..lineup import POSITIONS
 from ..manager import (
@@ -396,7 +397,8 @@ class GameSession:
             "scouting_notes": hidden_traits(p),
             "scouting_certainty": "high" if scouting_error(lg, p) <= 6 else "medium" if scouting_error(lg, p) <= 11 else "low",
             "tendencies": p.tendencies.to_dict(), "tendencies_text": describe_tendencies(p),
-            "season": season, "career": career, "draft": draft,
+            "season": season, "career": career, "draft": draft, "honours": allstar.honours(p),
+            "all_star_now": p.id in allstar.selected(lg),
             "is_mine": is_mine, "is_prospect": p.id not in lg.players, "ask": ask,
             "at_positions": {pos.value: p.ability_at(pos) for pos in POSITIONS},
         }
@@ -577,13 +579,7 @@ class GameSession:
 
     # -- inbox ----------------------------------------------------------------------
     def _news(self, kind: str, title: str, body: list[str], **extra) -> dict:
-        lg = self._lg()
-        next_id = max((m["id"] for m in lg.inbox), default=0) + 1
-        item = {"id": next_id, "date": lg.current_date.isoformat(), "season": lg.season,
-                "kind": kind, "title": title, "body": body, "read": False, **extra}
-        lg.inbox.append(item)
-        del lg.inbox[:-INBOX_LIMIT]
-        return item
+        return post_news(self._lg(), kind, title, body, **extra)
 
     def inbox(self) -> dict:
         lg = self._me()
@@ -997,6 +993,7 @@ class GameSession:
                 r = self.sim("days", days)
                 if r["stopped_for"]:
                     return {"ok": True, "started": False, "stopped_for": r["stopped_for"], "state": self.state()}
+            allstar.catch_up(lg, nxt.day)       # All-Star events dated before tip-off
             refresh_lineups(lg)
             clear_healed(lg)
             match = LiveMatch(lg, nxt, self.rng)
@@ -1126,6 +1123,15 @@ class GameSession:
         from ..spatial.export import build_html
         from ..spatial.season_game import replay_data
         lg = self._lg()
+        if int(game_id) >= allstar.EVENT_REPLAY_BASE:          # an All-Star Weekend exhibition
+            data = allstar.replay(lg, int(game_id))
+            if data is None:
+                raise UserError("no recording of that game (exhibitions are recorded on the spatial or "
+                                "hybrid engine)", 404)
+            from ..spatial.export import build_html
+            from ..spatial.highlights import annotate
+            annotate(data.get("possessions", []))
+            return build_html(data)
         if int(game_id) not in lg.games:
             raise UserError(f"no game {game_id}", 404)
         data = replay_data(lg, int(game_id))
@@ -1171,6 +1177,9 @@ class GameSession:
         view["box"] = {"home": team_box(g.box_score.home), "away": team_box(g.box_score.away)}
         return view
 
+    def all_star(self) -> dict:
+        return allstar.view(self._lg())
+
     def history(self) -> dict:
         lg = self._lg()
         seasons = []
@@ -1184,6 +1193,12 @@ class GameSession:
                                ("roy", "Rookie of the Year"), ("sixth_man", "Sixth Man"), ("mip", "Most Improved")):
                 pid = h.get("awards", {}).get(key)
                 awards.append({"award": label, "player_id": pid, "name": h["award_names"].get(key)})
+            a = h.get("all_star")
+            if a:
+                for key, label in (("mvp", "All-Star MVP"), ("three_point_champion", "3-Point champion"),
+                                   ("rising_stars_mvp", "Rising Stars MVP")):
+                    if a.get(key) is not None:
+                        awards.append({"award": label, "player_id": a[key], "name": a.get(f"{key}_name")})
             seasons.append({"season": h["season"], "champion": team(h["champion"]),
                             "runner_up": team(h["runner_up"]), "finals": h["finals"],
                             "awards": awards, "standings": standings,

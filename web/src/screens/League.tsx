@@ -1,10 +1,11 @@
+import { AllStar } from "./AllStar";
 import { useState } from "react";
 import { GameView } from "../api";
 import { useFetch, useGame } from "../context";
 import { Empty, ErrorBox, Fetched, Loading, Modal, Panel, PlayerName, pct, shortDate, Table, Tabs } from "../components/ui";
 import { TeamPicker } from "./Squad";
 
-type Tab = "standings" | "leaders" | "schedule" | "results" | "playoffs" | "history";
+type Tab = "standings" | "leaders" | "schedule" | "results" | "playoffs" | "allstar" | "history";
 
 export function BoxScoreModal({ id, onClose }: { id: number; onClose: () => void }) {
   const f = useFetch<any>(`/api/game/${id}`);
@@ -311,13 +312,15 @@ export function League({ params }: { params: URLSearchParams; go: (r: string) =>
         <Tabs value={tab} onChange={setTab} tabs={[
           { key: "standings", label: "Standings" }, { key: "leaders", label: "Leaders" },
           { key: "schedule", label: "Schedule" }, { key: "results", label: "Scores" },
-          { key: "playoffs", label: "Playoffs" }, { key: "history", label: "History" }]} />
+          { key: "playoffs", label: "Playoffs" }, { key: "allstar", label: "All-Star" },
+          { key: "history", label: "History" }]} />
       </div>
       {tab === "standings" && <Standings />}
       {tab === "leaders" && <Leaders />}
       {tab === "schedule" && <Schedule onBox={setBox} />}
       {tab === "results" && <Results onBox={setBox} />}
       {tab === "playoffs" && <Bracket onBox={setBox} />}
+      {tab === "allstar" && <AllStar />}
       {tab === "history" && <History />}
       {box != null && <BoxScoreModal id={box} onClose={() => setBox(null)} />}
     </div>

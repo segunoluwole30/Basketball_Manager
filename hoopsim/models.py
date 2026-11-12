@@ -705,6 +705,7 @@ class League:
     replays: dict[int, bytes] = field(default_factory=dict)  # game id -> zlib'd viewer JSON (spatial, user team)
     # Where the league came from and whether it was edited: {"source": ..., "edited": [...]}
     info: dict = field(default_factory=dict)
+    all_star: Optional[dict] = None                         # this season's All-Star Weekend (allstar.py)
 
     # -- id allocation ------------------------------------------------------
     def next_player_id(self) -> int:

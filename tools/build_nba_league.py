@@ -560,6 +560,7 @@ def _league_file(year, season, today, teams, players, by_site) -> dict:
         d["team"] = abbr.get(p["_site"]) if p["_site"] else None
         d["contract"] = p["contract"] if p["_site"] else None
         d["years_experience"] = p["experience"]
+        d["draft_year"] = season - p["experience"]       # rookies and sophomores: Rising Stars
         out_players.append(d)
     return {"format": "hoopsim-league", "version": 1,
             "name": f"NBA {season}-{str(year)[2:]}", "season": season, "start_date": today.isoformat(),

@@ -737,3 +737,35 @@ class LeagueFileAndEditorApiTests(unittest.TestCase):
         self.assertEqual(state["teams"][str(me)]["name"], "Metro Comets")
         self.assertEqual(state["edited"]["count"], 2)
         self.assertEqual(self.ok("get", "/api/editor/players?q=splash")["players"][0]["id"], pid)
+
+
+@unittest.skipUnless(HAVE_WEB, "fastapi/httpx not installed (pip install -r requirements-web.txt)")
+class AllStarApiTests(unittest.TestCase):
+    def test_short_season_has_no_weekend_and_event_replays_404(self):
+        session = GameSession()
+        client = TestClient(create_app(session))
+        teams = client.post("/api/new", json={"seed": 7, "num_teams": 4}).json()["teams"]
+        short_season(session)
+        client.post("/api/new/team", json={"team_id": teams[0]["id"]})
+        d = client.get("/api/allstar").json()
+        self.assertFalse(d["available"])
+        self.assertEqual(d["past"], [])
+        self.assertEqual(client.get("/api/replay/10000001").status_code, 404)
+
+    def test_weekend_through_the_api(self):
+        from tests.test_allstar import through_all_star
+        session = GameSession()
+        session.league = through_all_star(seed=6)
+        session.rng = random.Random(0)
+        client = TestClient(create_app(session))
+        d = client.get("/api/allstar").json()
+        self.assertTrue(d["available"])
+        self.assertEqual(len(d["west"]["reserves"]), 7)
+        self.assertIn("final", d["three"])
+        self.assertIn("result", d["rising"])
+        card = client.get(f"/api/player/{d['game']['mvp']}").json()
+        self.assertTrue(card["all_star_now"])
+        cal = client.get("/api/calendar").json()
+        marks = [m for day in cal["days"] for m in day["marks"]]
+        for m in ("All-Star starters", "Rising Stars", "Three-Point Contest", "All-Star Game"):
+            self.assertIn(m, marks)

@@ -160,6 +160,14 @@ def print_awards(league: League, summary: dict) -> None:
               "roy": "Rookie of the Year", "sixth_man": "Sixth Man", "mip": "Most Improved"}
     for key, label in labels.items():
         print(f"  {label:<20}{player_label(league, summary['awards'].get(key))}")
+    a = summary.get("all_star")
+    if a:
+        teams = ", ".join(f"{k} {v}" for k, v in a["score"].items())
+        print(f"  {'All-Star Game':<20}{teams}; MVP {player_label(league, a['mvp'])}")
+        if a.get("three_point_champion") is not None:
+            print(f"  {'3-Point Contest':<20}{player_label(league, a['three_point_champion'])}")
+        if a.get("rising_stars_mvp") is not None:
+            print(f"  {'Rising Stars MVP':<20}{player_label(league, a['rising_stars_mvp'])}")
 
 
 def print_leaders(league: League, season: int) -> None:

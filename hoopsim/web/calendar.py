@@ -34,6 +34,12 @@ def _label_days(lg) -> dict[int, list[str]]:
     for d in cal["all_star"]:
         mark(d, "All-Star Game" if d == cal["all_star_game"] else "All-Star break")
     mark(trade_deadline_day(lg), "Trade deadline")
+    from ..allstar import event_days
+    ev = event_days(lg)
+    for key, label in (("starters", "All-Star starters"), ("reserves", "All-Star reserves"),
+                       ("rising", "Rising Stars"), ("three", "Three-Point Contest")):
+        if key in ev:
+            mark(ev[key], label)
     mark(regular[-1], "Final day of the regular season")
     playoff_days = sorted({g.day for g in games if g.playoff})
     if playoff_days:

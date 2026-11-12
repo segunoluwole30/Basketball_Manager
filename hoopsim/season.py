@@ -11,6 +11,7 @@ import random
 from datetime import date, timedelta
 from typing import Optional
 
+from . import allstar
 from .contracts import (
     resign_ai_phase, resign_chance, resign_user_phase, resolve_options, team_option_questions,
 )
@@ -77,6 +78,7 @@ def play_regular_season(league: League, rng: random.Random,
     deadline = all_days[int(len(all_days) * 0.6)] if all_days else None
     events = []
     for day in remaining[:days] if days else remaining:
+        events += allstar.catch_up(league, day)          # All-Star voting and weekend, on their dates
         refresh_lineups(league)
         play_day(league, day, rng)
         league.current_date = season_start(league.season) + timedelta(days=day)
@@ -119,11 +121,14 @@ def finish_season(league: League) -> dict:
                         t[k] += getattr(line, k)
     finals_mvp = max(finals_totals, key=lambda pid: game_score(finals_totals[pid]), default=None)
 
+    honours = allstar.career_flags(league)
     for playoff, totals in ((False, reg), (True, po)):
         for pid, t in totals.items():
             p = league.players[pid]
             line = career_line(t, league.season, playoff, league)
             line["age"], line["ca"] = p.age(league.current_date), p.current_ability
+            if not playoff:
+                line.update(honours.get(pid, {}))
             p.career.append(line)
 
     rec = team_records(league)
@@ -138,6 +143,7 @@ def finish_season(league: League) -> dict:
                         for k, v in {**award_ids, "finals_mvp": finals_mvp}.items()},
         "standings": [[tid, w, l] for tid, (w, l, _) in sorted(rec.items(), key=lambda kv: -kv[1][0])],
         "playoffs": [s.to_dict() for s in league.playoffs],
+        "all_star": allstar.season_summary(league),
     }
     league.history.append(summary)
     # Box scores are summarised now; keep only results to keep save files small.

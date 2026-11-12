@@ -87,6 +87,7 @@ def save_league(league: League, path: str | Path) -> None:
                 "last_offseason": json.dumps(league.last_offseason),
                 "inbox": json.dumps(league.inbox),
                 "info": json.dumps(league.info),
+                "all_star": json.dumps(league.all_star),
             }
             conn.executemany("INSERT INTO meta VALUES (?, ?)", meta.items())
             conn.executemany(
@@ -107,6 +108,13 @@ def save_league(league: League, path: str | Path) -> None:
                              [(gid, data) for gid, data in league.replays.items() if gid in league.games])
     finally:
         conn.close()
+
+
+def _int_keys(st):
+    """JSON keeps dict keys as strings: the All-Star vote table is keyed by player id."""
+    if st and isinstance(st.get("votes"), dict):
+        st["votes"] = {int(k): v for k, v in st["votes"].items()}
+    return st
 
 
 def load_league(path: str | Path) -> League:
@@ -132,6 +140,7 @@ def load_league(path: str | Path) -> League:
             last_offseason=_report_keys(json.loads(meta.get("last_offseason", "null"))),
             inbox=json.loads(meta.get("inbox", "[]")),
             info=json.loads(meta.get("info", "{}")),
+            all_star=_int_keys(json.loads(meta.get("all_star", "null"))),
         )
         for (data,) in conn.execute("SELECT data FROM teams ORDER BY id"):
             league.add_team(Team.from_dict(json.loads(data)))

@@ -1042,6 +1042,41 @@ What didn't work or is still off:
   ORB .18 and FTA/FGA .17 (both below estimates). The full-game numbers are real
   data, so they decide.
 
+## All-Star Weekend (`hoopsim/allstar.py`, web: **League → All-Star**)
+Seasons long enough for an All-Star break (60+ games) get the NBA's mid-February
+weekend. Everything happens on its date as you sim:
+
+| Days before the game | Event |
+|---|---|
+| 42, 35, 28 | Fan voting returns: the leading vote-getters by conference and position (inbox) |
+| 24 | **Starters:** two guards and three frontcourt players per conference, ranked half on the fan vote, half on the players' and media vote |
+| 17 | **Reserves:** the coaches' picks (two guards, three frontcourt, two wild cards); the inbox names your All-Stars and any snub |
+| 14 | **Rising Stars** teams and the **Three-Point Contest** field |
+| 3 | Injury replacements by the commissioner (a reserve moves into an injured starter's spot; injured shooters are replaced by the next in line) |
+| 2 (Fri) | **Rising Stars**: Rookies against Sophomores (a new league without both draws two teams of young players) |
+| 1 (Sat) | **Three-Point Contest**: five racks of five (the last ball of each rack is a 2-point money ball, one rack is all money balls) and two 3-point deep shots: 40 points at most. Eight shooters, the top three reach the final, ties go to a shoot-off. |
+| 0 (Sun) | **All-Star Game**: East against West, with its MVP |
+
+* **How players are chosen.**
+  * **Fans** love scorers, winners, big markets, star power (ability) and past All-Stars.
+  * **Players, media and coaches** look at Game Score per game, team record and ability.
+  * A player needs to have played 40% of his team's games.
+* **The exhibitions** are played on copies of the players, so there are no injuries
+  and no effect on season stats. All-Star defence is relaxed (lower defensive ratings)
+  and the pace is flat out. All-Star Games average about 170-175 points per team on
+  either engine, and Rising Stars a little less. On the spatial or hybrid engine both
+  games are recorded, and **Watch** opens them in the match viewer.
+* **The weekend's effect on the season.** Voting and the weekend draw on their own
+  random stream, so they never change the season's results by themselves. Being
+  selected does lift a player's morale.
+* **Honours** go on the season's career line (`all_star`, `asg_mvp`,
+  `three_point_champion`, `rising_stars_mvp`). They appear on the player card
+  ("3× All-Star"), in League → History, and under past weekends on the All-Star
+  screen. `python -m hoopsim season` prints them with the awards.
+* **Calendar** marks the announcements and the weekend's events.
+* **API:** `GET /api/allstar`. Exhibition replays are served at `/api/replay/10000001` (the
+  game) and `/api/replay/10000002` (Rising Stars).
+
 ## Real leagues and the editor
 
 ### League files (`hoopsim/league_file.py`)

@@ -119,6 +119,15 @@ export function PlayerCard() {
                   <div className="stat-sub">{p.injury ? <span className="bad">{p.injury.description}, out {p.injury.games} g</span> : "healthy"}</div></div>
               </div>
 
+              {(p.all_star_now || p.honours?.all_star > 0) && (
+                <div className="notes as-honours">
+                  {p.all_star_now && <span className="chip chip-star">★ All-Star this season</span>}
+                  {p.honours?.all_star > 0 && <span className="chip chip-star">{p.honours.all_star}× All-Star</span>}
+                  {p.honours?.asg_mvp > 0 && <span className="chip">{p.honours.asg_mvp}× All-Star MVP</span>}
+                  {p.honours?.three_point_champion > 0 && <span className="chip">{p.honours.three_point_champion}× 3-Point champion</span>}
+                  {p.honours?.rising_stars_mvp > 0 && <span className="chip">Rising Stars MVP</span>}
+                </div>
+              )}
               {p.draft && <p className="muted small">{p.draft.pick ? `Pick #${p.draft.pick} in the ${p.draft.year} draft.` : `Undrafted in ${p.draft.year}.`}</p>}
 
               <h3>Scouting notes</h3>

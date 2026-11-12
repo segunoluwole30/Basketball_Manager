@@ -486,3 +486,33 @@ ul.plain li { padding: 3px 0; }
 .editor-team { margin: 6px 0 10px; }
 .editor-team input { max-width: 12em; }
 .drawer-edit { position: absolute; top: 12px; right: 52px; }
+
+/* ---- All-Star Weekend ---- */
+.allstar { display: grid; gap: 16px; }
+.as-timeline { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; color: var(--muted); }
+.as-step.done { color: var(--text); }
+.as-dot { display: inline-block; width: 1.2em; text-align: center; }
+.as-step.done .as-dot { color: var(--good, #2e8b57); }
+.as-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+.as-cols-4 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.as-cols h4, .allstar h4 { margin: 8px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.as-votes { margin: 0; padding-left: 1.4em; font-size: 13px; }
+.as-votes li { padding: 2px 0; }
+.as-num { float: right; font-variant-numeric: tabular-nums; }
+.row-mine td, li.row-mine { background: var(--row-me); }
+.as-score { display: flex; gap: 14px; align-items: baseline; font-size: 20px; margin-bottom: 6px; flex-wrap: wrap; }
+.as-score b { font-size: 26px; font-variant-numeric: tabular-nums; }
+.as-score .win b { color: var(--accent, #d0661c); }
+.as-champ { font-size: 15px; }
+.as-racks { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.as-rack { display: inline-flex; gap: 3px; padding: 2px 4px; border-radius: 4px; }
+.as-rack.money { background: rgba(208, 102, 28, .12); }
+.as-rack i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; border: 1.5px solid var(--muted); }
+.as-rack i.make { background: var(--text); border-color: var(--text); }
+.as-rack i.mb { border-color: var(--accent, #d0661c); }
+.as-rack i.make.mb { background: var(--accent, #d0661c); }
+.as-deep { font-size: 13px; color: var(--muted); }
+.as-deep.make { color: var(--accent, #d0661c); }
+.as-details summary { cursor: pointer; font-weight: 600; }
+.chip-star { border-color: var(--accent, #d0661c); color: var(--accent, #d0661c); }
+.table tr.as-sub th { position: static; text-align: left; }

@@ -970,7 +970,8 @@ def store_result(league: League, game_id: int, sim: GameSim) -> None:
         league.players[pid].injury = injury
     if sim.replay is not None:
         league.replays[game_id] = sim.replay
-        for old in sorted(league.replays)[:-REPLAYS_KEPT]:     # keep the most recent few
+        games = sorted(k for k in league.replays if k < 10_000_000)   # not All-Star exhibitions
+        for old in games[:-REPLAYS_KEPT]:                       # keep the most recent few
             del league.replays[old]
 
 
