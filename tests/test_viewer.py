@@ -194,7 +194,9 @@ class AnimatedPlayersTests(unittest.TestCase):
         self.assertLess(size, 2_000_000)
         self.assertEqual(len(doc["skins"]), 1)                     # one shared rigged model
         self.assertGreaterEqual(len(doc["skins"][0]["joints"]), 20)
-        self.assertEqual([m["name"] for m in doc["materials"]], ["skin", "jersey", "shorts", "kit"])
+        names = [m["name"] for m in doc["materials"]]
+        self.assertEqual(names[:4], ["skin", "jersey", "shorts", "kit"])
+        self.assertEqual(names[4:], doc["extras"]["hoopsim"]["parts"])   # hair styles, beard, gear: shown per player
         self.assertIn("mocap.cs.cmu.edu", doc["asset"]["copyright"])
         clips = doc["extras"]["hoopsim"]["clips"]
         self.assertEqual(sorted(a["name"] for a in doc["animations"]), sorted(clips))
@@ -238,6 +240,28 @@ class AnimatedPlayersTests(unittest.TestCase):
         self.assertIn("function skinOf(pl)", src)                  # a stored skin tone wins over the name's
         # exported pages carry no builds: nothing to look players up in
         self.assertNotIn('"ht":', build_html(self.data))
+
+    def test_looks_per_player(self):
+        """Hair, beard and gear are parts of the one model, switched on per player."""
+        doc = read_glb(PLAYER_ASSETS["player.glb"])[4]
+        parts = doc["extras"]["hoopsim"]["parts"]
+        for name in ("hair_short", "hair_fade", "hair_afro", "hair_flattop", "hair_locs", "hair_bun", "beard",
+                     "headband", "sleeve_L", "sleeve_R", "wrist_L", "wrist_R", "leg_L", "leg_R", "shoes"):
+            self.assertIn(name, parts)
+        self.assertEqual(len(doc["meshes"][0]["primitives"]), 4 + len(parts))
+        src = self.template
+        self.assertEqual(src.count("function lookOf(pl, tone)"), 1)
+        # every style the viewer can pick is a part of the model (bald: none of them)
+        styles = re.findall(r'\["(\w+)", \d+\]', src.split("const HAIR_STYLES = [", 1)[1].split(";", 1)[0])
+        self.assertIn("bald", styles)
+        for st in styles:
+            if st != "bald":
+                self.assertIn("hair_" + st, parts)
+        # a look stored on the player wins; otherwise it comes from his name, the same every time
+        self.assertIn('const L = pl.look && typeof pl.look === "object" ? pl.look : {};', src)
+        self.assertIn('hair: has("hair") ? L.hair :', src)
+        self.assertIn("} else o.visible = false;", src)            # a part the viewer doesn't know stays hidden
+        self.assertNotIn("Math.random", src.split("function lookOf(pl, tone)", 1)[1].split("// What each action cue plays", 1)[0])
 
     def test_web_pages_carry_real_builds(self):
         try:

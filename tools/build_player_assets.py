@@ -596,8 +596,30 @@ def build_model(sk: Skeleton, girth: float = 1.0) -> Mesh:
     hc = head + [0, 0.3, 0.1]; wHd = [(ix["Head"], 1)]
     jaw = lambda sn: (1 - 0.3 * (-sn) ** 1.5, 1 - 0.12 * (-sn) ** 1.5, 0.07 * -sn) if sn < 0 else (1, 1, 0)
     ellipsoid(m, SKIN, hc, (0.3, 0.385, 0.35), wHd, rows=11, sides=16, shape=jaw)
-    ellipsoid(m, KIT, hc + [0, 0.02, -0.03], (0.325, 0.405, 0.378), wHd, HAIR, lat0=16, lat1=90, rows=6, sides=16,
-              shape=lambda sn: (1, 1, -0.05 * (1 - sn)))
+    # hair: one style is shown per player (or none), in his hair colour. Each is its own
+    # material, so the viewer can switch parts on and off by name.
+    def cap(mat, lat0, grow=1.0, rows=6):
+        ellipsoid(m, mat, hc + [0, 0.02, -0.03], (0.325 * grow, 0.405 * grow, 0.378 * grow), wHd, lat0=lat0, lat1=90,
+                  rows=rows, sides=16, shape=lambda sn: (1, 1, -0.05 * (1 - sn)))
+    cap("hair_short", 16)
+    cap("hair_fade", 44, rows=5)                              # the top only: shaved sides
+    ellipsoid(m, "hair_afro", hc + [0, 0.13, -0.03], (0.42, 0.43, 0.43), wHd, lat0=-4, lat1=90, rows=8, sides=16,
+              shape=lambda sn: (1, 1, -0.13 * (1 - sn)))        # (back off the forehead)
+    cap("hair_flattop", 30)
+    m.loft("hair_flattop", [((0, hc[1] + y, hc[2] - 0.04), X, BACK, 0.265, 0.3, wHd, 3.4) for y in (0.24, 0.52)],
+           cap_end=True, bulk=False)
+    cap("hair_locs", 10, grow=1.02)
+    for a in np.radians(np.arange(55, 306, 25)):             # locks hanging round the sides and back
+        out = np.array([np.sin(a), 0, np.cos(a)]); base = hc + out * [0.3, 0, 0.35] + [0, 0.05, -0.03]
+        lx, ly = frame_for((0, -1, 0), out)
+        m.loft("hair_locs", [(base + out * o + [0, -d, 0], lx, ly, r, r, wHd) for d, o, r in
+                             ((0, 0, 0.05), (0.2, 0.03, 0.055), (0.42, 0.04, 0.05), (0.6, 0.03, 0.035))],
+               cap_end=True, sides=6, bulk=False)
+    cap("hair_bun", 16)
+    ellipsoid(m, "hair_bun", hc + [0, 0.27, -0.34], (0.13, 0.13, 0.13), wHd, rows=5, sides=10)
+    ellipsoid(m, "beard", hc + [0, -0.03, 0.065], (0.27, 0.4, 0.312), wHd, lat0=-88, lat1=-33, rows=5, sides=14)
+    m.loft("headband", [((0, hc[1] + y, hc[2] - 0.01), X, BACK, rx, rz, wHd) for y, rx, rz in
+                        ((0.1, 0.302, 0.352), (0.2, 0.287, 0.336))], bulk=False)
     for sx in (1, -1):
         ellipsoid(m, SKIN, hc + [sx * 0.295, -0.03, -0.03], (0.035, 0.085, 0.055), wHd, rows=4, sides=8)
         ellipsoid(m, KIT, hc + [sx * 0.115, 0.045, 0.312], (0.034, 0.02, 0.018), wHd, EYE, rows=3, sides=8)
@@ -611,6 +633,11 @@ def build_model(sk: Skeleton, girth: float = 1.0) -> Mesh:
              hint=(0, 1, 0), cap_start=True, flat=0.92)
         ellipsoid(m, SKIN, J(sd + "Arm") + [sx * -0.02, -0.01, 0], (0.275, 0.27, 0.26),
                   [(ix[sd + "Shoulder"], .5), (ix[sd + "Arm"], .5)], rows=6, sides=12, bulk=True)
+        tag = sd[0]
+        limb(m, "sleeve_" + tag, sk, [sd + "Arm", sd + "ForeArm", sd + "Hand"],
+             [[(0.45, 0.217), (0.62, 0.202), (0.82, 0.177), (0.95, 0.167)],
+              [(0.0, 0.167), (0.14, 0.182), (0.38, 0.177), (0.66, 0.147), (0.88, 0.118)]], hint=(0, 1, 0), flat=0.92)
+        limb(m, "wrist_" + tag, sk, [sd + "ForeArm", sd + "Hand"], [[(0.8, 0.132), (0.97, 0.118)]], hint=(0, 1, 0), flat=0.92)
         # hand: palm, fingers curling down a little, thumb forward (the T-pose's palms face down)
         wr = J(sd + "Hand"); d = sk.bindW[ix[sd + "Hand"]] @ sk.ends[ix[sd + "Hand"]]; d = d / np.linalg.norm(d)
         ax, ay = frame_for(d, (0, 1, 0)); wHn = [(ix[sd + "Hand"], 1)]
@@ -624,9 +651,12 @@ def build_model(sk: Skeleton, girth: float = 1.0) -> Mesh:
                cap_end=True, sides=6, bulk=False)
         # leg: thigh, knee, a calf that bulges behind
         limb(m, SKIN, sk, [sd + "UpLeg", sd + "Leg", sd + "Foot"],
-             [[(0.25, 0.33), (0.5, 0.3), (0.75, 0.25), (0.92, 0.22)],
+             [[(0.46, 0.3), (0.6, 0.285), (0.75, 0.25), (0.92, 0.22)],   # (from inside the shorts: nothing to poke through them)
               [(0.0, 0.215, 0.01), (0.1, 0.205), (0.3, 0.225, -0.035), (0.48, 0.2, -0.03), (0.68, 0.15, -0.01), (0.84, 0.125)]],
              hint=X)
+        limb(m, "leg_" + tag, sk, [sd + "UpLeg", sd + "Leg", sd + "Foot"],
+             [[(0.78, 0.247), (0.92, 0.23)],
+              [(0.0, 0.225, 0.01), (0.1, 0.215), (0.3, 0.235, -0.035), (0.48, 0.21, -0.03), (0.64, 0.168, -0.012)]], hint=X)
         # sock, then a high-top shoe on a white sole
         an = J(sd + "Foot"); wF, wT, wK = ix[sd + "Foot"], ix[sd + "ToeBase"], ix[sd + "Leg"]
         kn = J(sd + "Leg"); up = (kn - an) / np.linalg.norm(kn - an)
@@ -635,8 +665,8 @@ def build_model(sk: Skeleton, girth: float = 1.0) -> Mesh:
                      ((0.7, 0.132, 0.1), (0.66, 0.142, 0.15), (0.4, 0.135, 0.45), (0.12, 0.14, 0.9))], col=WHITE, sides=12)
         toe = J(sd + "ToeBase"); fd = np.array([toe[0] - an[0], 0, toe[2] - an[2]]); fl = np.linalg.norm(fd); fd /= fl
         side = np.cross((0, 1, 0), fd); sole = an[1] - sk.ankle
-        m.loft(KIT, [(an + up * t, ax, ay, r, r * 1.05, [(wF, 1)]) for t, r in ((0.3, 0.17), (0.12, 0.175), (-0.02, 0.18))],
-               col=SHOE, sides=12, bulk=False)
+        m.loft("shoes", [(an + up * t, ax, ay, r, r * 1.05, [(wF, 1)]) for t, r in ((0.3, 0.17), (0.12, 0.175), (-0.02, 0.18))],
+               sides=12, bulk=False)
         last = ((-0.34, 0.11, 0.3, 0), (-0.26, 0.165, 0.4, 0), (0.0, 0.185, 0.42, 0), (0.45, 0.2, 0.33, 0.25),
                 (0.9, 0.215, 0.25, 0.8), (1.25, 0.2, 0.2, 1), (1.47, 0.15, 0.15, 1), (1.56, 0.07, 0.1, 1))
         for colr, lo, grow in ((SHOE, 0.07, 0.0), (WHITE, 0.0, 0.012)):
@@ -645,7 +675,8 @@ def build_model(sk: Skeleton, girth: float = 1.0) -> Mesh:
                 hi = hgt if colr is SHOE else 0.085
                 rings.append((np.array([an[0], sole + (lo + hi) / 2, an[2]]) + fd * (t * fl), side, (0, 1, 0), w + grow,
                               (hi - lo) / 2, [(wF, 1 - wt), (wT, wt)], 3.0))
-            m.loft(KIT, rings, cap_start=True, cap_end=True, col=colr, sides=12, bulk=False)
+            m.loft("shoes" if colr is SHOE else KIT, rings, cap_start=True, cap_end=True,
+                   col=(1, 1, 1) if colr is SHOE else colr, sides=12, bulk=False)
         # shorts leg: a loose tube over the thigh, with a white hem
         hp = J(sd + "UpLeg")
         ax, ay = frame_for(kn - hp, X); wU = ix[sd + "UpLeg"]
@@ -707,7 +738,8 @@ def write_glb(path, sk, mesh, clips, extras, heavy=None):
     if heavy is not None:
         bulk = g.add((heavy.arrays()[0] - v).astype(np.float32), F, "VEC3", minmax=True)
     mats, prims = [], []
-    for name in ("skin", "jersey", "shorts", "kit"):
+    base = ["skin", "jersey", "shorts", "kit"]                # then the optional parts: hair styles, beard, accessories, shoes
+    for name in base + [n for n in mesh.tri if n not in base]:
         idx = g.add(np.array(mesh.tri[name], dtype=np.uint16).reshape(-1), U16, "SCALAR", 34963)
         mats.append({"name": name, "pbrMetallicRoughness": {"baseColorFactor": [1, 1, 1, 1], "metallicFactor": 0, "roughnessFactor": 0.9}})
         prims.append({"attributes": attrs, "indices": idx, "material": len(mats) - 1})
@@ -775,7 +807,8 @@ def main(argv=None):
     mesh, heavy = build_model(sk), build_model(sk, BULK_GIRTH)
     span = 2 * float(sk.bindP[sk.idx["LeftHand"]][0]) + 2 * 0.8          # fingertip to fingertip in the T-pose
     arm = float(sk.bindP[sk.idx["LeftHand"]][0] - sk.bindP[sk.idx["LeftArm"]][0]) + 0.8
-    extras = {"version": 2, "height": HEIGHT, "fps": FPS, "clips": {n: c[3] for n, c in clips.items()},
+    extras = {"version": 3, "height": HEIGHT, "fps": FPS, "clips": {n: c[3] for n, c in clips.items()},
+              "parts": [n for n in mesh.tri if n not in ("skin", "jersey", "shorts", "kit")],
               "body": {"bulk_girth": BULK_GIRTH, "span": round(span, 3), "arm": round(arm, 3)}}
     size = write_glb(Path(args.out), sk, mesh, clips, extras, heavy)
     tris = sum(len(t) for t in mesh.tri.values())
