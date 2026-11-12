@@ -81,7 +81,7 @@ class SafePassAndResetTests(unittest.TestCase):
         g.guarded_by(self.mate).place(10.0, 24.5)      # in the passing lane
         self.assertFalse(g.routine(self.h, self.mate, self.mate.pos))
         g.guarded_by(self.mate).place(15.0, 19.0)
-        g.guarded_by(self.h).place(0.0, 26.0)          # up on the ball
+        g.guarded_by(self.h).place(0.0, 26.5)          # up on the ball (within ROUTINE_PRESSURE, 2 ft)
         self.assertFalse(g.routine(self.h, self.mate, self.mate.pos))
 
     def test_pass_into_the_paint_is_not_routine(self):

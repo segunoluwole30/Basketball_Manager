@@ -48,10 +48,10 @@ TRAIL_LANE = (6.0, 29.5)
 class OpenCourtTuning:
     sprint: float = 1.40            # open-court top speed, relative to half-court speed
     dribble_sprint: float = 1.28    # pushing the ball
-    jog: float = 0.55               # walking it up (an NBA walk-up: ~5-6 s from baseline to half court)
+    jog: float = 0.70               # walking it up (an NBA walk-up: ~4-5 s from baseline to half court; was 0.55)
     push_after_steal: float = 0.92
-    push_after_drb: float = 0.38
-    push_after_score: float = 0.06
+    push_after_drb: float = 0.43     # was 0.38 (README "Patient offence")
+    push_after_score: float = 0.08   # was 0.06
     pace_effect: float = 0.05       # push chance (logit) per point of pace tactics
     secure_drb: tuple = (0.35, 0.75)   # land, turn, find the outlet
     secure_steal: tuple = (0.10, 0.30)
@@ -528,7 +528,7 @@ class OpenCourt:
         used = max(0.0, self.now - self.shot_from)
         back, ahead = self.advantage(h)
         if not self.push:
-            mode, decide, r.advantage = "setup", self.rng.uniform(0.8, 1.6), "walk"
+            mode, decide, r.advantage = "setup", self.rng.uniform(0.4, 1.0), "walk"
         elif back == 0:
             mode, decide, r.advantage = "drive", 0.3, "breakaway"
         elif ahead > back or self.kicked:
@@ -753,13 +753,7 @@ class DeadBallInbound(OpenCourt):
         d = math.hypot(dx, dy)
         speed = min(a.max_speed * boost, d * a.ease)
         want = (dx / d * speed, dy / d * speed) if d > 0.05 else (0.0, 0.0)
-        sx, sy = want[0] - a.vx, want[1] - a.vy
-        s = math.hypot(sx, sy)
-        limit = a.accel * dt
-        if s > limit:
-            sx, sy = sx / s * limit, sy / s * limit
-        a.vx += sx
-        a.vy += sy
+        a.steer(want, dt)
         a.travelled += math.hypot(a.vx, a.vy) * dt
         a.x += a.vx * dt
         a.y += a.vy * dt

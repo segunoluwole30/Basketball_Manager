@@ -38,6 +38,10 @@ from .params import DEFAULT_PARAMS, SpatialParams
 from .values import DecisionModel, default_model, hold_curve
 
 ZONES = (RIM_ZONE, CLOSE_ZONE, MID_ZONE, THREE_ZONE)
+ACCEL_BASE = 15.0           # ft/s² for a speed-10 player
+ACCEL_PER_POINT = 0.6       # ... per point of speed rating
+SCREEN_BRAKE = 1.4          # a screen stops a defender this much harder (body contact)
+ROUTINE_PRESSURE = 2.0      # a perimeter pass is routine unless the on-ball man is this close (ft; was 3)
 
 
 @dataclass
@@ -67,8 +71,8 @@ class SpatialTuning:
     # (the off-the-dribble penalty is in SpatialParams)
     # Jump shots take time to get off (catch to release / gather and rise); the
     # contest is judged where the defenders are at release, not at the decision.
-    release_catch: float = 0.30
-    release_dribble: float = 0.36
+    release_catch: float = 0.45          # catch, gather and rise (was 0.30; README "Patient offence")
+    release_dribble: float = 0.50
     # Help defenders swipe at the ball when a driver comes through their reach.
     dig_per_sec: float = 0.35
 
@@ -81,6 +85,9 @@ SPOTS_4OUT = [(0.0, 30.0), (19.0, 22.0), (-19.0, 22.0), (-22.6, 4.5), (6.0, 7.0)
 FIVE_OUT_C = (22.6, 4.5)
 POST_BLOCK = (6.5, 8.0)        # a big who can score inside sets up on the low block
 DUNKER = (5.0, 4.0)            # one who can't waits under the rim for dump-offs
+# Perimeter spots for re-spacing (fill and replace): top, slots, wings, corners.
+PERIMETER_SPOTS = [(0.0, 28.5), (12.5, 25.5), (-12.5, 25.5), (19.5, 20.5), (-19.5, 20.5),
+                   (22.6, 4.5), (-22.6, 4.5)]
 LANE_SPOTS = [(-7.5, 7.5), (7.5, 7.5), (-7.5, 11.0), (7.5, 11.0), (-7.5, 14.0), (7.5, 14.0)]
 
 
@@ -91,7 +98,10 @@ class Agent:
         self.slot = slot
         a = player.attributes
         self.max_speed = 13.0 + 0.55 * (a.speed - 10)        # ft/s in half-court action
-        self.accel = 22.0 + 1.2 * (a.speed - 10)
+        # Acceleration limit (ft/s², speeding up, stopping and changing direction alike).
+        # NBA tracking puts the 99th percentile of 0.3 s accelerations at about 22 ft/s²;
+        # this was 22 + 1.2 per point of speed (99th percentile 28).
+        self.accel = ACCEL_BASE + ACCEL_PER_POINT * (a.speed - 10)
         self.reaction = max(0.15, 0.32 - 0.012 * (a.basketball_iq - 10))
         self.height = player.physique.height_cm / 30.48      # feet
         self.x = self.y = 0.0
@@ -128,23 +138,27 @@ class Agent:
     def target(self, p: tuple[float, float]) -> None:
         self.tx, self.ty = C.clamp(p)
 
+    def steer(self, want: tuple[float, float], dt: float, limit: Optional[float] = None) -> None:
+        """Change velocity toward ``want`` no faster than the body allows (``accel``):
+        starting, stopping and cutting all take time."""
+        sx, sy = want[0] - self.vx, want[1] - self.vy
+        s = math.hypot(sx, sy)
+        lim = (self.accel if limit is None else limit) * dt
+        if s > lim:
+            sx, sy = sx / s * lim, sy / s * lim
+        self.vx += sx
+        self.vy += sy
+
     def move(self, dt: float, now: float, speed_boost: float = 1.0) -> None:
-        if now < self.stuck_until:             # caught on a screen
-            self.vx *= 0.4
-            self.vy *= 0.4
+        if now < self.stuck_until:             # caught on a screen: body contact stops him
+            self.steer((0.0, 0.0), dt, SCREEN_BRAKE * self.accel)
         else:
             dx, dy = self.tx - self.x, self.ty - self.y
             d = math.hypot(dx, dy)
             top = self.max_speed * speed_boost
             speed = min(top, d * self.ease)    # ease in to the target
             want = (dx / d * speed, dy / d * speed) if d > 0.05 else (0.0, 0.0)
-            sx, sy = want[0] - self.vx, want[1] - self.vy
-            s = math.hypot(sx, sy)
-            limit = self.accel * dt
-            if s > limit:
-                sx, sy = sx / s * limit, sy / s * limit
-            self.vx += sx
-            self.vy += sy
+            self.steer(want, dt)
         self.travelled += math.hypot(self.vx, self.vy) * dt
         # A player still in the backcourt (running up in transition) isn't pulled to half court.
         self.x, self.y = C.clamp((self.x + self.vx * dt, self.y + self.vy * dt),
@@ -295,7 +309,7 @@ class HalfCourtGame:
         self.frames, self.events = [], []
         self.start_score = dict(self.score)
         self.now = 0.0
-        self.shot_clock = 24.0 - rng.uniform(3.5, 6.0)   # time used bringing it up
+        self.shot_clock = 24.0 - rng.uniform(3.0, 4.5)   # time used bringing it up (fullgame bring_up)
         self.flight: Optional[Flight] = None
         self.last_flight: Optional[Flight] = None   # where the last ball in the air ended up
         self.holder: Optional[Agent] = self.offense[0]
@@ -308,7 +322,7 @@ class HalfCourtGame:
         self.orb_time = -9.0
         # Fast-paced teams get into their offence sooner.
         pace = self.teams[side].tactics.pace
-        self.next_decision = rng.uniform(1.5, 3.0) * max(0.5, 1 - 0.03 * (pace - 10))
+        self.next_decision = rng.uniform(0.8, 2.0) * max(0.5, 1 - 0.03 * (pace - 10))
         self.passes = 0
         self.scramble = 0.0                    # how far behind the defence's rotations are
         self.play: Optional[dict] = None        # the entry action being run (plays.py)
@@ -358,8 +372,13 @@ class HalfCourtGame:
         self.situation: Optional[dict] = None
         self.forced_entry: Optional[tuple] = None   # a called set (plays.plan), from ``start["entry"]``
         self.first_shot_at: Optional[float] = None
+        self.set_defense = True                # a set half-court defence (not a flow out of transition)
         if start:
             self.apply_start(start)
+        pg = self.offense[0]
+        if (self.p.respace_gap > 0 and self.mode == "setup" and self.holder is not None
+                and self.holder is not pg and C.dist_to_rim(self.holder.spot) >= 17):
+            self.holder.spot, pg.spot = pg.spot, self.holder.spot   # whoever brings it up runs the point
         self.stats["possessions"] += 1
         self.say(f"{self.teams[side].abbreviation} bring it up: {self.holder.p.name}")
 
@@ -420,6 +439,7 @@ class HalfCourtGame:
                 and self.shot_clock <= 0:
             self.credit(self.holder, "tov")
             self.stats["tov"] += 1
+            self.stats["shot_clock_violations"] += 1
             self.say("Shot clock violation!")
             self.end("tov")
         self.record_frame()
@@ -509,6 +529,49 @@ class HalfCourtGame:
                 else:
                     h.target((h.spot[0] + self.rng.uniform(-4, 4), h.spot[1] + self.rng.uniform(-3, 3)))
 
+    def respace(self) -> None:
+        """Fill and replace: after a catch, perimeter players whose spot is now crowded
+        (too near the ball or a teammate's spot) move to the nearest open spot on the
+        floor, at least ``respace_gap`` (12 ft) from the ball and each other. Players in
+        an action (screener, cutter, the man coming off a screen) and bigs inside keep
+        theirs."""
+        if self.p.respace_gap <= 0 or self.holder is None:
+            return
+        h = self.holder
+        busy = set()
+        if self.pnr:
+            busy.add(id(self.pnr["screener"]))
+        if self.cutter is not None:
+            busy.add(id(self.cutter))
+        act = self.play["action"] if self.play else None
+        if act is not None:
+            for k in ("to", "screener", "fill"):
+                if act.get(k) is not None:
+                    busy.add(id(act[k]))
+        movers, taken = [], [h.pos]
+        for a in self.offense:
+            if a is h:
+                continue
+            if id(a) in busy or C.dist_to_rim(a.spot) < 17:
+                taken.append(a.spot)                     # stays: in an action, or inside
+            else:
+                movers.append(a)
+        gap = self.p.respace_gap
+        mirror = 1.0 if h.x >= 0 else -1.0
+        for a in sorted(movers, key=lambda m: C.dist(m.spot, h.pos)):
+            if min(C.dist(a.spot, q) for q in taken) >= gap:
+                taken.append(a.spot)                     # his spot is fine
+                continue
+            free = [sp for sp in PERIMETER_SPOTS
+                    if min(C.dist((sp[0] * mirror, sp[1]), q) for q in taken) >= gap]
+            if not free:
+                taken.append(a.spot)
+                continue
+            best = min(free, key=lambda sp: C.dist((sp[0] * mirror, sp[1]), a.pos))
+            a.spot = (best[0] * mirror, best[1])
+            taken.append(a.spot)
+            self.stats["respaced"] += 1
+
     def relocate_spot(self, a: Agent, d: Agent) -> Optional[tuple[float, float]]:
         """A shooter whose man has left him to help on a drive doesn't stand still: he
         slides along the arc away from his defender (drift and lift), into the
@@ -566,6 +629,35 @@ class HalfCourtGame:
         if kind in ("hold", "reset"):
             return -0.012 * (tac.pace - 10)                     # fast teams take earlier shots
         return 0.0
+
+    def patience_bias(self, h: Agent, kind: str, feats: list[float]) -> float:
+        """Shot selection against a set defence: with time on the shot clock an ordinary
+        look is passed up for a better one later (a swing, a reset, another action).
+        Attacking options lose up to ``patience`` points of value, fully with
+        ``patience_full`` seconds or more on the shot clock and not at all by
+        ``patience_none``. A great look (a layup, a wide-open shot by a shooter) and a
+        drive past a beaten defender are taken whenever they come; flows out of
+        transition and end-of-game situations play on their own clock. Standing on the
+        ball costs ``patience_hold`` of it too, so the ball moves instead. Slow teams are
+        more patient, fast ones less."""
+        p = self.p
+        if p.patience <= 0 or kind not in ("shoot", "drive", "post", "hold") or self.situation is not None \
+                or not self.set_defense:
+            return 0.0
+        span = max(0.5, p.patience_full - p.patience_none)
+        f = max(0.0, min(1.0, (self.shot_clock - p.patience_none) / span))
+        if f <= 0.0:
+            return 0.0
+        if kind == "shoot":
+            f *= max(0.0, min(1.0, (p.patience_great - feats[1]) / 0.25))
+            if feats[2] > 0:
+                f *= p.patience_three              # a catch-and-shoot three in the flow is a shot the offence wants
+        elif kind == "drive" and feats[5] > 0:
+            return 0.0                                   # his man is beaten: go
+        elif kind == "hold":
+            f *= p.patience_hold                         # ... and don't stand on it: move the ball
+        pace = self.teams[self.side].tactics.pace
+        return -p.patience * f * max(0.3, 1.0 - 0.06 * (pace - 10))
 
     def maybe_cut(self, a: Agent, d: Agent) -> None:
         """Off-ball players cut to the rim when their man loses them. Smart players,
@@ -849,7 +941,7 @@ class HalfCourtGame:
         else:
             temperature = 0.03 + 0.006 * (20 - h.a("basketball_iq"))   # smarter = closer to the best option
             scored = [(self.model.value(k, f) + self.style_bias(h, k, a) + self.situation_bias(k, a)
-                       + self.shout_bias(h, k, a), (k, a, f))
+                       + self.shout_bias(h, k, a) + self.patience_bias(h, k, f), (k, a, f))
                       for k, a, f in options]
             kind, action, feats = _softmax_choice(rng, scored, temperature)
         self.decisions.append((kind, feats))
@@ -1014,6 +1106,7 @@ class HalfCourtGame:
         if self.rng.random() < rate * self.t.dt:
             self.credit(h, "tov")
             self.stats["tov"] += 1
+            self.stats["strips"] += 1
             if self.rng.random() < 0.55:
                 self.credit(on, "stl")
                 self.stats["steals"] += 1
@@ -1148,7 +1241,7 @@ class HalfCourtGame:
         if C.dist_to_rim(h.pos) < 19 or C.dist_to_rim(target) < 19 or C.dist(h.pos, target) > 25:
             return False
         on = self.guarded_by(h)
-        if C.dist(on.pos, h.pos) < 3.0 and self.now >= on.stuck_until:
+        if C.dist(on.pos, h.pos) < ROUTINE_PRESSURE and self.now >= on.stuck_until:
             return False
         guard = self.guarded_by(mate)
         return C.point_segment_distance(guard.pos, h.pos, target) > 3.0
@@ -1348,6 +1441,7 @@ class HalfCourtGame:
                 self.credit(thief, "stl")
                 self.stats["tov"] += 1
                 self.stats["steals"] += 1
+                self.stats["pass_steals"] += 1
                 self.say(f"Picked off! {thief.p.name} jumps the passing lane")
                 self.end("tov")
                 return
@@ -1368,6 +1462,9 @@ class HalfCourtGame:
             if self.cutter is mate:
                 self.cutter = None
             self.mode, self.mode_since = "probe", self.now
+            if C.dist_to_rim(mate.pos) > 8:
+                mate.spot = mate.pos
+            self.respace()
             if self.play is not None:
                 plays.on_catch(self, mate)
                 return
@@ -1381,7 +1478,6 @@ class HalfCourtGame:
                 self.say(f"{mate.p.name} posts up")
                 self.next_decision = self.now + 0.6
             else:
-                mate.spot = mate.pos if d_rim > 8 else mate.spot
                 self.next_decision = self.now + 0.1  # catch and shoot (or finish) if it's there
         elif f.kind == "shot":
             self.resolve_shot(f)
@@ -1485,7 +1581,7 @@ class HalfCourtGame:
             winner.spot = C.clamp(C.toward(RIM, winner.pos, max(C.dist_to_rim(winner.pos), 4.0)))
             self.next_decision = self.now + 0.3
 
-    def walk_to(self, spots: dict, max_seconds: float = 5.0) -> None:
+    def walk_to(self, spots: dict, max_seconds: float = 8.0) -> None:
         """A dead ball (clock stopped): everyone walks, or jogs if it's far, to his spot,
         recorded frame by frame, then stands on it."""
         dt = self.t.dt
@@ -1495,11 +1591,11 @@ class HalfCourtGame:
             for a, (x, y) in spots.items():
                 dx, dy = x - a.x, y - a.y
                 d = math.hypot(dx, dy)
-                if d > 0.25:
+                if d > 0.25 or math.hypot(a.vx, a.vy) > 0.5:
                     moving = True
-                    v = max(5.0, min(15.0, d / 1.6))          # far: jog there; near: walk
-                    step = min(d, v * dt)
-                    a.x, a.y = a.x + dx / d * step, a.y + dy / d * step
+                    v = min(max(5.0, min(15.0, d / 1.6)), 3.0 * d)   # far: jog there; near: walk, and stop
+                    a.steer((dx / d * v, dy / d * v) if d > 0.05 else (0.0, 0.0), dt)
+                    a.x, a.y = a.x + a.vx * dt, a.y + a.vy * dt
             if not moving:
                 break
             self.record_frame()
@@ -1615,6 +1711,8 @@ class HalfCourtGame:
         self.situation = start.get("situation")
         self.forced_entry = start.get("entry")
         mode = start.get("mode")
+        if mode in ("probe", "drive"):
+            self.set_defense = False           # early offence: attack before the defence sets
         if mode is not None:
             self.next_decision = start.get("decide_in", 0.0)
             self.mode, self.mode_since = ("probe" if mode == "drive" else mode), 0.0
@@ -1676,7 +1774,7 @@ class HalfCourtGame:
     # learned values: they tilt close calls, they don't override the read.
     SHOUTS = {
         "attack_rim": {"drive": 0.05, "continue": 0.04, "pnr": 0.02, "inside": 0.04, "jumper": -0.05},
-        "threes": {"three": 0.06, "mid": -0.04, "inside": -0.01, "drive": -0.02},
+        "threes": {"three": 0.09, "mid": -0.04, "inside": -0.01, "drive": -0.02},   # three was 0.06 before patience
         "post": {"post": 0.06, "feed": 0.06, "inside": 0.02},
         "slow": {"hold": 0.20, "early": -0.04, "hold_until": 6.0},
         "push": {"hold": -0.10, "early": 0.03, "hold_until": 14.0},

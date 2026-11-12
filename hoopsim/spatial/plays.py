@@ -36,8 +36,8 @@ if TYPE_CHECKING:            # pragma: no cover
     from .sim import Agent, HalfCourtGame
 
 KINDS = ("swing", "handoff", "downscreen", "pnr")
-MIN_CLOCK = 10.0             # don't start an entry action with less than this on the shot clock
-ABORT_CLOCK = 7.5            # ... and drop it when the clock gets this low
+MIN_CLOCK = 8.5              # don't start an entry action with less than this on the shot clock
+ABORT_CLOCK = 6.0            # ... and drop it when the clock gets this low
 MAX_ACTIONS = 4               # most entry actions in one possession
 ACTION_TIMEOUT = 3.5         # an action that hasn't produced its pass by then is dropped
 
@@ -165,13 +165,14 @@ def start_next(g: "HalfCourtGame", play: dict) -> bool:
             ok = any(k == kind for k, _ in options)
         if ok:
             options = [(kind, 1.0)]
+    options = [(k, w) for k, w in options if w > 0]    # a weight of 0 switches an action off
     if not options:
         return False
     kind = rng.choices([k for k, _ in options], [w for _, w in options])[0]
     a = {"kind": kind, "since": g.now, "phase": "move"}
     if kind == "swing":
         a["to"] = min(swing_to, key=lambda m: C.dist(m.pos, h.pos))
-        a["at"] = g.now + rng.uniform(0.6, 1.3)
+        a["at"] = g.now + rng.uniform(0.4, 1.0)
         _maybe_deny(g, a)
     elif kind == "handoff":
         a["to"] = min(wings, key=lambda m: C.dist(m.pos, h.pos))

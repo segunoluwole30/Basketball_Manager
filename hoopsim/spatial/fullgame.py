@@ -100,7 +100,7 @@ class GameTuning:
     non_shooting_foul_per_second: float = 0.011
     non_shooting_foul_earliest: float = 0.5
     press_foul_factor: float = 1.25
-    bring_up: tuple = (3.5, 6.0)           # half-court starts: shot-clock seconds to get into the offence
+    bring_up: tuple = (3.0, 4.5)           # half-court starts: shot-clock seconds to get into the offence
     inbound_after_make: tuple = (2.0, 3.5)  # game clock running before the inbound is touched
     # A possession counts as transition if it began with an open-court phase and its
     # first shot, foul or turnover came within this many seconds of gaining the ball.

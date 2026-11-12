@@ -39,9 +39,13 @@ class ParamsTests(unittest.TestCase):
         # Re-pinned again when free throws and offensive rebounds stopped teleporting
         # players (they walk to the lane, and run to a loose ball): more frames, and the
         # rebounder ends up where he really is (was 5ba83331e1e1b1c7 / 29-22).
+        # Re-pinned when movement got a human acceleration limit (15 + 0.6 per point of
+        # speed instead of 22 + 1.2, screens and free-throw walks steered too) and jump
+        # shots a longer release (README "Patient offence"); both are physics, not
+        # SpatialParams (was 0835b914b14e3971 / 34-25).
         g = play(LEGACY_PARAMS)
-        self.assertEqual(fingerprint(g), "0835b914b14e3971")
-        self.assertEqual(g.score, {"home": 34, "away": 25})
+        self.assertEqual(fingerprint(g), "6981a00e73f0ff0d")
+        self.assertEqual(g.score, {"home": 22, "away": 40})
 
     def test_params_change_behaviour(self):
         loose = DEFAULT_PARAMS.with_values(help_trigger=10.0, closeout_speed=0.7, contest_outside=0.5)

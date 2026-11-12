@@ -315,7 +315,9 @@ class DeadBallInboundTests(unittest.TestCase):
         cls.after_dead = [(a, b) for a, b in zip(ps, ps[1:]) if a["result"] == "dead" and a["period"] == b["period"]]
 
     def test_possessions_after_dead_balls_start_where_play_stopped(self):
-        self.assertGreater(len(self.after_dead), 8)
+        # Enough dead-ball endings in this one game to check (was > 8; with turnovers
+        # down to NBA rates, README "Patient offence", this game has 7).
+        self.assertGreater(len(self.after_dead), 5)
         for a, b in self.after_dead:
             # No teleport: everyone starts where the last possession left him (court turned around).
             self.assertLess(frame_gap(a["frames"][-1], b["frames"][0], flip=a["offense"] != b["offense"]), 3.0)

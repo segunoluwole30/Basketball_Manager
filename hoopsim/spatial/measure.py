@@ -123,8 +123,8 @@ def summarize(s: Counter, elapsed: float = 0.0) -> dict:
     misses = fga - fgm
     out = {
         "points_per_possession": s["points"] / n,
-        # time to bring it up (shot clock started 3.5-6s down) + half-court time
-        "seconds_per_possession": s["seconds"] / n + 4.75,
+        # time to bring it up (shot clock started 3-4.5s down) + half-court time
+        "seconds_per_possession": s["seconds"] / n + 3.75,
         "turnover_pct": s["tov"] / n,
         "orb_pct": s["orb"] / max(1, s["orb"] + s["drb"]),
         "fta_per_fga": s["fta"] / max(1, fga),

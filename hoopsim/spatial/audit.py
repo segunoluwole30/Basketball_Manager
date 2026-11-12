@@ -121,15 +121,26 @@ def bodies(possessions: list[dict]) -> dict:
             "distance_ft": dist, "player_seconds": len(speeds) * DT}
 
 
+def _dead(frames: list, k: int) -> bool:
+    """Is frame ``k`` a dead ball (game clock stopped while time goes on: free throws)?"""
+    if k == 0 or len(frames[k]) <= 26 or len(frames[k - 1]) <= 26:
+        return False
+    a, b = frames[k - 1], frames[k]
+    return b[0] > a[0] and b[26] == a[26] and b[26] > 0
+
+
 def floor(possessions: list[dict]) -> dict:
-    """Half-court frames only (everyone in the frontcourt, ball held)."""
+    """Live half-court frames only (everyone in the frontcourt, ball held, game clock
+    running: free-throw lineups are dead balls, not spacing)."""
     spacing, between, crowd, n = [], 0, 0, 0
     for p in possessions:
         off = range(5) if p["offense"] == "home" else range(5, 10)
         dfn = range(5, 10) if p["offense"] == "home" else range(5)
-        for f in p["frames"][::5]:
+        fr = p["frames"]
+        for k in range(0, len(fr), 5):
+            f = fr[k]
             pts = _players(f)
-            if f[5] < 0 or any(pts[i][1] > C.HALF_LENGTH for i in range(10)):
+            if f[5] < 0 or any(pts[i][1] > C.HALF_LENGTH for i in range(10)) or _dead(fr, k):
                 continue
             o = [pts[i] for i in off]
             d = [pts[i] for i in dfn]
