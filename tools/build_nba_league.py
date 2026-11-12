@@ -13,13 +13,16 @@ How ratings are made
   hot games don't make a shooter.
 * Shape: each attribute gets a z-score among NBA players from the stats that show
   it (three-point % and volume for ``three_point``, block % for ``blocking``...),
-  then is scaled to the spread of hoopsim's generated leagues.
+  then is scaled to the spread of hoopsim's generated leagues. Usage rate is added to
+  the scoring ratings (the engines give shots to the best scorers); rebound and assist
+  rates count on a log scale, with part of height taken out of rebounding.
 * Level: overall ability comes from impact (box plus/minus and minutes, plus salary
   as a prior for players with little court time), mapped onto the generated
   leagues' ability distribution, so the engines stay calibrated: a real league plays
   like a generated one, with real names.
-* Potential from age, hidden attributes partly from availability, tendencies from
-  shot profile and usage, physique from the roster's height and weight.
+* Potential from age, hidden attributes partly from availability, physique from the
+  roster's height and weight. Shot tendencies are what the ratings don't explain:
+  set so the statistical engine reproduces each player's real shot mix.
 
 Every rating can be changed in the game's editor afterwards.
 """
@@ -95,6 +98,15 @@ COUNTRIES = {"us": "USA", "ca": "Canada", "fr": "France", "rs": "Serbia", "au": 
 
 # Approximate NBA 2026-27 salary rules (the editor and league settings can change them).
 OLDER_WEIGHT = 0.5
+# Shot load: the engines hand shots to the best scorers, so a player's scoring ratings
+# also set how many shots he takes. Usage (z-score of log usage rate) is added to them, so
+# a 30%-usage star out-shoots a 15%-usage spot-up shooter with the same percentages.
+# Threes get half: a three rating also sets three-point volume and accuracy.
+LOAD = {"finishing": 1.0, "close_range": 1.0, "mid_range": 1.0, "three_point": 0.5}
+THREE_VOLUME = 0.25          # three_point: 75% accuracy, 25% volume (volume is a tendency)
+# The engines already favour taller rebounders; take part of the height out of the
+# rebound ratings so bigs' boards aren't counted twice.
+REBOUND_HEIGHT_CM = 32       # cm of height per unit of log rebound rate
 WITH_HISTORY = True
 RULES = {"salary_cap": 165_000_000, "luxury_tax_line": 201_000_000, "min_salary": 1_270_000,
          "mid_level_exception": 14_100_000, "max_roster": 15, "min_roster": 13}
@@ -256,26 +268,27 @@ def raw_features(p: dict) -> dict[str, float]:
     age = p["age"]
     youth = -max(0, age - 28)                         # athleticism fades in the thirties
     return {
-        "three_point": 0.6 * three / 0.035 + 0.4 * math.log1p(fg3a36) / 0.5,
+        "three_point": (1 - THREE_VOLUME) * three / 0.035 + THREE_VOLUME * math.log1p(fg3a36) / 0.5,
         "free_throw": ft,
         "mid_range": mid / 0.05 + 0.6 * ft / 0.08,
         "close_range": short / 0.06 + 0.3 * math.log1p(per36(st["zones"]["03_10"][0])),
         "finishing": rim / 0.06 + 0.5 * math.log1p(fta36) + 2.0 * st["dunk_share"],
-        "passing": ast,
-        "vision": ast / 6 - 0.3 * tov / 4 + 0.2 * obpm / 2,
+        "passing": math.log(max(ast, 3)),
+        "vision": math.log(max(ast, 3)) / 0.5 - 0.3 * tov / 4 + 0.2 * obpm / 2,
         "ball_handling": ast / 8 + usg / 8 - tov / 5 - (h - 200) / 12,
         "perimeter_defense": dbpm / 1.5 + stl / 0.6 - (h - 203) / 25 - max(0, h - 211) / 6,
         "interior_defense": dbpm / 1.5 + blk / 1.5 + drb / 8 + (h - 203) / 10,
         "stealing": stl,
         "blocking": blk,
-        "offensive_rebounding": orb,
-        "defensive_rebounding": drb,
+        "offensive_rebounding": math.log(max(orb, 0.5)) - (h - 203) / REBOUND_HEIGHT_CM,
+        "defensive_rebounding": math.log(max(drb, 3)) - (h - 203) / REBOUND_HEIGHT_CM,
         "speed": -(h - 200) / 8 - (w - 100) / 15 + stl / 1.5 + youth / 3,
         "strength": (w - 100) / 10 + (w / (h / 100) ** 2 - 25) / 2,
         "vertical": blk / 2 + 3 * st["dunk_share"] + youth / 3 - (w - 105) / 25,
         "stamina": mpg / 6 + youth / 4,
         "basketball_iq": bpm / 2 + ws48 / 0.05 + (ast / max(tov, 4)) / 2 - pf36 / 2,
         "composure": ft / 0.08 - tov / 5 + min(p["experience"], 12) / 6,
+        "_load": math.log(max(usg, 8)),
     }
 
 
@@ -531,7 +544,7 @@ def _rate(players: list[dict], abil_dist: list[int], spread, today: date) -> Non
                                               "dbpm", "bpm")}}
             _position_prior(p)
         feats[p["_id"]] = raw_features(p)
-    zs = {n: zscores({pid: f[n] for pid, f in feats.items()}) for n in Attributes.names()}
+    zs = {n: zscores({pid: f[n] for pid, f in feats.items()}) for n in (*Attributes.names(), "_load")}
     # Ability: impact rank onto the generated distribution (rostered players), free agents below.
     ranked = sorted(players, key=lambda p: p["_impact"])
     n = len(ranked)
@@ -539,7 +552,9 @@ def _rate(players: list[dict], abil_dist: list[int], spread, today: date) -> Non
         q = (i + 0.5) / n
         target = abil_dist[min(len(abil_dist) - 1, int(q * len(abil_dist)))]
         pos = Position(p["position"])
-        z = {k: max(-2.8, min(2.8, zs[k][p["_id"]])) for k in Attributes.names()}
+        load = zs["_load"][p["_id"]]
+        z = {k: max(-2.8, min(2.8, zs[k][p["_id"]] + LOAD.get(k, 0.0) * load))
+             for k in Attributes.names()}
         attrs = make_attributes(z, spread, pos, target)
         p["attributes"] = attrs
         ca = compute_ability(Attributes(**attrs), pos)
@@ -549,10 +564,26 @@ def _rate(players: list[dict], abil_dist: list[int], spread, today: date) -> Non
         else:                            # peaked: a little headroom at most
             pa = ca + rng.uniform(0, 4 if p["age"] < 31 else 1)
         p["potential_ability"] = int(max(ca, min(200, round(pa))))
-        p["tendencies"] = _tendencies(p, attrs)
         p["hidden"] = _hidden(p, rng)
         p["wingspan_cm"] = int(round(p["height_cm"] + 4 + rng.gauss(4, 3)))
         p["secondary_positions"] = _secondary(p["position"], p["height_cm"])
+    league_shots = _league_shots(players)
+    for p in players:
+        p["tendencies"] = _tendencies(p, p["attributes"], league_shots)
+
+
+def _league_shots(players: list[dict]) -> dict:
+    """The league's shot mix (share of attempts by zone) and its shooters' average zone
+    ratings, weighted by attempts."""
+    tot = {"rim": 0.0, "close": 0.0, "mid": 0.0, "three": 0.0}
+    rating = dict.fromkeys(tot, 0.0)
+    for p in players:
+        prof, fga = shot_profile(p["stats"]), p["stats"]["tot"]["fga"]
+        for z in tot:
+            tot[z] += prof[z] * fga if prof else 0.0
+            rating[z] += _zone_rating(p["attributes"], z) * fga if prof else 0.0
+    n = sum(tot.values())
+    return {"share": {z: v / n for z, v in tot.items()}, "rating": {z: v / n for z, v in rating.items()}}
 
 
 def _position_prior(p) -> None:
@@ -563,7 +594,54 @@ def _position_prior(p) -> None:
     st["ast_pct"], st["stl_pct"], st["blk_pct"], st["orb_pct"], st["drb_pct"] = table_[pos]
 
 
-def _tendencies(p, a) -> dict[str, int]:
+# How the statistical engine turns ratings into a shot mix (engine._GameSim._zone_weights):
+# zone weight = base mix * exp(rating slope * skill impact * (rating - 10))
+#                        * exp(tendency slope * (tendency - 10)).
+ZONE_RATING_SLOPE = {"rim": 0.25, "close": 0.25, "mid": 0.25, "three": 0.35}
+ZONE_TENDENCY = {"rim": ("drive", 0.05), "close": ("post_up", 0.04), "mid": ("mid_range", 0.07),
+                 "three": ("three_point", 0.06)}
+SHOT_PRIOR_FGA = 40           # shot profiles are shrunk toward the league's by this many attempts
+
+
+def _zone_rating(a: dict, zone: str) -> float:
+    if zone == "rim":
+        return 0.7 * a["finishing"] + 0.15 * a["speed"] + 0.15 * a["ball_handling"]
+    return a[{"close": "close_range", "mid": "mid_range", "three": "three_point"}[zone]]
+
+
+def shot_profile(st: dict) -> dict[str, float] | None:
+    """Share of field-goal attempts by zone (rim, close, mid, three), or None without a sample."""
+    fga = st["tot"]["fga"]
+    if fga < 40:
+        return None
+    z = {k: st["zones"][k][0] / fga for k in st["zones"]}
+    return {"rim": z["00_03"], "close": z["03_10"], "mid": z["10_16"] + z["16_xx"],
+            "three": st["tot"]["fg3a"] / fga}
+
+
+def shot_tendencies(real: dict[str, float], fga: float, league: dict, a: dict) -> dict[str, int]:
+    """Drive, post-up, mid-range and three tendencies that reproduce a player's real shot mix.
+
+    Ratings already tilt a player's shots (a great shooter takes more threes), so the
+    tendency is the preference left over: how his shot mix differs from the league's
+    beyond what his ratings, against the league's average ratings, explain.
+    ``league`` is {"share": zone -> share of attempts, "rating": zone -> mean rating}.
+    """
+    from hoopsim.engine import DEFAULT_TUNING
+    impact = DEFAULT_TUNING.skill_impact
+    lshare, lrating = league["share"], league["rating"]
+    share = {z: (real[z] * fga + lshare[z] * SHOT_PRIOR_FGA) / (fga + SHOT_PRIOR_FGA) for z in real}
+    need = {z: math.log(max(share[z], 0.005) / lshare[z])
+               - ZONE_RATING_SLOPE[z] * impact * (_zone_rating(a, z) - lrating[z]) for z in ZONE_TENDENCY}
+    # Tendency t_z must satisfy slope_z * (t_z - 10) = need_z + k for one shared k (only
+    # relative weights matter); pick k to keep tendencies as close to 10 as possible.
+    k = (-sum(need[z] / slope ** 2 for z, (_, slope) in ZONE_TENDENCY.items())
+         / sum(1 / slope ** 2 for _, slope in ZONE_TENDENCY.values()))
+    return {name: int(max(ATTR_MIN, min(ATTR_MAX, round(10 + (need[z] + k) / slope))))
+            for z, (name, slope) in ZONE_TENDENCY.items()}
+
+
+def _tendencies(p, a, league_shots=None) -> dict[str, int]:
     st = p["stats"]
     fga = st["tot"]["fga"]
     def share(z):
@@ -576,7 +654,7 @@ def _tendencies(p, a) -> dict[str, int]:
     mid = ((share("10_16") or 0) + (share("16_xx") or 0)) if fga >= 40 else None
     rim = share("00_03") if fga >= 40 else None
     post = share("03_10") if fga >= 40 else None
-    return {
+    out = {
         "three_point": scale(three, 0.40, 0.11, base["three_point"]),
         "mid_range": scale(mid, 0.14, 0.08, base["mid_range"]),
         "drive": scale(None if rim is None else rim * (1 - st["ast_fg2"]) + st["usg_pct"] / 100, 0.28, 0.10, base["drive"]),
@@ -585,6 +663,10 @@ def _tendencies(p, a) -> dict[str, int]:
         "passing": scale(st["ast_pct"] if fga >= 40 else None, 15, 8, base["passing"]),
         "cutting": scale(None if rim is None else rim * st["ast_fg2"], 0.18, 0.09, base["cutting"]),
     }
+    profile = shot_profile(st)
+    if profile and league_shots:
+        out.update(shot_tendencies(profile, fga, league_shots, a))
+    return out
 
 
 def _hidden(p, rng) -> dict[str, int]:
