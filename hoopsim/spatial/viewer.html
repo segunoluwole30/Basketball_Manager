@@ -205,6 +205,7 @@ aside { min-width: 0; display: flex; flex-direction: column; background: var(--p
   text-shadow: 0 1px 2px rgba(0,0,0,0.6); pointer-events: none; }
 @media (pointer: coarse), (max-width: 700px) { .view3d .hint { display: none; } }
 .seg input:disabled + label { opacity: 0.45; cursor: not-allowed; }
+.seg .seglabel { align-self: center; color: var(--muted); font-size: 13px; margin-right: 8px; }
 .viewmsg { color: var(--muted); font-size: 12px; }
 .viewmsg:empty { display: none; }
 </style>
@@ -245,6 +246,12 @@ aside { min-width: 0; display: flex; flex-direction: column; background: var(--p
         <input type="radio" name="cam" id="camBroadcast" value="broadcast" checked><label for="camBroadcast" title="Sideline camera following the ball">Broadcast</label>
         <input type="radio" name="cam" id="camBaseline" value="baseline"><label for="camBaseline" title="Behind the attacking team">Baseline</label>
         <input type="radio" name="cam" id="camOverhead" value="overhead"><label for="camOverhead" title="Straight down on the whole court">Overhead</label>
+      </div>
+      <div class="seg" id="arenaSeg" role="radiogroup" aria-label="Arena" hidden>
+        <span class="seglabel">Arena</span>
+        <input type="radio" name="arena" id="arenaFull" value="full" checked><label for="arenaFull" title="Stands full on both decks, scoreboard and lights">Full</label>
+        <input type="radio" name="arena" id="arenaLight" value="light"><label for="arenaLight" title="Lower bowl crowd only: lighter on slow devices">Light</label>
+        <input type="radio" name="arena" id="arenaOff" value="off"><label for="arenaOff" title="Just the court">Off</label>
       </div>
       <span class="viewmsg" id="viewMsg" role="status"></span>
       <div class="periods" id="periods" role="group" aria-label="Jump to period"></div>
@@ -829,6 +836,443 @@ window.GAME = /*GAME_DATA*/null;
   const wrapAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
   const RIM_X = L - 5.25;                                        // world X of the right rim
 
+  // ---- the arena round the 3D court: stands, crowd, benches, boards, roof. Built the first
+  // time it's wanted (never for the 2D view). The stands are one merged mesh with baked
+  // shading; the crowd is one instanced mesh per deck whose sway, standing and jumping happen
+  // in the vertex shader, so a reaction costs a few uniforms, not thousands of matrices.
+  // The bowl's inner edge is a rounded rectangle round the court; every row is an offset of
+  // it ("dd" feet further out), lower bowl first, then a concourse and the upper deck.
+  const ARENA = { AX: 60, AZ: 34, RC: 14, FRONT: 3.2, TREAD: 2.8, LR: 16, LRISE: 1.25,
+                  CON: 46, UY: 34, UR: 14, URISE: 1.6, CEIL: 95, BG: 0x07080b };
+  function createArena(THREE, scene, canvasTex) {
+    const A = ARENA, LTOP = A.LR * A.TREAD, UTOP = A.CON + A.UR * A.TREAD;
+    const cx = A.AX - A.RC, cz = A.AZ - A.RC, HALF = Math.PI / 2;
+    const group = new THREE.Group();
+    scene.add(group);
+    const segs = [                                   // near side, corner, right end, ... round
+      { p: [-cx, A.AZ], q: [cx, A.AZ], n: [0, 1] }, { c: [cx, cz], a0: HALF, a1: 0 },
+      { p: [A.AX, cz], q: [A.AX, -cz], n: [1, 0] }, { c: [cx, -cz], a0: 0, a1: -HALF },
+      { p: [cx, -A.AZ], q: [-cx, -A.AZ], n: [0, -1] }, { c: [-cx, -cz], a0: -HALF, a1: -Math.PI },
+      { p: [-A.AX, -cz], q: [-A.AX, cz], n: [-1, 0] }, { c: [-cx, cz], a0: Math.PI, a1: HALF },
+    ];
+    const at = (s, f, dd) => {                       // [x, z, nx, nz]: f along segment s, dd out
+      if (s.n) return [lerp(s.p[0], s.q[0], f) + s.n[0] * dd, lerp(s.p[1], s.q[1], f) + s.n[1] * dd, s.n[0], s.n[1]];
+      const a = lerp(s.a0, s.a1, f), nx = Math.cos(a), nz = Math.sin(a);
+      return [s.c[0] + nx * (A.RC + dd), s.c[1] + nz * (A.RC + dd), nx, nz];
+    };
+    const segLen = (s, dd) => (s.n ? Math.hypot(s.q[0] - s.p[0], s.q[1] - s.p[1]) : HALF * (A.RC + dd));
+    const pieces = (s) => (s.n ? 1 : 10);
+    const outward = (x, z) => {                      // signed distance out from the bowl's edge
+      const qx = Math.abs(x) - cx, qz = Math.abs(z) - cz;
+      return Math.hypot(Math.max(qx, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qz), 0) - A.RC;
+    };
+    const seatY = (dd) => (dd < LTOP ? A.FRONT + Math.floor(Math.max(0, dd) / A.TREAD) * A.LRISE
+                                     : A.UY + Math.floor((dd - A.CON) / A.TREAD) * A.URISE);
+    // aisles (segment, fraction) and portals into the lower bowl; the benches side is seg 4
+    const AISLES = [[0, 1 / 6], [0, 0.5], [0, 5 / 6], [1, 0.5], [2, 0.25], [2, 0.75], [3, 0.5],
+                    [4, 1 / 6], [4, 0.5], [4, 5 / 6], [5, 0.5], [6, 0.25], [6, 0.75], [7, 0.5]];
+    const PORTALS = [[0, 1 / 3], [0, 2 / 3], [2, 0.5], [4, 1 / 3], [4, 2 / 3], [6, 0.5]];
+    const PORTAL_ROW = 8;
+
+    // geometry helpers: flat-coloured quads into plain arrays
+    function builder() {
+      const pos = [], colr = [];
+      return { pos, colr,
+        quad(a, b, c, d, k) { for (const v of [a, b, c, a, c, d]) { pos.push(v[0], v[1], v[2]); colr.push(k[0], k[1], k[2]); } },
+        geometry() {
+          const g = new THREE.BufferGeometry();
+          g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+          g.setAttribute("color", new THREE.Float32BufferAttribute(colr, 3));
+          return g;
+        } };
+    }
+    const shade = (k, f) => [k[0] * f, k[1] * f, k[2] * f];
+    const light = (dd) => 1 - 0.45 * Math.min(1, Math.max(0, dd) / UTOP);   // dimmer further out
+
+    // ---- stands: the bowl profile (dd, y) swept round the ring
+    const C = { wall: [0.02, 0.021, 0.026], tread: [0.04, 0.045, 0.062], tread2: [0.05, 0.055, 0.075],
+                riser: [0.017, 0.018, 0.024], con: [0.006, 0.006, 0.008], fascia: [0.028, 0.03, 0.036],
+                back: [0.012, 0.013, 0.017], aisle: [0.1, 0.1, 0.11], aisleR: [0.045, 0.045, 0.05],
+                portal: [0.003, 0.003, 0.004], rail: [0.22, 0.22, 0.24] };
+    const prof = [[0, 0]];
+    const step = (dd, y, k) => prof.push([dd, y, k]);
+    step(0, A.FRONT, C.wall);
+    for (let r = 0; r < A.LR; r++) {
+      const y = A.FRONT + r * A.LRISE;
+      if (r) step(r * A.TREAD, y, C.riser);
+      step((r + 1) * A.TREAD, y, r % 2 ? C.tread2 : C.tread);
+    }
+    step(A.CON, A.FRONT + (A.LR - 1) * A.LRISE, C.con);
+    step(A.CON, A.UY, C.fascia);
+    for (let r = 0; r < A.UR; r++) {
+      const y = A.UY + r * A.URISE;
+      if (r) step(A.CON + r * A.TREAD, y, C.riser);
+      step(A.CON + (r + 1) * A.TREAD, y, r % 2 ? C.tread2 : C.tread);
+    }
+    step(UTOP, A.CEIL, C.back);
+    const sb = builder();
+    for (const s of segs) {
+      const n = pieces(s);
+      for (let j = 0; j < n; j++) {
+        const f0 = j / n, f1 = (j + 1) / n;
+        for (let k = 1; k < prof.length; k++) {
+          const [d0, y0] = prof[k - 1], [d1, y1, col] = prof[k];
+          const p0 = at(s, f0, d0), p1 = at(s, f1, d0), p2 = at(s, f1, d1), p3 = at(s, f0, d1);
+          sb.quad([p0[0], y0, p0[1]], [p1[0], y0, p1[1]], [p2[0], y1, p2[1]], [p3[0], y1, p3[1]], shade(col, light(d0)));
+        }
+      }
+    }
+    // aisle steps and portals laid over the rows (a hair proud of them)
+    const across = (s, f, dd, w) => {                // the two points w ft either side of (s, f)
+      const [x, z, nx, nz] = at(s, f, dd);
+      return [[x + nz * w, z - nx * w], [x - nz * w, z + nx * w]];
+    };
+    function overlay(s, f, w, r0, r1, upper, kT, kR) {
+      for (let r = r0; r < r1; r++) {
+        const base = upper ? A.CON : 0, rise = upper ? A.URISE : A.LRISE, y0 = upper ? A.UY : A.FRONT;
+        const da = base + r * A.TREAD + 0.03, db = base + (r + 1) * A.TREAD, y = y0 + r * rise + 0.04;
+        const [a1, a2] = across(s, f, da, w), [b1, b2] = across(s, f, db, w);
+        sb.quad([a1[0], y, a1[1]], [a2[0], y, a2[1]], [b2[0], y, b2[1]], [b1[0], y, b1[1]], shade(kT, light(da)));
+        if (r) {
+          const [c1, c2] = across(s, f, da - 0.06, w);
+          sb.quad([c1[0], y - rise, c1[1]], [c2[0], y - rise, c2[1]], [c2[0], y, c2[1]], [c1[0], y, c1[1]], shade(kR, light(da)));
+        }
+      }
+    }
+    for (const [si, f] of AISLES) { overlay(segs[si], f, 1.5, 0, A.LR, false, C.aisle, C.aisleR); overlay(segs[si], f, 1.5, 0, A.UR, true, C.aisle, C.aisleR); }
+    for (const [si, f] of PORTALS) {
+      overlay(segs[si], f, 3.5, PORTAL_ROW, A.LR, false, C.portal, C.portal);
+      const dd = PORTAL_ROW * A.TREAD - 0.08, y = A.FRONT + (PORTAL_ROW - 1) * A.LRISE, [a, b] = across(segs[si], f, dd, 3.6);
+      sb.quad([a[0], y, a[1]], [b[0], y, b[1]], [b[0], y + 1.3, b[1]], [a[0], y + 1.3, a[1]], C.rail);
+    }
+    const standsMat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
+    const stands = new THREE.Mesh(sb.geometry(), standsMat);
+    stands.renderOrder = 1;                          // after the crowd: the seats behind people are never shaded
+    group.add(stands);
+    // ceiling
+    const ceil = new THREE.Mesh(new THREE.PlaneGeometry(400, 320), new THREE.MeshBasicMaterial({ color: 0x050608 }));
+    ceil.rotation.x = Math.PI / 2; ceil.position.y = A.CEIL;
+    group.add(ceil);
+
+    // ---- LED boards: the stands' front wall and the upper-deck ribbon carry the live score;
+    // the centre-hung scoreboard shows it big. Repainted only when the text changes.
+    const led = document.createElement("canvas"); led.width = 1024; led.height = 64;
+    const ledTex = canvasTex(led); ledTex.wrapS = THREE.RepeatWrapping;
+    const ledMat = new THREE.MeshBasicMaterial({ map: ledTex, toneMapped: false, side: THREE.DoubleSide });
+    function ring(dd, y0, y1, uLen) {               // a band round the bowl facing the court
+      const pos = [], uv = [];
+      let u = 0;
+      for (const s of segs) {
+        const n = pieces(s), du = segLen(s, dd) / n / uLen;
+        for (let j = 0; j < n; j++) {
+          const p = at(s, j / n, dd), q = at(s, (j + 1) / n, dd);
+          for (const [P, uu, y, v] of [[p, u, y0, 0], [q, u + du, y0, 0], [q, u + du, y1, 1], [p, u, y0, 0], [q, u + du, y1, 1], [p, u, y1, 1]]) {
+            pos.push(P[0], y, P[1]); uv.push(-uu, v);     // the ring runs clockwise seen from the court
+          }
+          u += du;
+        }
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+      return new THREE.Mesh(g, ledMat);
+    }
+    group.add(ring(-0.06, 0.35, A.FRONT - 0.25, 48));
+    const ribbon = ring(A.CON - 0.06, A.UY - 5.5, A.UY - 1.6, 62);
+    group.add(ribbon);
+    const jumbo = document.createElement("canvas"); jumbo.width = 512; jumbo.height = 256;
+    const jumboTex = canvasTex(jumbo);
+    const jumboMat = new THREE.MeshBasicMaterial({ map: jumboTex, toneMapped: false });
+    const caseMat = new THREE.MeshBasicMaterial({ color: 0x0d0f13 });
+    const scoreboard = new THREE.Group();
+    const box = new THREE.Mesh(new THREE.BoxGeometry(18, 12, 26), [jumboMat, jumboMat, caseMat, caseMat, jumboMat, jumboMat]);
+    box.position.y = 64;
+    const hoop = new THREE.Mesh(new THREE.BoxGeometry(18.6, 1.1, 26.6), new THREE.MeshBasicMaterial({ toneMapped: false }));
+    hoop.position.y = 57.3;
+    const cables = new THREE.LineSegments(new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute(
+      [-8, 70, -12, -8, A.CEIL, -12, 8, 70, -12, 8, A.CEIL, -12, -8, 70, 12, -8, A.CEIL, 12, 8, 70, 12, 8, A.CEIL, 12], 3)),
+      new THREE.LineBasicMaterial({ color: 0x23262d }));
+    scoreboard.add(box, hoop, cables);
+    group.add(scoreboard);
+    // lights over the court: a ring of bright fixtures on a dark truss
+    const lamps = new THREE.InstancedMesh(new THREE.BoxGeometry(2.6, 0.5, 2.6), new THREE.MeshBasicMaterial({ color: 0xfff4dc, toneMapped: false }), 28);
+    { const m = new THREE.Matrix4(); let n = 0;
+      for (let i = 0; i < 9; i++) for (const z of [-30, 30]) { m.makeTranslation(-48 + i * 12, A.CEIL - 7, z); lamps.setMatrixAt(n++, m); }
+      for (let i = 0; i < 5; i++) for (const x of [-62, 62]) { m.makeTranslation(x, A.CEIL - 7, -24 + i * 12); lamps.setMatrixAt(n++, m); } }
+    const truss = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(124, 1.5, 60)), new THREE.LineBasicMaterial({ color: 0x2a2d34 }));
+    truss.position.y = A.CEIL - 6.2;
+    const rig = new THREE.Group(); rig.add(lamps, truss); group.add(rig);
+
+    // ---- courtside: benches either side of the scorer's table on the far sideline
+    const chairGeo = (() => {
+      const g = new THREE.BoxGeometry(1.6, 0.3, 1.6).translate(0, 1.45, 0).toNonIndexed();
+      const b = new THREE.BoxGeometry(1.6, 1.9, 0.25).translate(0, 2.4, -0.75).toNonIndexed();
+      const l = new THREE.BoxGeometry(0.3, 1.3, 0.3).translate(0, 0.65, 0).toNonIndexed();
+      const out = new THREE.BufferGeometry(), arrs = [g, b, l];
+      for (const name of ["position", "normal"]) {
+        const parts = arrs.map((x) => x.getAttribute(name).array), all = new Float32Array(parts.reduce((s, a) => s + a.length, 0));
+        let o = 0; for (const a of parts) { all.set(a, o); o += a.length; }
+        out.setAttribute(name, new THREE.BufferAttribute(all, 3));
+      }
+      return out;
+    })();
+    const BENCH = [];                                 // [x, side] for each chair
+    for (let i = 0; i < 10; i++) { BENCH.push([10 + i * 2.2, "home"]); BENCH.push([-10 - i * 2.2, "away"]); }
+    const chairs = new THREE.InstancedMesh(chairGeo, new THREE.MeshLambertMaterial({ color: 0x2a2e36 }), BENCH.length);
+    BENCH.forEach(([x], i) => chairs.setMatrixAt(i, new THREE.Matrix4().makeTranslation(x, 0, -31.2)));
+    group.add(chairs);
+    const tableTex = ledTex.clone(); tableTex.repeat.set(14 / 48, 1);
+    const tableLed = new THREE.MeshBasicMaterial({ map: tableTex, toneMapped: false });
+    const tableTop = new THREE.MeshLambertMaterial({ color: 0x1b1d22 });
+    const table = new THREE.Mesh(new THREE.BoxGeometry(14, 2.7, 2.4), [tableTop, tableTop, tableTop, tableTop, tableLed, tableTop]);
+    table.position.set(0, 1.35, -29.6);
+    group.add(table);
+
+    // ---- the crowd: a low-poly seated fan, 30 triangles (18 without sides, for the far seats
+    // and light quality). No bottoms or hidden faces; indexed so each corner is shaded once.
+    function personGeometry(detail) {
+      const pos = [], colr = [], part = [], index = [];
+      const box = (x0, x1, y0, y1, z0, z1, pb, pt, which) => {
+        const faces = { F: [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1], 1],
+                        T: [[x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0], 0.82],
+                        L: [[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0], 0.62],
+                        R: [[x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1], 0.62],
+                        B: [[x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0], 0.5] };
+        for (const f of which) {
+          const [a, b, c, d, k] = faces[f], o = pos.length / 3;
+          for (const v of [a, b, c, d]) { pos.push(v[0], v[1], v[2]); colr.push(k, k, k); part.push(v[1] > y0 ? pt : pb); }
+          index.push(o, o + 1, o + 2, o, o + 2, o + 3);
+        }
+      };
+      box(-0.55, 0.55, 0, 1.6, 0.15, 1.35, 0, 1, "F");          // legs: feet stay put, knees rise
+      const sides = detail ? "FTLRB" : "FTB";            // backs: the broadcast camera sits behind the near stand
+      box(-0.62, 0.62, 1.55, 3.65, -0.45, 0.35, 1, 1, sides);   // body
+      box(-0.92, -0.62, 2.0, 3.45, -0.25, 0.25, 2, 2, "FT");    // arms (go up on a big play)
+      box(0.62, 0.92, 2.0, 3.45, -0.25, 0.25, 2, 2, "FT");
+      box(-0.36, 0.36, 3.75, 4.55, -0.35, 0.35, 3, 3, sides);   // head (skin, from the seed)
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute("color", new THREE.Float32BufferAttribute(colr, 3));
+      g.setAttribute("aPart", new THREE.Float32BufferAttribute(part, 1));
+      g.setIndex(index);
+      return g;
+    }
+    const U = { uTime: { value: 0 }, uHome: { value: 0 }, uAway: { value: 0 }, uTense: { value: 0 } };
+    const crowdMat = new THREE.MeshBasicMaterial({ vertexColors: true });
+    crowdMat.onBeforeCompile = (sh) => {
+      Object.assign(sh.uniforms, U);
+      sh.vertexShader = sh.vertexShader
+        .replace("#include <common>", `#include <common>
+attribute float aPart; attribute float aSeed; attribute float aFan;
+uniform float uTime; uniform float uHome; uniform float uAway; uniform float uTense;`)
+        .replace("#include <begin_vertex>", `#include <begin_vertex>
+float ph = aSeed * 6.2832;
+float fan = aFan > 1.5 ? 0.0 : aFan;
+float react = max(fan, 0.0) * uHome + max(-fan, 0.0) * uAway;
+float th = 0.08 + 0.55 * fract(aSeed * 7.13);
+float up = smoothstep(th, th + 0.25, react);
+up = max(up, uTense * step(fract(aSeed * 5.31), 0.45 * max(fan, 0.0)));
+up = max(up, step(1.5, aFan));
+float hop = up * react * max(0.0, sin(uTime * 8.0 + ph * 3.0)) * 1.1 * step(0.4, fract(aSeed * 3.77));
+float moves = step(0.5, aPart);
+transformed.y += moves * (up * 1.6 + hop + sin(uTime * 1.3 + ph) * 0.05);
+transformed.x += moves * sin(uTime * 0.7 + ph * 2.0) * 0.07 * (transformed.y * 0.25);
+transformed.y += step(1.5, aPart) * step(aPart, 2.5) * up * react * 2.3;`)
+        .replace("#include <color_vertex>", `#include <color_vertex>
+if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.55, 0.36, 0.25), fract(aSeed * 11.7));`);
+    };
+    // who sits where: [x, y, z, yaw, scale, kind, tone, fan]; kind picks the shirt colour
+    const NEUTRAL = ["#f2f2f2", "#d9d9d9", "#1c1c1f", "#2b2d33", "#3d4250", "#6b6f78", "#28344f", "#5a2a2a",
+                     "#2f4a35", "#8c7b62", "#b03a2e", "#d4a017", "#4a6fa5"];
+    let seed = 2024;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) >>> 0) / 4294967296);
+    function seats(upper, si) {                      // one side or corner of one deck
+      const out = [], s = segs[si];
+      const rows = upper ? A.UR : A.LR, base = upper ? A.CON : 0, y0 = upper ? A.UY : A.FRONT, rise = upper ? A.URISE : A.LRISE;
+      {
+        for (let r = 0; r < rows; r++) {
+          const dd = base + r * A.TREAD + 1.45, len = segLen(s, dd), n = Math.floor(len / 2), gap = (len - n * 2) / 2;
+          for (let k = 0; k < n; k++) {
+            const along = gap + 1 + k * 2, f = along / len;
+            if (AISLES.some(([ai, af]) => ai === si && Math.abs(af - f) * len < 2.2)) continue;
+            if (!upper && r >= PORTAL_ROW - 1 && PORTALS.some(([pi, pf]) => pi === si && Math.abs(pf - f) * len < 4.2)) continue;
+            if (rnd() < 0.07) continue;                 // an empty seat here and there
+            const [x, z, nx, nz] = at(s, f, dd);
+            const v = rnd(), kind = v < 0.42 ? 1 : v < 0.5 ? 2 : 0;
+            // the front rows under the broadcast camera stay seated: they'd stand into the near sideline
+            const calm = !upper && si === 0 && r < 4;
+            out.push([x, y0 + r * rise, z, Math.atan2(-nx, -nz) + (rnd() - 0.5) * 0.3, 0.92 + rnd() * 0.16, kind,
+                      (0.15 + rnd() * 0.12) * light(dd), calm ? 0 : kind === 1 ? 1 : kind === 2 ? -1 : 0.6,
+                      NEUTRAL[Math.floor(rnd() * NEUTRAL.length)]]);
+          }
+        }
+      }
+      return out;
+    }
+    function courtside() {                           // benches, coaches, baseline photographers
+      const out = [];
+      BENCH.forEach(([x, side], i) => {
+        if (i % 20 < 14) out.push([x, 0, -31.0, 0, 1.05, side === "home" ? 1 : 2, 0.7, side === "home" ? 1 : -1, ""]);
+      });
+      for (const [x, side] of [[9, "home"], [-9, "away"]]) out.push([x, 0, -28.6, 0, 1.0, 0, 0.6, 2, "#202226"]);
+      for (const sg of [-1, 1]) for (const z of [-19, -14, -9, 9, 14, 19]) {
+        out.push([sg * 57.5, -1.1, z + (rnd() - 0.5), sg > 0 ? -HALF : HALF, 1.0, 0, 0.55, 0, rnd() < 0.5 ? "#1c1c1f" : "#2b2d33"]);
+      }
+      return out;
+    }
+    const people = [personGeometry(false), personGeometry(true)];
+    function crowdMesh(list, detail) {
+      const g = people[+detail].clone();
+      const mesh = new THREE.InstancedMesh(g, crowdMat, list.length);
+      const sd = new Float32Array(list.length), fn = new Float32Array(list.length);
+      const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), sc = new THREE.Vector3(), p = new THREE.Vector3();
+      list.forEach((o, i) => {
+        q.setFromEuler(e.set(0, o[3], 0)); sc.setScalar(o[4]); p.set(o[0], o[1], o[2]);
+        mesh.setMatrixAt(i, m.compose(p, q, sc));
+        sd[i] = rnd(); fn[i] = o[7];
+      });
+      g.setAttribute("aSeed", new THREE.InstancedBufferAttribute(sd, 1));
+      g.setAttribute("aFan", new THREE.InstancedBufferAttribute(fn, 1));
+      mesh.userData.list = list;
+      mesh.computeBoundingSphere();                  // per section, so sections out of shot are skipped
+      mesh.boundingSphere.radius += 6;               // room for standing and arms up
+      group.add(mesh);
+      return mesh;
+    }
+    // one instanced mesh per side / corner and deck: a few more draw calls, but the GPU only
+    // sees the sections in shot (the broadcast camera sits in the near stand)
+    let lowerCrowd = [], upperCrowd = [], detailed = null;
+    function buildLower(detail) {                    // full: rounded people near the court; light: flat
+      if (detailed === detail) return;
+      for (const m of lowerCrowd) { group.remove(m); m.geometry.dispose(); }
+      seed = 2024;
+      lowerCrowd = [crowdMesh(courtside(), detail)].concat(segs.map((s, si) => crowdMesh(seats(false, si), detail)));
+      detailed = detail;
+      colourCrowd(lowerCrowd);
+    }
+    function colourCrowd(meshes) { for (const m of meshes) colourMesh(m); }
+    function colourMesh(mesh) {
+      const c = new THREE.Color(), home = new THREE.Color().setStyle(colors.home), away = new THREE.Color().setStyle(colors.away);
+      mesh.userData.list.forEach((o, i) => {
+        if (o[5] === 1) c.copy(home); else if (o[5] === 2) c.copy(away); else c.setStyle(o[8]);
+        mesh.setColorAt(i, c.multiplyScalar(o[6]));
+      });
+      mesh.instanceColor.needsUpdate = true;
+    }
+
+    // ---- live text on the boards
+    let boardKey = "";
+    function paintBoards(score, period, clock) {
+      const key = score.join("-") + "|" + period + "|" + clock + "|" + colorsVersion;
+      if (key === boardKey) return false;
+      boardKey = key;
+      const font = colors.font || "sans-serif";
+      let x = led.getContext("2d");
+      x.fillStyle = "#050608"; x.fillRect(0, 0, 1024, 64);
+      x.fillStyle = colors.home; x.fillRect(0, 0, 360, 64);
+      x.textBaseline = "middle"; x.textAlign = "center"; x.fillStyle = "#ffffff";
+      x.font = `700 40px ${font}`;
+      x.fillText(G.home.name.toUpperCase(), 180, 34, 340);
+      x.fillStyle = colors.away; x.fillRect(372, 8, 8, 48);
+      x.fillStyle = colors.home; x.fillRect(644, 8, 8, 48);
+      x.fillStyle = "#ffd27a";
+      x.fillText(`${G.away.abbr} ${score[1]}  ·  ${G.home.abbr} ${score[0]}`, 512, 34, 250);
+      x.fillStyle = "#ffffff";
+      x.fillText(period ? `${period}  ${clock}` : "LIVE", 840, 34, 340);
+      ledTex.needsUpdate = true; tableTex.needsUpdate = true;
+      x = jumbo.getContext("2d");
+      x.fillStyle = "#020304"; x.fillRect(0, 0, 512, 256);
+      for (const [side, i] of [["away", 0], ["home", 1]]) {
+        const x0 = 16 + i * 248;
+        x.fillStyle = colors[side]; x.fillRect(x0, 16, 232, 52);
+        x.fillStyle = "#ffffff"; x.font = `700 40px ${font}`; x.textAlign = "center";
+        x.fillText(G[side].abbr, x0 + 116, 44);
+        x.font = `700 104px ${font}`;
+        x.fillText(String(score[side === "home" ? 0 : 1]), x0 + 116, 132);
+      }
+      x.fillStyle = "#ffd27a"; x.font = `700 48px ${font}`;
+      x.fillText(period ? `${period}  ${clock}` : "", 256, 220);
+      jumboTex.needsUpdate = true;
+      return true;
+    }
+
+    // ---- quality: full (both decks full of people, scoreboard, lights), light, off
+    let level = "full";
+    function setLevel(lv) {
+      level = lv;
+      group.visible = lv !== "off";
+      if (lv !== "off") buildLower(lv === "full");
+      if (lv === "full" && !upperCrowd.length) { upperCrowd = segs.map((s, si) => crowdMesh(seats(true, si), false)); colourCrowd(upperCrowd); }
+      for (const m of upperCrowd) m.visible = lv === "full";
+      scoreboard.visible = rig.visible = lv === "full";
+    }
+    function applyTheme() {
+      colourCrowd(lowerCrowd); colourCrowd(upperCrowd); boardKey = "";
+      hoop.material.color.setStyle(colors.home);
+    }
+
+    // ---- the camera stays in the open: over the floor, above the seats, under the roof
+    function camOk(x, y, z) {
+      if (y > A.CEIL - 4) return false;
+      if (Math.abs(z) < 3.5 && Math.abs(x) > L + 3 && Math.abs(x) < L + 10.5 && y < 13.5) return false;   // a stanchion
+      const dd = outward(x, z);
+      if (dd < -0.5) return y >= 1;
+      if (dd > UTOP - 3) return false;
+      if (dd >= LTOP - 1 && dd < A.CON + 1) return y >= A.UY + 3;
+      return y >= seatY(dd + A.TREAD) + 6.5;
+    }
+    function clampCamera(pos, tx, ty, tz) {
+      if (camOk(pos.x, pos.y, pos.z)) return;
+      const dx = pos.x - tx, dy = pos.y - ty, dz = pos.z - tz, n = Math.ceil(Math.hypot(dx, dy, dz));
+      let k = 0;
+      for (let j = 1; j <= n; j++) { if (!camOk(tx + dx * j / n, ty + dy * j / n, tz + dz * j / n)) break; k = j / n; }
+      pos.set(tx + dx * k, ty + dy * k, tz + dz * k);
+    }
+
+    // ---- reactions: from the score changes in the possession being shown
+    let seenP = null, seenK = -1, react = null, tenseWant = 0, clockT = 0;
+    const BIG = /alley-oop|at the rim|putback|dunk/i;
+    function update(s, dtReal, camera, moving) {
+      const p = s.p, i = Math.floor(s.time / dt + 1e-6), fr = p.frames[Math.min(p.frames.length - 1, i)];
+      let score = p.start_score, last = -1, before = score;
+      p.events.forEach((e, k) => {
+        if (e[0] > i) return;
+        if (e[2] !== score[0] || e[3] !== score[1]) { last = k; before = score; }
+        score = [e[2], e[3]];
+      });
+      const tense = closeFinish(p);
+      if (p !== seenP || last !== seenK) {
+        if (last >= 0 && !reduceMotion && s.time - p.events[last][0] * dt < 2.5 && (p === seenP || s.time < 30)) {
+          const e = p.events[last], dh = e[2] - before[0], da = e[3] - before[1];
+          const shot = p.events.slice(Math.max(0, last - 4), last).map((x) => x[1]).join(" ");
+          const big = dh >= 3 || da >= 3 || (BIG.test(shot) && dh + da >= 2);
+          if (dh > 0) react = { home: Math.min(1, (dh === 1 ? 0.35 : big ? 1 : 0.7) + (tense ? 0.3 : 0)), away: 0, t: 0 };
+          else if (da > 0) react = { home: 0, away: big ? 1 : 0.6, t: 0 };
+        }
+        seenP = p; seenK = last;
+      }
+      tenseWant = tense && !reduceMotion ? 1 : 0;
+      let anim = false;
+      if (!reduceMotion && (moving || react || Math.abs(U.uTense.value - tenseWant) > 0.01)) {
+        clockT = (clockT + dtReal) % 1000; U.uTime.value = clockT; anim = true;
+        U.uTense.value += (tenseWant - U.uTense.value) * (1 - Math.exp(-dtReal * 2));
+      }
+      if (react) {
+        react.t += dtReal;
+        const t = react.t, env = t < 0.25 ? t / 0.25 : t < 1.6 ? 1 : Math.max(0, 1 - (t - 1.6) / 1.4);
+        U.uHome.value = react.home * env; U.uAway.value = react.away * env;
+        if (t > 3) { react = null; U.uHome.value = U.uAway.value = 0; }
+      }
+      const c = fr.length > 26 ? fr[26] : null;
+      const clock = c === null ? "" : c >= 60 ? clockText(c) : "0:" + String(Math.ceil(c)).padStart(2, "0");
+      if (paintBoards(score, c === null ? "" : periodName(p.period), clock)) anim = true;
+      scoreboard.visible = level === "full" && camera.position.y < 55;   // never between an overhead camera and the floor
+      return anim;
+    }
+    return { setLevel, applyTheme, clampCamera, update, get level() { return level; },
+             reacting: () => !!react, crowd: () => ({ time: U.uTime.value, home: U.uHome.value, away: U.uAway.value, tense: U.uTense.value }), stats: () => ({ lower: lowerCrowd.reduce((n, m) => n + m.count, 0), upper: upperCrowd.reduce((n, m) => n + m.count, 0) }) };
+  }
+
   function createView3D(THREE, cv) {
     const small = window.matchMedia("(max-width: 700px), (pointer: coarse)").matches;
     const renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true, alpha: false });
@@ -1013,12 +1457,25 @@ window.GAME = /*GAME_DATA*/null;
     shadow.position.y = 0.04; shadow.renderOrder = 2;
     scene.add(shadow);
 
+    // the arena (stands, crowd, boards): built the first time it's switched on
+    let arena = null, arenaLevel = "off";
+    function setArena(lv) {
+      arenaLevel = lv;
+      if (lv !== "off" && !arena) arena = createArena(THREE, scene, canvasTex);
+      if (arena) arena.setLevel(lv);
+      themeSeen = -1; dirty = 3;
+    }
+    const inArena = () => !!arena && arenaLevel !== "off";
+
     let themeSeen = -1;
     function applyTheme() {                         // the page's tokens, light or dark
       themeSeen = colorsVersion;
       const bg = new THREE.Color().setStyle(colors.bg || "#222222");
-      scene.background = bg;
-      scene.fog = new THREE.Fog(bg, 160, 360);
+      // in the arena it's dark above the stands whatever the page's theme: it's a real place
+      const sky = inArena() ? new THREE.Color(ARENA.BG) : bg;
+      scene.background = sky;
+      scene.fog = inArena() ? new THREE.Fog(sky, 170, 420) : new THREE.Fog(bg, 160, 360);
+      if (arena) arena.applyTheme();
       apronMat.color = col("court").lerp(bg, 0.3).multiplyScalar(0.78);
       teamMat.home.color = col("home").multiplyScalar(0.8);
       teamMat.away.color = col("away").multiplyScalar(0.8);
@@ -1072,6 +1529,7 @@ window.GAME = /*GAME_DATA*/null;
       const cp = Math.cos(cam.pitch);
       camera.position.set(cam.x + cam.dist * cp * Math.sin(cam.yaw), cam.y + cam.dist * Math.sin(cam.pitch),
                           cam.z + cam.dist * cp * Math.cos(cam.yaw));
+      if (inArena()) arena.clampCamera(camera.position, cam.x, cam.y, cam.z);   // not in the seats or the roof
       camera.lookAt(cam.x, cam.y, cam.z);
       return Math.abs(w.x - cam.x) + Math.abs(w.z - cam.z) + Math.abs(wrapAngle(w.yaw - cam.yaw)) * 20 +
              Math.abs(w.pitch - cam.pitch) * 20 + Math.abs(w.dist - cam.dist) * 0.1 + camFade + camFadeDir * camFadeDir;
@@ -1220,6 +1678,7 @@ window.GAME = /*GAME_DATA*/null;
       shadow.scale.set(sh, 1, sh);
       shadow.material.opacity = Math.max(0.25, 1 - bY / 22);
       motion += moveCamera(st, dtReal, snap);
+      if (inArena() && arena.update(st, dtReal, camera, playing || !!trans)) dirty = Math.max(dirty, 1);
       const fv = Math.max(st.fade, camFade).toFixed(3), fadeEl = $("fade3d");
       if (fadeEl.style.opacity !== fv) fadeEl.style.opacity = fv;
       if (motion > 0.002) dirty = 3;
@@ -1236,7 +1695,8 @@ window.GAME = /*GAME_DATA*/null;
       dirty = 3;
     }
     function setPreset(name) { preset = name; resetUser(); if (st) st.snap = true; }
-    return { setFrame, render, resize, setPreset };
+    return { setFrame, render, resize, setPreset, setArena, renderer, camera, scene,
+             arena: () => (arena ? { level: arena.level, reacting: arena.reacting(), ...arena.crowd(), ...arena.stats() } : null) };
   }
 
   // ---- 2D / 3D switch (2D is the default; 3D is built the first time it's picked)
@@ -1246,6 +1706,10 @@ window.GAME = /*GAME_DATA*/null;
   let threeLib = null, camPreset = "broadcast";
   try { camPreset = localStorage.getItem("hoopsim-cam") || "broadcast"; } catch (e) {}
   if (!["broadcast", "baseline", "overhead"].includes(camPreset)) camPreset = "broadcast";
+  // Arena quality: phones start on light; the choice is remembered.
+  let arenaQ = window.matchMedia("(max-width: 700px), (pointer: coarse)").matches ? "light" : "full";
+  try { arenaQ = localStorage.getItem("hoopsim-arena") || arenaQ; } catch (e) {}
+  if (!["full", "light", "off"].includes(arenaQ)) arenaQ = "full";
   async function load3D() {
     if (view3d) return;
     const test = document.createElement("canvas");
@@ -1257,6 +1721,8 @@ window.GAME = /*GAME_DATA*/null;
     const cv = $("court3d");
     view3d = createView3D(threeLib, cv);
     view3d.setPreset(camPreset);
+    view3d.setArena(arenaQ);
+    window.hoopsim3D = view3d;                         // for diagnostics (frame stats, the arena's state)
     cv.addEventListener("webglcontextlost", (e) => {
       e.preventDefault(); view3d = null; setView("2d", false); no3D("3D stopped: the graphics context was lost.");
     });
@@ -1281,6 +1747,7 @@ window.GAME = /*GAME_DATA*/null;
     canvas.hidden = mode === "3d";
     $("view3d").hidden = mode !== "3d";
     $("camSeg").hidden = mode !== "3d";
+    $("arenaSeg").hidden = mode !== "3d";
     if (save) { try { localStorage.setItem("hoopsim-view", mode); } catch (e) {} }
     redrawAll();
   }
@@ -1296,6 +1763,15 @@ window.GAME = /*GAME_DATA*/null;
         camPreset = el.value;
         try { localStorage.setItem("hoopsim-cam", camPreset); } catch (e) {}
         if (view3d) view3d.setPreset(camPreset);
+      });
+    });
+    document.querySelectorAll('input[name="arena"]').forEach((el) => {
+      el.checked = el.value === arenaQ;
+      el.addEventListener("change", () => {
+        if (!el.checked) return;
+        arenaQ = el.value;
+        try { localStorage.setItem("hoopsim-arena", arenaQ); } catch (e) {}
+        if (view3d) view3d.setArena(arenaQ);
       });
     });
   }

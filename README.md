@@ -123,13 +123,23 @@ flat court for a 3D one: a to-scale 94×50 ft floor with the same lines, backboa
 and over their heads (surnames too with **Names**), and the ball at its real height with
 a shadow, so shots arc and lobs hang. Cameras: **Broadcast** (a sideline camera that
 follows the ball), **Baseline** (behind the attacking team) and **Overhead**; drag to
-turn, scroll to zoom, double-click to go back to the preset. It renders the same frame as
+turn, scroll to zoom, double-click to go back to the preset (the camera stays over the
+floor, out of the seats and under the roof). The court sits in an arena: team benches
+and the scorer's table on the far sideline, photographers on the baselines, a lower bowl
+and an upper deck with aisles and portals, LED boards and a centre-hung scoreboard with
+the live score and clock, lights over a dark roof. Thousands of fans (mostly in home
+colours) sway, stand up when the game is close and late, and jump when the home team
+scores (bigger for threes and plays at the rim); away fans answer their team's big makes.
+**Arena: Full | Light | Off** sets how much of it is drawn (Light: lower bowl only;
+phones start there; remembered). It is all procedural (no images; under 30 KB more per page),
+built only the first time 3D is shown, and the crowd is a handful of instanced meshes
+animated on the GPU. It renders the same frame as
 the 2D view, so playback, highlights, transitions and live coaching work the same.
 Players move along a smooth curve through the ten-a-second positions, with a light
 damping that never leaves them more than 0.6 ft from where the simulation has them, and
 face where they run (or the ball when they stand). 2D stays the default: the 3D view is
 only built when picked, and without WebGL the switch is disabled with a note. With
-reduced motion on, the cameras hold still instead of following. It uses three.js r160
+reduced motion on, the cameras hold still instead of following and the crowd sits still. It uses three.js r160
 (MIT), vendored in `spatial/vendor/` and inlined once into every viewer page as inert
 text that only runs when 3D is switched on (about 650 KB per page; pass `three=False`
 to `export.build_html` for a 2D-only page), so replays and live games work offline.
