@@ -95,6 +95,7 @@ COUNTRIES = {"us": "USA", "ca": "Canada", "fr": "France", "rs": "Serbia", "au": 
 
 # Approximate NBA 2026-27 salary rules (the editor and league settings can change them).
 OLDER_WEIGHT = 0.5
+WITH_HISTORY = True
 RULES = {"salary_cap": 165_000_000, "luxury_tax_line": 201_000_000, "min_salary": 1_270_000,
          "mid_level_exception": 14_100_000, "max_roster": 15, "min_roster": 13}
 
@@ -344,6 +345,86 @@ def _contracts(season: int) -> dict[str, dict]:
     return out
 
 
+# --------------------------------------------------------------------------
+# Career history: every past season, regular season and playoffs, with honours
+# --------------------------------------------------------------------------
+# Old team codes -> today's franchise (for the team link); the old code is still shown.
+FRANCHISE = {"NJN": "BRK", "SEA": "OKC", "NOH": "NOP", "NOK": "NOP", "CHA": "CHO", "CHH": "CHO", "VAN": "MEM"}
+SHOWN = {"BRK": "BKN", "CHO": "CHA", "PHO": "PHX"}
+AWARD_WINS = {"MVP": "mvp", "DPOY": "dpoy", "ROY": "roy", "6MOY": "sixth_man", "SMOY": "sixth_man",
+              "MIP": "mip", "CPOY": "clutch_poy"}
+
+
+def _honours(text: str) -> dict:
+    out = {}
+    for tok in (t.strip() for t in text.split(",") if t.strip()):
+        if tok == "AS":
+            out["all_star"] = True
+        elif tok[:3] == "NBA" and tok[3:].isdigit():
+            out["all_nba"] = int(tok[3:])
+        elif tok[:3] == "DEF" and tok[3:].isdigit():
+            out["all_defense"] = int(tok[3:])
+        elif "-" in tok:
+            name, place = tok.rsplit("-", 1)
+            if place == "1" and name in AWARD_WINS:
+                out[AWARD_WINS[name]] = True
+    return out
+
+
+def _career_lines(rows: list[dict], season: int, playoffs: bool) -> dict[str, dict]:
+    """One line per player for a season: a traded player's combined line, under his last team."""
+    by: dict[str, list[dict]] = {}
+    for r in rows:
+        if r.get("_id"):
+            by.setdefault(r["_id"], []).append(r)
+    out = {}
+    for pid, rs in by.items():
+        total = next((r for r in rs if re.fullmatch(r"\dTM|TOT", r.get("team_name_abbr", ""))), rs[0])
+        teams = [r.get("team_name_abbr", "") for r in rs if not re.fullmatch(r"\dTM|TOT", r.get("team_name_abbr", ""))]
+        site = teams[-1] if teams else total.get("team_name_abbr", "")
+        n = lambda k: int(num(total.get(k)))  # noqa: E731
+        line = {"season": season, "playoffs": playoffs, "team": SHOWN.get(site, site),
+                "franchise": SHOWN.get(FRANCHISE.get(site, site), FRANCHISE.get(site, site)),
+                "age": n("age"), "gp": n("games"), "gs": n("games_started"), "min": n("mp"), "pts": n("pts"),
+                "fgm": n("fg"), "fga": n("fga"), "tpm": n("fg3"), "tpa": n("fg3a"), "ftm": n("ft"), "fta": n("fta"),
+                "orb": n("orb"), "drb": n("drb"), "ast": n("ast"), "stl": n("stl"), "blk": n("blk"),
+                "tov": n("tov"), "pf": n("pf")}
+        if not playoffs:
+            line.update(_honours(" ".join(r.get("awards", "") for r in rs)))
+        out[pid] = line
+    return out
+
+
+def careers(year: int) -> dict[str, list[dict]]:
+    """{site id: [career lines]} from the cached season pages before ``year``."""
+    out: dict[str, list[dict]] = {}
+    for y in range(bf.FIRST_HISTORY, year):
+        f = bf.CACHE / f"NBA_{y}_totals.html"
+        if not f.exists():
+            continue
+        page = f.read_text(encoding="utf-8")
+        for table_id, playoffs in (("totals_stats", False), ("totals_stats_post", True)):
+            for pid, line in _career_lines(table(page, table_id), y - 1, playoffs).items():
+                if line["gp"] > 0:
+                    out.setdefault(pid, []).append(line)
+    for lines in out.values():
+        lines.sort(key=lambda c: (c["season"], c["playoffs"]))
+    return out
+
+
+def drafts(year: int) -> dict[str, tuple[int, int]]:
+    """{site id: (draft year, overall pick)}."""
+    out = {}
+    for y in range(bf.FIRST_HISTORY - 1, year):
+        f = bf.CACHE / f"draft_NBA_{y}.html"
+        if not f.exists():
+            continue
+        for r in table(f.read_text(encoding="utf-8"), "stats"):
+            if r.get("_id") and r.get("pick_overall", "").isdigit():
+                out.setdefault(r["_id"], (y, int(r["pick_overall"])))
+    return out
+
+
 def build(year: int) -> dict:
     season = year - 1                               # hoopsim names a season by its first year
     today = date(season, 10, 20)
@@ -555,12 +636,19 @@ def _league_file(year, season, today, teams, players, by_site) -> dict:
             "height_cm", "wingspan_cm", "weight_kg", "jersey_number", "attributes", "potential_ability",
             "hidden", "tendencies")
     out_players = []
+    history, drafted = (careers(year), drafts(year)) if WITH_HISTORY else ({}, {})
     for p in players:
         d = {k: p[k] for k in keep}
         d["team"] = abbr.get(p["_site"]) if p["_site"] else None
         d["contract"] = p["contract"] if p["_site"] else None
         d["years_experience"] = p["experience"]
         d["draft_year"] = season - p["experience"]       # rookies and sophomores: Rising Stars
+        if p["_id"] in drafted:
+            d["draft_year"], d["draft_pick"] = drafted[p["_id"]]
+        elif history.get(p["_id"]):                      # undrafted: arrived in his first season
+            d["draft_year"] = history[p["_id"]][0]["season"]
+        if history.get(p["_id"]):
+            d["career"] = history[p["_id"]]
         out_players.append(d)
     return {"format": "hoopsim-league", "version": 1,
             "name": f"NBA {season}-{str(year)[2:]}", "season": season, "start_date": today.isoformat(),
@@ -572,12 +660,15 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--year", type=int, default=2027, help="season's end year on the site (2027 = 2026-27)")
     ap.add_argument("--out", default=None)
-    ap.add_argument("--fetch", action="store_true", help="fetch missing pages first (about 2 minutes)")
+    ap.add_argument("--fetch", action="store_true", help="fetch missing pages first (about 5 minutes the first time)")
+    ap.add_argument("--no-history", action="store_true", help="skip past seasons (careers, drafts, honours)")
     args = ap.parse_args()
     if "SSL_CERT_FILE" not in os.environ and Path("/root/.ccr/ca-bundle.crt").exists():
         os.environ["SSL_CERT_FILE"] = "/root/.ccr/ca-bundle.crt"
     if args.fetch:
-        bf.fetch_all(args.year)
+        bf.fetch_all(args.year, history=not args.no_history)
+    global WITH_HISTORY
+    WITH_HISTORY = not args.no_history
     league = build(args.year)
     out = Path(args.out or ROOT / "leagues" / f"nba-{args.year - 1}-{str(args.year)[2:]}.json")
     out.parent.mkdir(parents=True, exist_ok=True)

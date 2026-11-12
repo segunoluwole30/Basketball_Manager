@@ -122,6 +122,9 @@ def finish_season(league: League) -> dict:
     finals_mvp = max(finals_totals, key=lambda pid: game_score(finals_totals[pid]), default=None)
 
     honours = allstar.career_flags(league)
+    for key, pid in {**award_ids, "finals_mvp": finals_mvp}.items():     # awards join the career line too
+        if pid is not None:
+            honours.setdefault(pid, {})[key] = True
     for playoff, totals in ((False, reg), (True, po)):
         for pid, t in totals.items():
             p = league.players[pid]

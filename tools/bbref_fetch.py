@@ -59,8 +59,19 @@ def get(name: str, path: str, refresh: bool = False) -> str:
     return html
 
 
-def fetch_all(year: int, refresh: bool = False) -> None:
-    todo = pages(year)
+FIRST_HISTORY = 2004      # 2003-04: the rookie season of the longest-serving active players
+
+
+def history_pages(year: int) -> dict[str, str]:
+    """Season totals (regular season and playoffs, with awards) for every season before
+    ``year``, and the drafts that brought today's players in."""
+    out = {f"NBA_{y}_totals.html": f"/leagues/NBA_{y}_totals.html" for y in range(FIRST_HISTORY, year)}
+    out.update({f"draft_NBA_{y}.html": f"/draft/NBA_{y}.html" for y in range(FIRST_HISTORY - 1, year)})
+    return out
+
+
+def fetch_all(year: int, refresh: bool = False, history: bool = True) -> None:
+    todo = {**pages(year), **(history_pages(year) if history else {})}
     for i, (name, path) in enumerate(todo.items(), 1):
         cached = (CACHE / name).exists() and not refresh
         get(name, path, refresh)

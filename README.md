@@ -1123,6 +1123,27 @@ How ratings are derived:
   * salary rules approximately 2026-27 (cap $165M, tax $201M, minimum $1.27M, MLE
     $14.1M).
 
+**Career history.** With history on (the default), `--fetch` also gets every season since
+2003-04, one page per season, plus every draft since 2003. That is about 45 more pages,
+fetched once. Each player gets:
+* one line per season, regular season and playoffs (a traded player's combined line
+  under his last team; old codes such as SEA and NJN are kept and linked to today's
+  franchise);
+* his real draft year and pick (undrafted players arrive in their first season);
+* honours: All-Star, MVP, DPOY, ROY, Sixth Man, MIP, Clutch POY, and All-NBA and
+  All-Defensive teams.
+
+The effects:
+* The player card shows his career table and charts from his rookie season, with honour
+  codes per season (hover a code for its full name) and career honour badges.
+* Rookie of the Year and Rising Stars use the real draft classes.
+* Most Improved compares a player with his real previous season.
+* Past All-Star selections count in the fan vote.
+* Scouts are surer about veterans with long track records.
+
+Seasons played in the game add to the same history, including awards. Use `--no-history`
+to skip it.
+
 Standard roster spots are capped at 15. Two-way players and extras become free
 agents, along with veterans unsigned since last season.
 

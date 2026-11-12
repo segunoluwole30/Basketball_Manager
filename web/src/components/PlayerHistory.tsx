@@ -59,6 +59,8 @@ export function PlayerHistory({ id }: { id: number }) {
                     { key: "stl", label: "STL", num: true, render: (r) => f1(r.stl) },
                     { key: "blk", label: "BLK", num: true, render: (r) => f1(r.blk) },
                     { key: "fg_pct", label: "FG%", num: true, render: (r) => f3(r.fg_pct) },
+                    { key: "honours", label: "Honours", sort: (r) => (r.honours ?? []).length,
+                      render: (r) => (r.honours ?? []).length ? <span className="small" title={r.honours.join(", ")}>{(r.honours_short ?? r.honours).join(",")}</span> : "" },
                     { key: "tp_pct", label: "3P%", num: true, render: (r) => f3(r.tp_pct) },
                     { key: "ft_pct", label: "FT%", num: true, render: (r) => f3(r.ft_pct) },
                     { key: "ts", label: "TS%", title: "True shooting: PTS / (2 × (FGA + 0.44 × FTA))", num: true, render: (r) => f3(r.ts) },

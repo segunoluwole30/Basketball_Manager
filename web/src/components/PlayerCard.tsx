@@ -119,13 +119,21 @@ export function PlayerCard() {
                   <div className="stat-sub">{p.injury ? <span className="bad">{p.injury.description}, out {p.injury.games} g</span> : "healthy"}</div></div>
               </div>
 
-              {(p.all_star_now || p.honours?.all_star > 0) && (
+              {(p.all_star_now || Object.values(p.honours ?? {}).some((v: any) => v > 0)) && (
                 <div className="notes as-honours">
                   {p.all_star_now && <span className="chip chip-star">★ All-Star this season</span>}
                   {p.honours?.all_star > 0 && <span className="chip chip-star">{p.honours.all_star}× All-Star</span>}
                   {p.honours?.asg_mvp > 0 && <span className="chip">{p.honours.asg_mvp}× All-Star MVP</span>}
                   {p.honours?.three_point_champion > 0 && <span className="chip">{p.honours.three_point_champion}× 3-Point champion</span>}
                   {p.honours?.rising_stars_mvp > 0 && <span className="chip">Rising Stars MVP</span>}
+                  {p.honours?.mvp > 0 && <span className="chip chip-star">{p.honours.mvp}× MVP</span>}
+                  {p.honours?.finals_mvp > 0 && <span className="chip chip-star">{p.honours.finals_mvp}× Finals MVP</span>}
+                  {p.honours?.dpoy > 0 && <span className="chip">{p.honours.dpoy}× Defensive POY</span>}
+                  {p.honours?.roy > 0 && <span className="chip">Rookie of the Year</span>}
+                  {p.honours?.sixth_man > 0 && <span className="chip">{p.honours.sixth_man}× Sixth Man</span>}
+                  {p.honours?.mip > 0 && <span className="chip">Most Improved</span>}
+                  {p.honours?.all_nba > 0 && <span className="chip">{p.honours.all_nba}× All-NBA</span>}
+                  {p.honours?.all_defense > 0 && <span className="chip">{p.honours.all_defense}× All-Defensive</span>}
                 </div>
               )}
               {p.draft && <p className="muted small">{p.draft.pick ? `Pick #${p.draft.pick} in the ${p.draft.year} draft.` : `Undrafted in ${p.draft.year}.`}</p>}

@@ -199,3 +199,77 @@ class EditorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CareerImportTests(unittest.TestCase):
+    def test_career_lines_load_and_show(self):
+        data = synthetic_file()
+        p = data["players"][0]
+        p["draft_year"], p["draft_pick"] = 2019, 3
+        p["career"] = [
+            {"season": 2019, "playoffs": False, "team": "SEA", "franchise": "T0", "age": 20, "gp": 70, "gs": 50,
+             "min": 2100, "pts": 1200, "fgm": 450, "fga": 1000, "tpm": 80, "tpa": 240, "ftm": 220, "fta": 280,
+             "orb": 60, "drb": 250, "ast": 200, "stl": 60, "blk": 30, "tov": 150, "pf": 160, "roy": True},
+            {"season": 2020, "playoffs": False, "team": "T1", "gp": 80, "pts": 2000, "fgm": 700, "fga": 1400,
+             "all_star": True, "mvp": True, "all_nba": 1},
+            {"season": 2020, "playoffs": True, "team": "T1", "gp": 12, "pts": 300},
+        ]
+        lg = load_league_file(data)
+        pl = next(x for x in lg.players.values() if x.last_name == "Last0")
+        self.assertEqual(len(pl.career), 3)
+        self.assertEqual(pl.career[0]["team"], "SEA")                 # the old team code is kept...
+        self.assertEqual(pl.career[0]["team_id"], 1)                  # ...linked to today's franchise
+        self.assertEqual(pl.career[1]["team_id"], 2)
+        self.assertEqual(pl.career[1]["plus_minus"], 0)               # missing numbers are zero
+        self.assertEqual(pl.draft_pick, 3)
+        from hoopsim.allstar import honours, season_honours
+        h = honours(pl)
+        self.assertEqual((h["all_star"], h["mvp"], h["roy"], h["all_nba"]), (1, 1, 1, 1))
+        self.assertEqual(season_honours(pl.career[1]), ["All-Star", "MVP", "All-NBA 1st"])
+        # Track record makes the scouts surer.
+        from hoopsim.manager import scouting_error
+        other = next(x for x in lg.players.values() if x.last_name == "Last5")
+        from datetime import date
+        pl.birth_date = other.birth_date = date(2005, 5, 1)    # both 21: youth leaves room to doubt
+        pl.team_id = other.team_id = 2                          # neither is yours
+        self.assertLess(scouting_error(lg, pl), scouting_error(lg, other))
+        with tempfile.TemporaryDirectory() as d:
+            save_league(lg, Path(d) / "x.db")
+            back = load_league(Path(d) / "x.db")
+        self.assertEqual(back.players[pl.id].career, pl.career)
+
+    def test_bad_career_lines(self):
+        for line in ({"playoffs": False}, {"season": 2026}, {"season": 2020, "pts": "lots"}):
+            data = synthetic_file()
+            data["players"][0]["career"] = [line]
+            with self.subTest(line=line), self.assertRaises(LeagueFileError):
+                load_league_file(data)
+
+
+class BuilderParsingTests(unittest.TestCase):
+    """The NBA builder's parsing of season pages (made-up rows, no network)."""
+    @classmethod
+    def setUpClass(cls):
+        import sys
+        tools = str(Path(__file__).resolve().parent.parent / "tools")
+        if tools not in sys.path:
+            sys.path.insert(0, tools)
+        import build_nba_league
+        cls.b = build_nba_league
+
+    def test_honours(self):
+        h = self.b._honours("MVP-1,DPOY-3,AS,NBA1,DEF2")
+        self.assertEqual(h, {"mvp": True, "all_star": True, "all_nba": 1, "all_defense": 2})
+        self.assertEqual(self.b._honours("ROY-1"), {"roy": True})
+        self.assertEqual(self.b._honours(""), {})
+
+    def test_traded_player_gets_one_line_under_last_team(self):
+        row = lambda team, g, pts, awards="": {"_id": "xx01", "team_name_abbr": team, "games": str(g),  # noqa: E731
+                                               "games_started": "0", "mp": "100", "pts": str(pts), "age": "25",
+                                               "awards": awards}
+        lines = self.b._career_lines([row("2TM", 60, 900, "AS"), row("SEA", 40, 600), row("NJN", 20, 300)],
+                                     2007, False)
+        line = lines["xx01"]
+        self.assertEqual((line["gp"], line["pts"], line["team"], line["franchise"]), (60, 900, "NJN", "BKN"))
+        self.assertTrue(line["all_star"])
+        self.assertEqual(self.b._career_lines([row("PHO", 82, 2000)], 2010, True)["xx01"]["team"], "PHX")

@@ -18,7 +18,10 @@ Format (``"format": "hoopsim-league", "version": 1``)::
                    "height_cm": 185, "weight_kg": 88,
                    "attributes": {"three_point": 17, ...},             # 1-20, missing = 10
                    "potential_ability": 140,                         # optional
-                   "contract": {"salary": 30000000, "expires_season": 2028}, ...}, ...]
+                   "contract": {"salary": 30000000, "expires_season": 2028},
+                   "draft_year": 2019, "draft_pick": 3,                  # optional
+                   "career": [{"season": 2019, "playoffs": false, "team": "BOS",
+                               "gp": 70, "pts": 1200, ..., "all_star": true}]}, ...]
     }
 
 Everything but names, team abbreviations and positions is optional.
@@ -60,6 +63,36 @@ def _position(v, where) -> Position:
         return Position(str(v).upper())
     except ValueError:
         raise LeagueFileError(f"{where}: position must be PG, SG, SF, PF or C, got {v!r}") from None
+
+
+CAREER_NUMBERS = ("gp", "gs", "min", "pts", "fgm", "fga", "tpm", "tpa", "ftm", "fta",
+                  "orb", "drb", "ast", "stl", "blk", "tov", "pf", "plus_minus")
+CAREER_HONOURS = ("all_star", "asg_mvp", "three_point_champion", "rising_stars_mvp", "mvp", "dpoy", "roy",
+                  "sixth_man", "mip", "clutch_poy", "finals_mvp", "all_nba", "all_defense")
+
+
+def _career(lines, by_abbr: dict, season: int, where: str) -> list[dict]:
+    """Past seasons as the game stores them (one line per season, regular season or playoffs)."""
+    out = []
+    for c in lines or []:
+        try:
+            s = int(c["season"])
+        except (KeyError, TypeError, ValueError):
+            raise LeagueFileError(f"{where}: every career line needs a season") from None
+        if s >= season:
+            raise LeagueFileError(f"{where}: career seasons must be before {season}")
+        team = str(c.get("team", "?"))
+        line = {"season": s, "playoffs": bool(c.get("playoffs", False)), "team": team,
+                "team_id": by_abbr.get(str(c.get("franchise", team)).upper()),
+                "age": c.get("age"), "ca": c.get("ca")}
+        for k in CAREER_NUMBERS:
+            v = c.get(k, 0)
+            if not isinstance(v, (int, float)) or v < 0 and k != "plus_minus":
+                raise LeagueFileError(f"{where}: career {k} must be a number")
+            line[k] = v
+        line.update({k: c[k] for k in CAREER_HONOURS if c.get(k)})
+        out.append(line)
+    return sorted(out, key=lambda c: (c["season"], c["playoffs"]))
 
 
 def load_league_file(source: Union[str, Path, dict], *, seed: int = 0) -> League:
@@ -130,6 +163,7 @@ def load_league_file(source: Union[str, Path, dict], *, seed: int = 0) -> League
             potential_ability=max(ca, min(ABILITY_MAX, pa)),
             jersey_number=p.get("jersey_number"),
             draft_year=p.get("draft_year"), draft_pick=p.get("draft_pick"),
+            career=_career(p.get("career"), by_abbr, season, where),
         )
         league.add_player(player)
         if team is not None:

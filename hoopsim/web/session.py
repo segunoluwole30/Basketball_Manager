@@ -1563,9 +1563,11 @@ class GameSession:
         def row(t: dict, season: int, playoff: bool, team_id, age, ca, in_progress: bool) -> dict:
             team = lg.teams.get(team_id) if team_id is not None else None
             line = self._rounded(player_line(t))
+            shown = t.get("team") if isinstance(t.get("team"), str) and t.get("team") not in ("", "?") else None
             return {"season": season, "playoffs": playoff, "team_id": team_id,
-                    "team": team.abbreviation if team else "?", "age": age, "ca": ca,
-                    "in_progress": in_progress,
+                    "team": shown or (team.abbreviation if team else "?"), "age": age, "ca": ca,
+                    "in_progress": in_progress, "honours": [] if playoff else allstar.season_honours(t),
+                    "honours_short": [] if playoff else allstar.season_honours_short(t),
                     "totals": {k: int(t[k]) for k in ("pts", "fgm", "fga", "tpm", "tpa", "ftm", "fta",
                                                       "orb", "drb", "ast", "stl", "blk", "tov")},
                     **{k: line[k] for k in ("gp", "gs", "mpg", "pts", "trb", "ast", "stl", "blk", "tov",
