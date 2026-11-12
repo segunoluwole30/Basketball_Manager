@@ -68,6 +68,38 @@ class ViewerPageTests(unittest.TestCase):
         arena = src.split("function createArena(", 1)[1].split("function createView3D(", 1)[0]
         self.assertLess(len(arena.encode("utf-8")), 40_000)
 
+    def test_cameras_labels_and_trail(self):
+        page = build_html(self.data)
+        # four camera presets, Broadcast the default; Numbers / Names / Off labels, Numbers default
+        for needle in ('id="camBroadcast" value="broadcast" checked', 'id="camBaseline"', 'id="camFollow"',
+                       'id="camOverhead"', 'id="labelSeg"', 'id="lblNum" value="numbers" checked',
+                       'id="lblName"', 'id="lblOff"'):
+            self.assertEqual(page.count(needle), 1, needle)
+        self.assertEqual(page.count('type="radio" name="cam"'), 4)
+        self.assertEqual(page.count('type="radio" name="labels"'), 3)
+        self.assertIn('const CAMS = ["broadcast", "baseline", "follow", "overhead"]', page)
+        # remembered like the other toggles, and storage can throw
+        for key in ("hoopsim-labels", "hoopsim-cam"):
+            lines = [ln for ln in page.splitlines() if "localStorage" in ln and key in ln]
+            self.assertTrue(lines, key)
+            for ln in lines:
+                self.assertIn("try", ln)
+        # the shot trail and the per-player label textures live in the 3D view only
+        view = page.split("function createView3D(", 1)[1]
+        self.assertIn("function flights(", view)
+        self.assertIn("function updateTrail(", view)
+        self.assertIn("function labelTexture(pl, names, holder)", view)
+        self.assertNotIn("function updateTrail(", page.split("function createView3D(", 1)[0])
+        # hidden segments really hide (the .seg rule would otherwise beat [hidden])
+        self.assertIn(".seg[hidden]", page)
+
+    def test_no_diagnostics_global_without_debug(self):
+        page = build_html(self.data)
+        self.assertEqual(page.count("window.hoopsim3D ="), 1)
+        before = page.split("window.hoopsim3D =", 1)[0].rsplit("\n", 3)
+        self.assertIn("if (DEBUG)", "\n".join(before[-2:]))
+        self.assertIn('new URLSearchParams(location.search).has("debug")', page)
+
     def test_live_page_still_renders(self):
         page = build_html({"live_client": {"user_side": "home", "game_id": 1}, "live": True, "fullgame": True,
                            "home": self.data["home"], "away": self.data["away"], "possessions": []})

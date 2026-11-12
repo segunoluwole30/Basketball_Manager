@@ -119,12 +119,22 @@ the spatial engine wouldn't reproduce the result in the standings.
 
 **2D / 3D.** The viewer's **2D | 3D** switch (remembered between games) swaps the
 flat court for a 3D one: a to-scale 94×50 ft floor with the same lines, backboards and
-10 ft rims with nets, low-poly players in team colours with their numbers on the jersey
-and over their heads (surnames too with **Names**), and the ball at its real height with
-a shadow, so shots arc and lobs hang. Cameras: **Broadcast** (a sideline camera that
-follows the ball), **Baseline** (behind the attacking team) and **Overhead**; drag to
-turn, scroll to zoom, double-click to go back to the preset (the camera stays over the
-floor, out of the seats and under the roof). The court sits in an arena: team benches
+10 ft rims with nets, low-poly players in team colours with their numbers on the jersey,
+and the ball at its real height with a shadow, so shots arc and lobs hang.
+**Labels: Numbers | Names | Off** puts a team-coloured tag over each player (number, or
+number and surname); the ball handler's tag has an orange rim and a ring at his feet.
+While a shot is up a fading trail follows the ball, turning green (made) or red (missed)
+as it reaches the rim, then clears. Cameras: **Broadcast** (the default: high on the
+sideline, panning with the ball), **Baseline** (behind the basket at the end the play is
+in; it changes ends with a quick dip once the ball is well over half court), **Follow**
+(a low chase camera behind the ball that swings round on a change of possession) and
+**Overhead**. Cameras glide between presets, and a possession that carries straight on
+from the last keeps the camera moving instead of cutting. Drag to turn, scroll to zoom,
+double-click to go back to the preset (the camera stays over the floor, out of the seats
+and under the roof). Keys in 3D: **1–4** pick a camera, **C** steps through them, **L**
+steps through the labels. Camera and labels are remembered. Add `?debug` to the page's
+address to reach the 3D view from the console as `window.hoopsim3D`, with frame timing
+and a seek helper. Without it, nothing is added to `window`. The court sits in an arena: team benches
 and the scorer's table on the far sideline, photographers on the baselines, a lower bowl
 and an upper deck with aisles and portals, LED boards and a centre-hung scoreboard with
 the live score and clock, lights over a dark roof. Thousands of fans (mostly in home

@@ -89,7 +89,7 @@ table.box tr.team td { font-weight: 700; padding-top: 10px; text-align: left; }
 table.box tr.dnp td { color: var(--muted); }
 
 /* Court */
-.stage { display: grid; gap: 10px; min-width: 0; }
+.stage { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; }
 .court-wrap { position: relative; background: var(--panel); border: 1px solid var(--rule);
   border-radius: var(--radius); padding: 10px; }
 canvas[hidden] { display: none; }
@@ -206,6 +206,7 @@ aside { min-width: 0; display: flex; flex-direction: column; background: var(--p
 @media (pointer: coarse), (max-width: 700px) { .view3d .hint { display: none; } }
 .seg input:disabled + label { opacity: 0.45; cursor: not-allowed; }
 .seg .seglabel { align-self: center; color: var(--muted); font-size: 13px; margin-right: 8px; }
+.seg[hidden], .toggle[hidden], .hl[hidden] { display: none; }
 .viewmsg { color: var(--muted); font-size: 12px; }
 .viewmsg:empty { display: none; }
 </style>
@@ -223,7 +224,7 @@ aside { min-width: 0; display: flex; flex-direction: column; background: var(--p
     </div>
     <div class="court-wrap"><canvas id="court" width="1000" height="560" aria-label="Court with players"></canvas>
       <div class="view3d" id="view3d" hidden><canvas id="court3d" aria-label="3D court with players"></canvas>
-        <div class="fade" id="fade3d"></div><div class="hint">Drag to turn · scroll to zoom · double-click to reset</div></div></div>
+        <div class="fade" id="fade3d"></div><div class="hint">Drag to turn · scroll to zoom · double-click to reset · 1–4 cameras · L labels</div></div></div>
     <div class="call" aria-live="polite"><span class="t" id="callTime">0.0s</span><span id="callText">Loading…</span></div>
     <div class="controls">
       <button id="prev" type="button" aria-label="Previous possession">Prev</button>
@@ -237,15 +238,22 @@ aside { min-width: 0; display: flex; flex-direction: column; background: var(--p
       </div>
       <div class="scrub"><input type="range" id="scrub" min="0" max="0" value="0" aria-label="Possession">
         <output id="possLabel" for="scrub">1 / 1</output></div>
-      <label class="toggle"><input type="checkbox" id="names"> Names</label>
+      <label class="toggle" id="namesBox"><input type="checkbox" id="names"> Names</label>
       <div class="seg" id="viewSeg" role="radiogroup" aria-label="View" hidden>
         <input type="radio" name="view" id="v2d" value="2d" checked><label for="v2d">2D</label>
         <input type="radio" name="view" id="v3d" value="3d"><label for="v3d" title="3D view (WebGL)">3D</label>
       </div>
       <div class="seg" id="camSeg" role="radiogroup" aria-label="Camera" hidden>
-        <input type="radio" name="cam" id="camBroadcast" value="broadcast" checked><label for="camBroadcast" title="Sideline camera following the ball">Broadcast</label>
-        <input type="radio" name="cam" id="camBaseline" value="baseline"><label for="camBaseline" title="Behind the attacking team">Baseline</label>
-        <input type="radio" name="cam" id="camOverhead" value="overhead"><label for="camOverhead" title="Straight down on the whole court">Overhead</label>
+        <input type="radio" name="cam" id="camBroadcast" value="broadcast" checked><label for="camBroadcast" title="Sideline camera following the ball (1)">Broadcast</label>
+        <input type="radio" name="cam" id="camBaseline" value="baseline"><label for="camBaseline" title="Behind the basket at the end the play is in (2)">Baseline</label>
+        <input type="radio" name="cam" id="camFollow" value="follow"><label for="camFollow" title="Low chase camera behind the ball (3)">Follow</label>
+        <input type="radio" name="cam" id="camOverhead" value="overhead"><label for="camOverhead" title="Straight down on the whole court (4)">Overhead</label>
+      </div>
+      <div class="seg" id="labelSeg" role="radiogroup" aria-label="Player labels" hidden>
+        <span class="seglabel">Labels</span>
+        <input type="radio" name="labels" id="lblNum" value="numbers" checked><label for="lblNum" title="Jersey numbers over the players (L cycles)">Numbers</label>
+        <input type="radio" name="labels" id="lblName" value="names"><label for="lblName" title="Numbers and surnames (L cycles)">Names</label>
+        <input type="radio" name="labels" id="lblOff" value="off"><label for="lblOff" title="No labels: numbers on the jerseys only (L cycles)">Off</label>
       </div>
       <div class="seg" id="arenaSeg" role="radiogroup" aria-label="Arena" hidden>
         <span class="seglabel">Arena</span>
@@ -1382,20 +1390,24 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       x.font = `700 44px ${colors.font}`; x.fillText(n, 0, 60); x.fillText(n, 256, 60);   // front (u = 0 = 1)
       return canvasTex(c);
     }
-    function labelTexture(pl, names) {
+    // The tag over a player's head: his number (and surname with Names) on a team-coloured
+    // pill, white text with a dark edge so it reads on either team's colour in either theme.
+    // The ball handler's tag gets an orange (ball-coloured) rim.
+    function labelTexture(pl, names, holder) {
       const text = (pl.num ?? "") + (names ? " " + pl.name.split(" ").slice(-1)[0].toUpperCase() : "");
       const c = document.createElement("canvas"), x = c.getContext("2d");
       const font = `700 40px ${colors.font}`;
       x.font = font;
-      c.width = Math.max(64, Math.ceil(x.measureText(text).width) + 28); c.height = 56;
-      const w = c.width, h = c.height, r = 14;
+      c.width = Math.max(64, Math.ceil(x.measureText(text).width) + 30); c.height = 58;
+      const w = c.width, h = c.height, r = 15, e = holder ? 4 : 2.5;
       x.font = font;
-      x.beginPath(); x.moveTo(r, 2); x.arcTo(w - 2, 2, w - 2, h - 2, r); x.arcTo(w - 2, h - 2, 2, h - 2, r);
-      x.arcTo(2, h - 2, 2, 2, r); x.arcTo(2, 2, w - 2, 2, r); x.closePath();
+      x.beginPath(); x.moveTo(r, e); x.arcTo(w - e, e, w - e, h - e, r); x.arcTo(w - e, h - e, e, h - e, r);
+      x.arcTo(e, h - e, e, e, r); x.arcTo(e, e, w - e, e, r); x.closePath();
       x.fillStyle = colors[pl.side]; x.fill();
-      x.lineWidth = 3; x.strokeStyle = "rgba(255,255,255,0.85)"; x.stroke();
-      x.fillStyle = "#ffffff"; x.textAlign = "center"; x.textBaseline = "middle";
-      x.fillText(text, w / 2, h / 2 + 2);
+      x.lineWidth = holder ? 6 : 3; x.strokeStyle = holder ? colors.accent : "rgba(255,255,255,0.8)"; x.stroke();
+      x.textAlign = "center"; x.textBaseline = "middle";
+      x.lineWidth = 5; x.lineJoin = "round"; x.strokeStyle = "rgba(0,0,0,0.35)"; x.strokeText(text, w / 2, h / 2 + 2);
+      x.fillStyle = "#ffffff"; x.fillText(text, w / 2, h / 2 + 2);
       const tx = canvasTex(c);
       tx.userData.aspect = w / h;
       return tx;
@@ -1438,7 +1450,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       root.add(label);
       scene.add(root);
       return (figures[key] = { root, body, legs, arms, label, jersey, pl, x: 0, z: 0, heading: 0,
-                               phase: hash(key) % 7, seen: -1, labelKey: "", theme: colorsVersion, aspect: 1 });
+                               phase: hash(key) % 7, seen: -1, labelKey: "", tex: [null, null], theme: colorsVersion, aspect: 1 });
     }
     const ring = new THREE.Mesh(geo.ring, ringMat);                // under the ball handler
     ring.position.y = 0.03; ring.renderOrder = 1;
@@ -1485,42 +1497,67 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     }
 
     // ---- camera: presets, a damped follow, orbit drag on top
-    let preset = "broadcast", aspect = 16 / 9;
+    let preset = "broadcast", aspect = 16 / 9, labelMode = "numbers";
     const cam = { x: 0, y: 3, z: 0, yaw: 0, pitch: 0.4, dist: 70, ok: false };
     const user = { yaw: 0, pitch: 0, zoom: 1 };
     let camFade = 0, camFadeDir = 0;                 // a quick dip when the baseline camera swaps ends
+    let baseSide = 0;                                // baseline camera: the end it's at (-1 left, 1 right)
+    // An orbit (target, yaw, pitch, distance) that puts the camera at (cx, cy, cz).
+    function lookFrom(tx, ty, tz, cx, cy, cz) {
+      const dx = cx - tx, dy = cy - ty, dz = cz - tz, dist = Math.hypot(dx, dy, dz);
+      return { x: tx, y: ty, z: tz, yaw: Math.atan2(dx, dz), pitch: Math.asin(dy / dist), dist };
+    }
+    // Each preset: where the camera wants to be, and how fast it gets there (kT: the point it
+    // looks at, kA: its angle and distance, per second). The damping does the smoothing.
     function wanted(s) {
-      const left = attacksLeft(s.p), sg = left ? 1 : -1;
+      const sg = attacksLeft(s.p) ? -1 : 1;          // the way the offence attacks along X
       const step = Math.max(1, 1.7 / aspect);        // narrow screens step back
       const bx = s.ball.x, bz = s.ball.z;
       if (preset === "overhead") {
         const tanH = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
         const dist = Math.max((W / 2 + 3) / tanH, (FULL / 2 + 3) / (tanH * aspect));
-        return { x: 0, y: 0, z: 0, yaw: 0, pitch: 1.53, dist };
+        return { x: 0, y: 0, z: 0, yaw: 0, pitch: 1.53, dist, kT: 2.4, kA: 6 };
       }
-      if (preset === "baseline") {                   // behind the attacking team, looking at its basket
-        const rimX = -sg * RIM_X;
-        const x = reduceMotion ? rimX + sg * 14 : lerp(rimX + sg * 10, bx, 0.3);
-        return { x, y: 5, z: reduceMotion ? 0 : bz * 0.35, yaw: sg * Math.PI / 2, pitch: 0.3, dist: 46 * step };
+      if (preset === "baseline") {
+        // Behind the basket at the end the ball is in, looking up the floor. It changes ends
+        // once the ball is well over half court (a dip to black, as on TV, not a whip-pan).
+        if (!baseSide || s.snapSide) baseSide = bx < 0 ? -1 : 1;
+        else if (bx * baseSide < -8) baseSide = -baseSide;
+        const rx = baseSide * RIM_X;
+        if (reduceMotion) return { ...lookFrom(baseSide * (RIM_X - 16), 3.5, 0, baseSide * (L + 9), 16 * step, 0), kT: 2, kA: 4 };
+        const v = lookFrom(lerp(rx, bx, 0.6) - baseSide * 2, 4, bz * 0.5, baseSide * (L + 9), 15 + 3 * step, bz * 0.2);
+        return { ...v, kT: 2.2, kA: 4 };
       }
-      if (reduceMotion) return { x: 0, y: 3, z: 0, yaw: 0, pitch: 0.42, dist: 92 * step };
-      return { x: Math.max(-27, Math.min(27, bx * 0.9)), y: 3, z: bz * 0.25, yaw: 0, pitch: 0.42, dist: 70 * step };
+      if (preset === "follow") {
+        // Low, behind the ball, looking the way the offence attacks; on a change of possession
+        // it swings round the ball (slowly) instead of cutting.
+        if (reduceMotion) return { ...lookFrom(-sg * 18, 3, 0, -sg * (L + 6), 9, 8), kT: 2, kA: 3 };
+        const ty = 3 + Math.max(0, s.ball.y - 4) * 0.75;
+        // kept over the floor and its apron, so the arena never has to push it (a jolt)
+        const cx = Math.max(-L - 6, Math.min(L + 6, bx - sg * 23 * step)), cz = Math.max(-W / 2 - 4, Math.min(W / 2 + 6, bz * 0.85 + 7));
+        const v = lookFrom(bx + sg * 6, ty, bz * 0.85, cx, 11 + (step - 1) * 4, cz);
+        return { ...v, kT: 3.2, kA: 1.6, swing: true };
+      }
+      if (reduceMotion) return { x: 0, y: 3, z: 0, yaw: 0, pitch: 0.42, dist: 92 * step, kT: 2, kA: 4 };
+      // Broadcast: high on the near sideline, panning along the court with the ball
+      return { x: Math.max(-27, Math.min(27, bx * 0.9)), y: 3, z: bz * 0.25, yaw: 0, pitch: 0.42, dist: 70 * step, kT: 1.8, kA: 4 };
     }
     function moveCamera(s, dtr, snap) {
+      s.snapSide = snap || !cam.ok;
       const w = wanted(s);
       w.yaw += user.yaw;
       w.pitch = Math.max(0.06, Math.min(1.54, w.pitch + user.pitch));
       w.dist *= user.zoom;
-      if (cam.ok && !snap && !camFadeDir && !reduceMotion && Math.abs(wrapAngle(w.yaw - cam.yaw)) > 1.7) camFadeDir = 1;
+      if (cam.ok && !snap && !camFadeDir && !reduceMotion && !w.swing && Math.abs(wrapAngle(w.yaw - cam.yaw)) > 1.7) camFadeDir = 1;
       if (camFadeDir) {                              // fade out, cut, fade back in
-        camFade = Math.max(0, Math.min(1, camFade + camFadeDir * dtr / 0.22));
+        camFade = Math.max(0, Math.min(1, camFade + camFadeDir * dtr / 0.28));
         if (camFade >= 1) { camFadeDir = -1; snap = true; }
         else if (camFade <= 0 && camFadeDir < 0) camFadeDir = 0;
       }
       if (!cam.ok || snap || reduceMotion) {
         Object.assign(cam, w, { ok: true });
       } else if (camFadeDir !== 1) {
-        const kT = 1 - Math.exp(-dtr * 2.4), kA = 1 - Math.exp(-dtr * 6);
+        const kT = 1 - Math.exp(-dtr * w.kT), kA = 1 - Math.exp(-dtr * w.kA);
         cam.x += (w.x - cam.x) * kT; cam.y += (w.y - cam.y) * kT; cam.z += (w.z - cam.z) * kT;
         cam.yaw += wrapAngle(w.yaw - cam.yaw) * kA;
         cam.pitch += (w.pitch - cam.pitch) * kA;
@@ -1594,20 +1631,128 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       let bz = Math.max(0, spline(fr, f, 4)[0]);
       if (from) { bx = lerp(bx, from.ball[0], g); by = lerp(by, from.ball[1], g); bz = lerp(bz, from.ball[2], g); }
       const fade = tr && tr.kind === "fade" ? Math.min(1, tr.progress < 0.5 ? tr.progress * 2 : (1 - tr.progress) * 2) : 0;
-      st = { p, players, holder, time, fade, ball: { x: by - L, y: bz, z: bx },
-             snap: (st && st.snap) || (cut !== lastCut && !(tr && tr.kind === "glide")) };
+      // A new possession that carries straight on from the last (everyone where they were)
+      // is not a cut: the camera keeps moving instead of jumping to its new spot.
+      let carriesOn = false;
+      if (cut !== lastCut && st) {
+        const was = {};
+        for (const q of st.players) was[q.key] = q;
+        let moved = 0, cnt = 0;
+        for (const q of players) if (was[q.key]) { moved += Math.hypot(q.x - was[q.key].x, q.y - was[q.key].y); cnt++; }
+        carriesOn = cnt >= 6 && moved / cnt < 3;
+      }
+      st = { p, players, holder, time, fade, g, ball: { x: by - L, y: bz, z: bx },
+             snap: (st && st.snap) || (cut !== lastCut && !(tr && tr.kind === "glide") && !carriesOn) };
       lastCut = cut;
       dirty = 3;
     }
     const toWorld = (x, y) => [y - L, x];             // court feet -> world X, Z
 
+    // ---- shot trail: a fading ribbon behind the ball while a shot is up, turning green
+    // (made) or red (missed) when it gets there. Shots are found in the frames: the ball
+    // leaves a player's hands (holder -1), goes up over 11 ft and comes down by the rim.
+    // The result is the play-by-play line at that moment (a score change: made).
+    const flightsOf = new WeakMap();
+    function flights(p) {
+      if (flightsOf.has(p)) return flightsOf.get(p);
+      const fr = p.frames, out = [];
+      for (let i = 1; i < fr.length; i++) {
+        if (fr[i][5] >= 0 || fr[i - 1][5] < 0) continue;              // a release: held, then loose
+        let j = i, peak = 0, arr = -1;
+        for (; j < fr.length && fr[j][5] < 0; j++) {
+          const f = fr[j];
+          peak = Math.max(peak, f[4]);
+          if (arr < 0 && Math.hypot(f[2], f[3] - 52.5) <= 12 && f[4] >= 85 && f[4] <= 115 && peak >= 110) arr = j;
+        }
+        const end = j - 1, last = fr[end];
+        if (arr < 0 && !(peak >= 110 && Math.hypot(last[2], last[3] - 52.5) <= 75 && last[4] >= 60)) { i = j; continue; }
+        if (arr < 0) arr = end;                                        // a free throw short of the rim
+        let made = null, prev = p.start_score;
+        for (const e of p.events) {
+          if (e[0] > arr + 3) break;
+          if (e[0] >= arr - 1) {
+            if (e[2] !== prev[0] || e[3] !== prev[1]) { made = true; break; }
+            if (/no good|miss/i.test(e[1])) { made = false; break; }
+          }
+          prev = [e[2], e[3]];
+        }
+        out.push({ rel: i - 1, arr, made });
+        i = j;
+      }
+      flightsOf.set(p, out);
+      return out;
+    }
+    const TRAIL_N = 72, TRAIL_FADE = 1.4;            // ribbon samples; game seconds to fade after it lands
+    const trailMid = new Float32Array(TRAIL_N * 3), trailPos = new Float32Array(TRAIL_N * 2 * 3), trailCol = new Float32Array(TRAIL_N * 2 * 4);
+    const trailGeo = new THREE.BufferGeometry();
+    trailGeo.setAttribute("position", new THREE.BufferAttribute(trailPos, 3).setUsage(THREE.DynamicDrawUsage));
+    trailGeo.setAttribute("color", new THREE.BufferAttribute(trailCol, 4).setUsage(THREE.DynamicDrawUsage));
+    { const idx = [];
+      for (let k = 0; k < TRAIL_N - 1; k++) { const a = k * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+      trailGeo.setIndex(idx); }
+    const trail = new THREE.Mesh(trailGeo, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true,
+      depthWrite: false, side: THREE.DoubleSide, fog: false }));
+    trail.frustumCulled = false; trail.renderOrder = 5; trail.visible = false;
+    scene.add(trail);
+    const TRAIL_RGB = { flying: [1, 0.97, 0.9], made: [0.24, 0.85, 0.42], miss: [1, 0.3, 0.3] };
+    let trailShown = null, trailAlpha = 0;           // what's drawn; its strength (fades on its own once left)
+    const tv = new THREE.Vector3(), tt = new THREE.Vector3(), ts = new THREE.Vector3();
+    function updateTrail(dtReal, g) {
+      const p = st.p, f = st.time / dt, fl = g > 0 ? null : flights(p).find((x) => f >= x.rel && f <= x.arr + TRAIL_FADE / dt);
+      if (!fl) {                                     // nothing up: let the last one go
+        if (!trail.visible) return false;
+        trailAlpha -= dtReal / 0.35;
+        if (trailAlpha <= 0) { trail.visible = false; trailShown = null; return true; }
+        paintTrail(trailShown.rgb, trailAlpha);
+        return true;
+      }
+      const landed = f >= fl.arr;
+      const rgb = TRAIL_RGB[!landed || fl.made === null ? "flying" : fl.made ? "made" : "miss"];
+      const alpha = landed ? Math.max(0, 1 - (f - fl.arr) * dt / TRAIL_FADE) : 1;
+      const to = Math.min(f, fl.arr), fr = p.frames, c = trailMid;
+      const n = Math.max(2, Math.min(TRAIL_N, Math.ceil((to - fl.rel) * 6) + 1));
+      const camPos = camera.position;
+      for (let k = 0; k < n; k++) {
+        const u = fl.rel + (to - fl.rel) * k / (n - 1);
+        const [x, y] = toCourt(p, spline(fr, u, 2)[0], spline(fr, u, 3)[0]);
+        const [wx, wz] = toWorld(x, y);
+        c[k * 3] = wx; c[k * 3 + 1] = Math.max(0.6, spline(fr, u, 4)[0]); c[k * 3 + 2] = wz;
+      }
+      // a camera-facing ribbon: each sample pushed out sideways, thin at the tail; the
+      // unused samples sit on the last one
+      for (let k = 0; k < TRAIL_N; k++) {
+        const m = Math.min(k, n - 1), a = Math.max(0, m - 1), b = Math.min(n - 1, m + 1);
+        tt.set(c[b * 3] - c[a * 3], c[b * 3 + 1] - c[a * 3 + 1], c[b * 3 + 2] - c[a * 3 + 2]);
+        tv.set(camPos.x - c[m * 3], camPos.y - c[m * 3 + 1], camPos.z - c[m * 3 + 2]);
+        ts.crossVectors(tt, tv);
+        const len = ts.length() || 1, w = 0.08 + 0.26 * (m / (n - 1));
+        ts.multiplyScalar(w / len);
+        const x0 = c[m * 3], y0 = c[m * 3 + 1], z0 = c[m * 3 + 2];
+        trailPos[k * 6] = x0 - ts.x; trailPos[k * 6 + 1] = y0 - ts.y; trailPos[k * 6 + 2] = z0 - ts.z;
+        trailPos[k * 6 + 3] = x0 + ts.x; trailPos[k * 6 + 4] = y0 + ts.y; trailPos[k * 6 + 5] = z0 + ts.z;
+      }
+      trailShown = { rgb, n }; trailAlpha = alpha;
+      paintTrail(rgb, alpha);
+      trail.visible = alpha > 0;
+      trailGeo.attributes.position.needsUpdate = true;
+      return true;
+    }
+    function paintTrail(rgb, alpha) {
+      const n = trailShown.n;
+      for (let k = 0; k < TRAIL_N; k++) {
+        const fade = alpha * (0.12 + 0.8 * Math.pow(Math.min(k, n - 1) / (n - 1), 1.4));
+        for (const e of [0, 1]) trailCol.set([rgb[0], rgb[1], rgb[2], fade], (k * 2 + e) * 4);
+      }
+      trailGeo.attributes.color.needsUpdate = true;
+    }
+
     let frameNo = 0;
     function render(dtReal, rate) {
       if (!st) return;
+      const t0 = performance.now();
       if (themeSeen !== colorsVersion) applyTheme();
       const dtg = dtReal * rate;                     // game seconds this frame
       const snap = st.snap; st.snap = false;
-      const names = $("names").checked;
       const seen = ++frameNo;
       let motion = 0, holderFig = null;
       for (const q of st.players) {
@@ -1646,19 +1791,29 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
         fg.legs[0].rotation.x = sw; fg.legs[1].rotation.x = -sw;
         fg.arms[0].rotation.x = -sw * 0.8; fg.arms[1].rotation.x = sw * 0.8;
         fg.body.position.y = Math.abs(Math.cos(fg.phase)) * amp * 0.25;
-        const lk = names + ":" + colorsVersion;
-        if (fg.labelKey !== lk) {
-          if (fg.label.material.map) fg.label.material.map.dispose();
-          const tx2 = labelTexture(fg.pl, names);
-          fg.label.material.map = tx2; fg.label.material.needsUpdate = true;
-          fg.labelKey = lk; fg.aspect = tx2.userData.aspect;
+        // the tag over his head: two textures each (plain, with the ball), made when the
+        // label mode or the theme changes, swapped when the ball changes hands
+        const hold = q === st.holder ? 1 : 0;
+        fg.label.visible = labelMode !== "off";
+        if (fg.label.visible) {
+          const lk = labelMode + ":" + colorsVersion;
+          if (fg.labelKey !== lk) {
+            for (const tx2 of fg.tex) if (tx2) tx2.dispose();
+            fg.tex = [null, null]; fg.labelKey = lk;
+          }
+          if (!fg.tex[hold]) fg.tex[hold] = labelTexture(fg.pl, labelMode === "names", hold);
+          if (fg.label.material.map !== fg.tex[hold]) {
+            fg.label.material.map = fg.tex[hold]; fg.label.material.needsUpdate = true;
+            fg.aspect = fg.tex[hold].userData.aspect;
+          }
+          const lh = (small ? 0.05 : 0.032) * (hold ? 1.12 : 1);
+          fg.label.scale.set(lh * fg.aspect, lh, 1);
+          fg.label.material.opacity = hold ? 1 : 0.9;
         }
         if (fg.theme !== colorsVersion) {
           fg.jersey.map.dispose(); fg.jersey.map = jerseyTexture(fg.pl); fg.theme = colorsVersion;
         }
-        const lh = small ? 0.05 : 0.032;
-        fg.label.scale.set(lh * fg.aspect, lh, 1);
-        if (q === st.holder) holderFig = fg;
+        if (hold) holderFig = fg;
       }
       for (const key in figures) if (figures[key].seen !== seen) figures[key].root.visible = false;
       // the ball travels with its (smoothed) handler, bouncing on the dribble when he moves
@@ -1678,6 +1833,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       shadow.scale.set(sh, 1, sh);
       shadow.material.opacity = Math.max(0.25, 1 - bY / 22);
       motion += moveCamera(st, dtReal, snap);
+      if (updateTrail(dtReal, st.g)) dirty = Math.max(dirty, 1);
       if (inArena() && arena.update(st, dtReal, camera, playing || !!trans)) dirty = Math.max(dirty, 1);
       const fv = Math.max(st.fade, camFade).toFixed(3), fadeEl = $("fade3d");
       if (fadeEl.style.opacity !== fv) fadeEl.style.opacity = fv;
@@ -1685,7 +1841,9 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       if (dirty <= 0) return;                        // nothing moved: skip the GPU work
       dirty--;
       renderer.render(scene, camera);
+      perf.frames++; perf.ms += performance.now() - t0;
     }
+    const perf = { frames: 0, ms: 0 };              // CPU time per rendered frame (see ?debug)
     function resize(w, h) {
       aspect = w / h;
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -1694,8 +1852,12 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       camera.aspect = aspect; camera.updateProjectionMatrix();
       dirty = 3;
     }
-    function setPreset(name) { preset = name; resetUser(); if (st) st.snap = true; }
-    return { setFrame, render, resize, setPreset, setArena, renderer, camera, scene,
+    // a new preset flies there on the camera's own damping (a dip to black if it turns right round)
+    function setPreset(name) { preset = name; baseSide = 0; resetUser(); }
+    function setLabels(mode) { labelMode = mode; dirty = 3; }
+    return { setFrame, render, resize, setPreset, setLabels, setArena, renderer, camera, scene,
+             get preset() { return preset; }, flights, trail: () => ({ visible: trail.visible, alpha: trailAlpha, rgb: trailShown && trailShown.rgb }),
+             stats: () => ({ frames: perf.frames, msPerFrame: perf.frames ? perf.ms / perf.frames : 0 }),
              arena: () => (arena ? { level: arena.level, reacting: arena.reacting(), ...arena.crowd(), ...arena.stats() } : null) };
   }
 
@@ -1705,7 +1867,16 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
   const NO_GL = "3D unavailable: this browser has no WebGL.";
   let threeLib = null, camPreset = "broadcast";
   try { camPreset = localStorage.getItem("hoopsim-cam") || "broadcast"; } catch (e) {}
-  if (!["broadcast", "baseline", "overhead"].includes(camPreset)) camPreset = "broadcast";
+  const CAMS = ["broadcast", "baseline", "follow", "overhead"], LABELS = ["numbers", "names", "off"];
+  if (!CAMS.includes(camPreset)) camPreset = "broadcast";
+  // 3D labels over the players: Numbers / Names / Off (remembered; 2D keeps its Names box)
+  let labelMode = "numbers";
+  try { labelMode = localStorage.getItem("hoopsim-labels") || "numbers"; } catch (e) {}
+  if (!LABELS.includes(labelMode)) labelMode = "numbers";
+  // ?debug in the address: the 3D view is reachable from the console as window.hoopsim3D
+  // (frame timing, the camera, the arena's state). Otherwise nothing is put on window.
+  let DEBUG = false;
+  try { DEBUG = new URLSearchParams(location.search).has("debug"); } catch (e) {}
   // Arena quality: phones start on light; the choice is remembered.
   let arenaQ = window.matchMedia("(max-width: 700px), (pointer: coarse)").matches ? "light" : "full";
   try { arenaQ = localStorage.getItem("hoopsim-arena") || arenaQ; } catch (e) {}
@@ -1722,7 +1893,11 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     view3d = createView3D(threeLib, cv);
     view3d.setPreset(camPreset);
     view3d.setArena(arenaQ);
-    window.hoopsim3D = view3d;                         // for diagnostics (frame stats, the arena's state)
+    view3d.setLabels(labelMode);
+    if (DEBUG) {
+      window.hoopsim3D = view3d;
+      view3d.seek = (n, time, play = false) => { goTo(n); t = Math.min(time, duration(P[poss])); setPlaying(play); drawFrame(); };
+    }
     cv.addEventListener("webglcontextlost", (e) => {
       e.preventDefault(); view3d = null; setView("2d", false); no3D("3D stopped: the graphics context was lost.");
     });
@@ -1748,6 +1923,8 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     $("view3d").hidden = mode !== "3d";
     $("camSeg").hidden = mode !== "3d";
     $("arenaSeg").hidden = mode !== "3d";
+    $("labelSeg").hidden = mode !== "3d";
+    $("namesBox").hidden = mode === "3d";
     if (save) { try { localStorage.setItem("hoopsim-view", mode); } catch (e) {} }
     redrawAll();
   }
@@ -1756,14 +1933,34 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     if (!window.WebGLRenderingContext) no3D(NO_GL);
     document.querySelectorAll('input[name="view"]').forEach((el) =>
       el.addEventListener("change", () => { if (el.checked) setView(el.value); }));
+    const setCam = (v) => {
+      camPreset = v;
+      document.querySelectorAll('input[name="cam"]').forEach((el) => { el.checked = el.value === v; });
+      try { localStorage.setItem("hoopsim-cam", v); } catch (e) {}
+      if (view3d) view3d.setPreset(v);
+    };
+    const setLabels = (v) => {
+      labelMode = v;
+      document.querySelectorAll('input[name="labels"]').forEach((el) => { el.checked = el.value === v; });
+      try { localStorage.setItem("hoopsim-labels", v); } catch (e) {}
+      if (view3d) view3d.setLabels(v);
+    };
     document.querySelectorAll('input[name="cam"]').forEach((el) => {
       el.checked = el.value === camPreset;
-      el.addEventListener("change", () => {
-        if (!el.checked) return;
-        camPreset = el.value;
-        try { localStorage.setItem("hoopsim-cam", camPreset); } catch (e) {}
-        if (view3d) view3d.setPreset(camPreset);
-      });
+      el.addEventListener("change", () => { if (el.checked) setCam(el.value); });
+    });
+    document.querySelectorAll('input[name="labels"]').forEach((el) => {
+      el.checked = el.value === labelMode;
+      el.addEventListener("change", () => { if (el.checked) setLabels(el.value); });
+    });
+    // 3D shortcuts: 1-4 pick a camera, C steps through them, L steps through the labels
+    document.addEventListener("keydown", (e) => {
+      if (viewMode !== "3d" || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.target.closest && e.target.closest("select, textarea, input[type=text], input[type=number], [contenteditable]")) return;
+      const k = e.key.toLowerCase();
+      if (k >= "1" && k <= "4") setCam(CAMS[+k - 1]);
+      else if (k === "c") setCam(CAMS[(CAMS.indexOf(camPreset) + 1) % CAMS.length]);
+      else if (k === "l") setLabels(LABELS[(LABELS.indexOf(labelMode) + 1) % LABELS.length]);
     });
     document.querySelectorAll('input[name="arena"]').forEach((el) => {
       el.checked = el.value === arenaQ;
