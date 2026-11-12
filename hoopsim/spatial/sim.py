@@ -43,6 +43,40 @@ ACCEL_PER_POINT = 0.6       # ... per point of speed rating
 SCREEN_BRAKE = 1.4          # a screen stops a defender this much harder (body contact)
 TRACK_MODES = ("setup", "probe", "drive", "pass", "post", "pullup")   # off-ball defenders track their man
 SEPARATE_PASSES = 2         # body-separation passes per tick (was 1)
+
+# Animation cues in recorded possessions ("actions": [frame, player, action, other]):
+# what a player starts doing at that frame, for the viewer; recording them changes
+# nothing in the play. Players (and "other", -1 for none) index the frame's ten
+# positions. Dribbling, running and defending are left to the frames themselves.
+ACTIONS = {
+    "pass": "throws a pass (other: the receiver)",
+    "lob_pass": "throws a lob (other: the receiver)",
+    "inbound": "throws the ball in (other: the receiver)",
+    "catch": "catches a pass (other: the passer)",
+    "drive": "starts a drive (other: his defender)",
+    "cut": "cuts to the basket",
+    "screen": "comes up to set a screen (other: the ball handler)",
+    "post_up": "posts up",
+    "jumper": "starts a jump shot (the gather; the ball leaves at jumper_release)",
+    "jumper_release": "the jump shot leaves his hands (other: the closest defender)",
+    "layup": "goes up for a layup (other: the closest defender)",
+    "dunk": "goes up for a dunk (other: the closest defender)",
+    "floater": "floater (other: the closest defender)",
+    "hook": "hook shot from the post (other: the closest defender)",
+    "fadeaway": "turnaround or fadeaway from the post (other: the closest defender)",
+    "alley_oop": "rises to finish a lob (other: the closest defender)",
+    "heave": "heaves it at the buzzer",
+    "free_throw": "shoots a free throw",
+    "contest": "contests a shot, hand up (other: the shooter)",
+    "block": "blocks a shot or breaks up a lob (other: the shooter)",
+    "steal": "strips or pokes the ball from a dribbler (other: the dribbler)",
+    "intercept": "picks off a pass (other: the passer)",
+    "take_charge": "takes a charge and falls (other: the driver)",
+    "charge": "runs into a set defender (other: the defender)",
+    "foul": "commits a foul (other: the fouled player)",
+    "rebound": "jumps and secures the rebound",
+    "rebound_jump": "jumps for a rebound someone else gets",
+}
 _PAIRS10 = [(i, j) for i in range(10) for j in range(i + 1, 10)]
 LIFT_SPOT = (19.5, 20.5)    # where a lifting corner man goes (the wing)
 ROUTINE_PRESSURE = 2.0      # a perimeter pass is routine unless the on-ball man is this close (ft; was 3)
@@ -254,6 +288,13 @@ class HalfCourtGame:
             live[self.side] += self.points
             self.events.append([len(self.frames), text, live["home"], live["away"]])
 
+    def act(self, agent: Optional[Agent], action: str, other: Optional[Agent] = None) -> None:
+        """Record what a player starts doing at the next frame, for the viewer's animation:
+        ``[frame, player, action, other player or -1]`` (players as in the frames)."""
+        if self.record and agent is not None:
+            self.actions.append([len(self.frames), self.index[id(agent)], action,
+                                 -1 if other is None else self.index[id(other)]])
+
     def credit(self, agent: Agent, stat: str, n: int = 1) -> None:
         self.box[id(agent)][stat] += n
 
@@ -317,7 +358,7 @@ class HalfCourtGame:
         self.defense = self.agents["away" if side == "home" else "home"]
         self.side = side
         self.guards = list(range(5))           # guards[offense slot] = defense slot
-        self.frames, self.events = [], []
+        self.frames, self.events, self.actions = [], [], []
         self.start_score = dict(self.score)
         self.now = 0.0
         self.shot_clock = 24.0 - rng.uniform(3.0, 4.5)   # time used bringing it up (fullgame bring_up)
@@ -412,7 +453,8 @@ class HalfCourtGame:
             self.possessions.append({
                 "offense": side, "start_score": [self.start_score["home"], self.start_score["away"]],
                 "end_score": [self.score["home"], self.score["away"]],
-                "frames": self.frames, "events": self.events, "result": self.result,
+                "frames": self.frames, "events": self.events, "actions": self.actions,
+                "result": self.result,
             })
 
     def end(self, result: str, points: int = 0) -> None:
@@ -720,6 +762,7 @@ class HalfCourtGame:
             self.cutter = a
             a.cut_until, a.last_cut = self.now + 2.0, self.now
             self.stats["cuts"] += 1
+            self.act(a, "cut")
             self.say(f"{a.p.name} cuts to the basket")
 
     def paint_threat(self) -> Optional[Agent]:
@@ -1205,6 +1248,7 @@ class HalfCourtGame:
             if self.rng.random() < 0.55:
                 self.credit(on, "stl")
                 self.stats["steals"] += 1
+                self.act(on, "steal", h)
                 self.say(f"{on.p.name} strips {h.p.name}!")
             else:
                 self.say(f"{h.p.name} loses it out of bounds")
@@ -1230,6 +1274,7 @@ class HalfCourtGame:
                 if self.rng.random() < 0.7:
                     self.credit(d, "stl")
                     self.stats["steals"] += 1
+                    self.act(d, "steal", h)
                     self.say(f"{d.p.name} digs down and pokes it away from {h.p.name}!")
                 else:
                     self.say(f"{d.p.name} gets a hand on it: out of bounds off {h.p.name}")
@@ -1260,6 +1305,8 @@ class HalfCourtGame:
                 self.stats["tov"] += 1
                 self.stats["charges"] += 1
                 self.stats["charges_on_ball" if d is on else "charges_help"] += 1
+                self.act(d, "take_charge", h)
+                self.act(h, "charge", d)
                 self.say(f"Charge! {d.p.name} takes it from {h.p.name}")
                 self.end("tov")
                 return True
@@ -1288,6 +1335,7 @@ class HalfCourtGame:
         self.mode, self.mode_since = "drive", self.now
         self.charge_tried: list[Agent] = []
         self.stats["drives"] += 1
+        self.act(h, "drive", on)
         self.say(f"{h.p.name} drives {'right' if side > 0 else 'left'}")
         if self.scheme == "press" and self.now >= on.stuck_until and self.rng.random() < 0.35:
             on.stuck_until = self.now + 0.3                      # pressing up, he was caught leaning
@@ -1304,6 +1352,7 @@ class HalfCourtGame:
                     "set_time": 0.0, "switch": False}
         self.pnr_used += 1
         self.stats["pnr"] += 1
+        self.act(screener, "screen", h)
         self.say(f"{screener.p.name} comes up to set a screen")
         self.next_decision = self.now + 4.5             # wait for the screen
 
@@ -1355,6 +1404,7 @@ class HalfCourtGame:
         target, flight, lob = self.pass_target(h, mate)
         mate.target(target)                            # stop and show a target, or keep cutting
         safe = self.p.routine_pass_risk if not lob and self.routine(h, mate, target) else 1.0
+        self.act(h, "lob_pass" if lob else "pass", mate)
         source = ("cut" if self.cutter is mate else
                   "roll" if self.pnr and self.pnr["set"] and mate is self.pnr["screener"] else None)
         # Interception? (Lobs go over the top; they're contested at the catch instead.)
@@ -1422,6 +1472,7 @@ class HalfCourtGame:
                     self.credit(de, "stl")
                     self.stats["tov"] += 1
                     self.stats["steals"] += 1
+                    self.act(de, "block", mate)
                     self.say(f"{de.p.name} breaks up the lob!")
                     self.end("tov")
                     return
@@ -1438,6 +1489,7 @@ class HalfCourtGame:
         self.release = {"mode": self.mode, "moving": moving, "catch": catch,
                         "at": self.now + self.release_time(h, catch)}
         self.mode = "release"
+        self.act(h, "jumper")
         h.target(h.pos)
         for d in self.defense:              # the shot motion is a cue: defenders nearby react quickly
             if C.dist(d.pos, h.pos) < 12:
@@ -1482,6 +1534,8 @@ class HalfCourtGame:
                 self.count_attempt(h, z)
                 self.credit(defender, "blk")
                 self.stats["blocks"] += 1
+                self.act(h, self.finish_action(h, z, spot, dd, lob, post, released), defender)
+                self.act(defender, "block", h)
                 self.say(f"{h.p.name} {verb}... BLOCKED by {defender.p.name}!")
                 land = C.clamp((h.x + rng.uniform(-6, 6), h.y + rng.uniform(2, 8)))
                 self.start_rebound(h.pos, land, 0.6)
@@ -1507,12 +1561,31 @@ class HalfCourtGame:
                              data={"shooter": h, "made": made, "points": points, "zone": z, "fouled": fouled,
                                    "defender": defender, "assisted": assisted, "passer": self.last_passer,
                                    "shot_d": shot_d, "bucket": bucket, "ctx": ctx})
+        self.act(h, self.finish_action(h, z, spot, dd, lob, post, released), defender)
+        if dd < 6.0:
+            self.act(defender, "contest", h)
         self.holder = None
         self.mode = "shot"
         self.pnr = None
         self.post = None
         self.say(f"{h.p.name} {verb}" + (f" over {defender.p.name}" if level > 0.6 else "")
                  + (" (fouled)" if fouled else ""))
+
+    @staticmethod
+    def finish_action(h: Agent, z: str, spot, dd: float, lob: bool, post: bool, released) -> str:
+        """The shooting motion for the viewer (no effect on the result)."""
+        if released is not None:
+            return "jumper_release"                 # the jumper begun earlier goes up now
+        if lob:
+            return "alley_oop"
+        if post:
+            return "hook" if z in (RIM_ZONE, CLOSE_ZONE) else "fadeaway"
+        if z == RIM_ZONE:
+            spring = h.a("vertical") + (h.p.physique.height_cm - 198) / 4
+            return "dunk" if C.dist_to_rim(spot) < 3.5 and spring >= 14 and dd >= 1.5 else "layup"
+        if z == CLOSE_ZONE:
+            return "floater"
+        return "jumper_release"
 
     def count_attempt(self, h: Agent, z: str) -> None:
         self.stats[f"fga_{z}"] += 1
@@ -1537,6 +1610,7 @@ class HalfCourtGame:
                 self.stats["tov"] += 1
                 self.stats["steals"] += 1
                 self.stats["pass_steals"] += 1
+                self.act(thief, "intercept", passer)
                 self.say(f"Picked off! {thief.p.name} jumps the passing lane")
                 self.end("tov")
                 return
@@ -1548,6 +1622,7 @@ class HalfCourtGame:
                 self.end("tov")
                 return
             mate = f.data["to"]
+            self.act(mate, "catch", f.data["passer"])
             self.holder = mate
             self.pnr = None
             self.post = None
@@ -1570,6 +1645,7 @@ class HalfCourtGame:
             if self.can_post(mate) and d_rim < 11 and self.catch_source is None:
                 self.mode, self.post = "post", {"since": self.now, "double": None}
                 self.stats["post_ups"] += 1
+                self.act(mate, "post_up")
                 self.say(f"{mate.p.name} posts up")
                 self.next_decision = self.now + 0.6
             else:
@@ -1596,6 +1672,8 @@ class HalfCourtGame:
                 self.stats["ast"] += 1
                 assist = f" (assist {d['passer'].p.name})"
             self.points += d["points"]
+            if d["fouled"]:
+                self.act(d["defender"], "foul", shooter)
             self.say(f"Good!{assist}" + (" And one!" if d["fouled"] else ""))
             if d["fouled"]:
                 self.free_throws(shooter, 1, d["defender"])
@@ -1603,6 +1681,7 @@ class HalfCourtGame:
                 self.end("score")
         elif d["fouled"]:
             n = d["points"]
+            self.act(d["defender"], "foul", shooter)
             self.say(f"Foul on {d['defender'].p.name}: {n} free throws")
             self.free_throws(shooter, n, d["defender"])
         else:
@@ -1655,6 +1734,8 @@ class HalfCourtGame:
             a = min(self.everyone, key=lambda q: C.dist(q.pos, land))
             candidates = [(1.0, a)]
         winner = self.rng.choices([a for _, a in candidates], [w for w, _ in candidates])[0]
+        for _, a in candidates:
+            self.act(a, "rebound" if a is winner else "rebound_jump")
         zone = getattr(self, "miss_zone", None)
         self.miss_zone = None
         self.stats[f"reb_{zone}_{'d' if winner in self.defense else 'o'}"] += 1
@@ -1741,6 +1822,7 @@ class HalfCourtGame:
             for _ in range(8):
                 self.record_frame()
                 self.now += self.t.dt
+            self.act(shooter, "free_throw")
             shot = Flight("shot", shooter.pos, RIM, self.now, 0.9, apex=6, z0=7.5, z1=10.0)
             for k in range(9):
                 self.flight = shot
@@ -1839,6 +1921,7 @@ class HalfCourtGame:
             if fouler is None:
                 fouler = self.guarded_by(self.holder) if self.rng.random() < 0.6 else self.rng.choice(self.defense)
             self.stats["non_shooting_fouls"] += 1
+            self.act(fouler, "foul", self.holder)
             if self.bonus:
                 self.say(f"Foul on {fouler.p.name}: in the penalty, two shots")
                 self.free_throws(self.holder, 2, fouler)

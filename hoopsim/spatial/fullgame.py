@@ -527,7 +527,7 @@ class FullGame:
         offense.possessions += 1
         self.stats[f"poss_after_{how}"] += 1
         before = self.hc.score[offense.key]
-        record = {"trans_frames": [], "trans_events": [], "segments": []}
+        record = {"trans_frames": [], "trans_events": [], "trans_actions": [], "segments": []}
         open_court = None
         first_action: Optional[float] = None
         used = 0.0                              # game seconds since gaining the ball
@@ -572,6 +572,7 @@ class FullGame:
                 self.stats["pushes"] += open_court.pushed
                 open_court.how = how
                 record["trans_frames"], record["trans_events"] = open_court.frames, open_court.events
+                record["trans_actions"] = open_court.actions
                 self.advance(open_court.seconds)
                 used += open_court.seconds
                 self.stats["seconds_open_court"] += open_court.seconds
@@ -691,7 +692,8 @@ class FullGame:
         self.advance(res.seconds)
         if self.record:
             score = [self.hc.score["home"], self.hc.score["away"]]
-            record["segments"].append(({"frames": res.frames, "events": res.events, "start_score": score},
+            record["segments"].append(({"frames": res.frames, "events": res.events, "actions": res.actions,
+                                        "start_score": score},
                                        self._lineup_indices()))
         return res
 
@@ -876,6 +878,7 @@ class FullGame:
     def _record(self, offense: Side, before: int, open_court, record: dict, ending: str,
                 is_transition: bool) -> None:
         frames, events = list(record["trans_frames"]), list(record["trans_events"])
+        actions = list(record["trans_actions"])
         start_score = None
         lineups = [[0, self._lineup_at_start]]
         for seg, lineup in record["segments"]:
@@ -889,6 +892,7 @@ class FullGame:
                 lineups.append([shift, lineup])
             frames += seg["frames"]
             events += [[e[0] + shift, *e[1:]] for e in seg["events"]]
+            actions += [[a[0] + shift, *a[1:]] for a in seg.get("actions", [])]
         if not frames:
             return
         if start_score is None:
@@ -900,7 +904,7 @@ class FullGame:
         self.possessions.append({
             "offense": offense.key, "period": self.period,
             "start_score": start_score, "end_score": [self.hc.score["home"], self.hc.score["away"]],
-            "frames": frames, "events": events, "result": ending,
+            "frames": frames, "events": events, "actions": actions, "result": ending,
             "transition": is_transition, "lineups": lineups, "log_at": len(self.events),
         })
 

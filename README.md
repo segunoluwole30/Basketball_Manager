@@ -154,6 +154,19 @@ reduced motion on, the cameras hold still instead of following and the crowd sit
 text that only runs when 3D is switched on (about 650 KB per page; pass `three=False`
 to `export.build_html` for a 2D-only page), so replays and live games work offline.
 
+**Animation cues** (`spatial/sim.py` `ACTIONS`). Each recorded possession carries an
+`"actions"` list next to its frames and events: `[frame, player, action, other]`, meaning
+player `player` (0-9, as in the frame's positions; `other` likewise, or -1) starts doing
+`action` at that frame. The engine records what it decides: `pass`, `lob_pass`, `inbound`,
+`catch`, `drive`, `cut`, `screen`, `post_up`, `jumper` (the gather) and `jumper_release`,
+`layup`, `dunk`, `floater`, `hook`, `fadeaway`, `alley_oop`, `heave`, `free_throw`,
+`contest`, `block`, `steal`, `intercept`, `take_charge`, `charge`, `foul`, `rebound` and
+`rebound_jump`. Dribbling, running and defensive stances follow from the frames (who holds
+the ball, how fast each player moves). They are for a 3D view to animate bodies with: they
+add about 1-2% to a saved replay, cost nothing when no replay is recorded, and change
+nothing in the play (the legacy fingerprint test hashes the play without them). Older
+replays simply have none.
+
 **Highlights** (`spatial/highlights.py`). The viewer has Football Manager-style
 highlight modes for full games: **Key**, **Extended** and **Full**. Your choice is
 remembered between games.

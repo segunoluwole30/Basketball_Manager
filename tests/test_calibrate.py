@@ -22,7 +22,10 @@ def play(params, seed=5, possessions=40):
 
 
 def fingerprint(g) -> str:
-    return hashlib.sha256(json.dumps(g.possessions).encode()).hexdigest()[:16]
+    # The play itself (frames, events, score), not the viewer's animation cues: those
+    # were added later and don't change what happens.
+    play = [{k: v for k, v in p.items() if k != "actions"} for p in g.possessions]
+    return hashlib.sha256(json.dumps(play).encode()).hexdigest()[:16]
 
 
 class ParamsTests(unittest.TestCase):

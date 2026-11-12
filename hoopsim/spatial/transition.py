@@ -105,6 +105,7 @@ class OpenCourtResult:
     carrier: Optional[Agent] = None      # who has the ball next (after a steal)
     frames: list = field(default_factory=list)
     events: list = field(default_factory=list)
+    actions: list = field(default_factory=list)   # [frame, player, action, other] (see HalfCourtGame.act)
     advantage: str = ""                  # "breakaway", "numbers", "none", "walk"
 
 
@@ -297,6 +298,7 @@ class OpenCourt:
             dur = max(0.3, C.dist(inb.pos, to.pos) / self.t.pass_speed + 0.15)
             self.flight = {"from": inb.pos, "to": to, "end": to.pos, "t0": self.now, "dur": dur,
                            "inbound": True, "passer": inb}
+            self.act(inb, "inbound", to)
             self.holder = None
         f = self.flight
         if f is None or self.now - f["t0"] < f["dur"]:
@@ -309,12 +311,14 @@ class OpenCourt:
             self.g.stats["tov"] += 1
             self.g.stats["steals"] += 1
             self.g.stats["open_court_steals"] += 1
+            self.act(thief, "intercept", passer)
             self.say(f"Picked off! {thief.p.name} steps in front of the ahead pass")
             self.result.result = "steal"
             self.result.carrier = thief
             return
         to = f["to"]
         self.holder = to
+        self.act(to, "catch", f["passer"])
         if f.get("inbound"):
             self.shot_from = self.now          # the shot clock starts on the catch
             if self.clock_stopped:
@@ -522,6 +526,7 @@ class OpenCourt:
                     self.flight["end"] = d.pos
                     self.flight["dur"] = max(0.2, C.dist(h.pos, d.pos) / self.t.pass_speed)
                     break
+        self.act(h, "pass", m)
         self.g.stats["kick_outs" if kick else "ahead_passes"] += 1
         self.say(f"{h.p.name} kicks it out to {m.p.name}" if kick else f"{h.p.name} throws it ahead to {m.p.name}")
         self.holder = None
@@ -573,6 +578,7 @@ class OpenCourt:
         self.g.credit(h, "fga")
         self.g.credit(h, "tpa")
         self.g.stats["heaves"] += 1
+        self.act(h, "heave")
         self.say(f"{h.p.name} heaves it from {d:.0f} feet...")
         start, dur = h.pos, 0.6 + d / 45
         steps = int(dur / self.g.t.dt)
@@ -603,6 +609,12 @@ class OpenCourt:
         if self.record:
             self.result.events.append([max(0, len(self.result.frames) - 1), text,
                                        self.score["home"], self.score["away"]])
+
+    def act(self, agent: Optional[Agent], action: str, other: Optional[Agent] = None) -> None:
+        if self.record and agent is not None:
+            idx = self.g.index
+            self.result.actions.append([len(self.result.frames), idx[id(agent)], action,
+                                        -1 if other is None else idx[id(other)]])
 
     def record_frame(self) -> None:
         if not self.record:
@@ -807,12 +819,14 @@ class DeadBallInbound(OpenCourt):
             self.g.stats["tov"] += 1
             self.g.stats["steals"] += 1
             self.g.stats["inbound_steals"] += 1
+            self.act(thief, "intercept", inb)
             self.say(f"Stolen! {thief.p.name} picks off the inbound pass")
             self.result.result = "steal"
             self.result.carrier = thief
             return
         to = f["to"]
         self.holder = to
+        self.act(to, "catch", inb)
         self.caught, self.caught_time = True, now
         self.ready_at = now + 0.2
         self.last_passer, self.caught_at = inb, now
@@ -849,6 +863,7 @@ class DeadBallInbound(OpenCourt):
                     self.flight["end"] = d.pos
                     self.flight["dur"] = max(0.2, C.dist(inb.pos, d.pos) / t.pass_speed)
                     break
+        self.act(inb, "inbound", to)
         to.tx, to.ty = end                     # stop and show a target
         self.holder = None
 
