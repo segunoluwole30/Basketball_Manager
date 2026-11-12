@@ -156,7 +156,7 @@ text that only runs when 3D is switched on (about 650 KB per page; pass `three=F
 to `export.build_html` for a 2D-only page), so replays and live games work offline.
 
 **Animated players** (3D). In the browser interface the 3D view's players are one rigged
-human model (about 11,000 triangles as drawn, 23 joints), cloned per player with three.js's
+human model (about 12,000 triangles as drawn, 23 joints), cloned per player with three.js's
 `SkeletonUtils`, tinted in team colours with the number on the jersey, and driven by
 motion-capture clips through an `AnimationMixer`. **Players: Animated | Simple** (key **B**,
 remembered) switches back to the simple bodies. The action cues below pick the clips:
@@ -197,11 +197,12 @@ The body is MakeHuman's base mesh (CC0): a real human figure with a face, hands 
 muscle definition, shaped into a tall athlete, bound to the mocap skeleton and simplified.
 The jersey and the top of the shorts are layers of that body's own surface, lifted off it,
 ironed smooth and let out below the chest, so they fit him and move exactly as he does;
-the shorts' legs, shoes, hair and gear are generated and fitted by
-`tools/build_player_assets.py`.
+socks, sleeves, bands, the hair cap and beard are made the same way, and the skin beneath
+the kit is tucked in so it cannot show through. The shorts' legs, shoes and the larger
+hair styles are generated and fitted by `tools/build_player_assets.py`.
 No real player's likeness is used.
 
-The files (`spatial/assets/player.glb`, 0.96 MB, plus three.js r160's `GLTFLoader`,
+The files (`spatial/assets/player.glb`, 1.07 MB, plus three.js r160's `GLTFLoader`,
 `BufferGeometryUtils` and `SkeletonUtils` in `spatial/vendor/`, 0.15 MB, unmodified) are
 served by the web app at `/viewer-assets/` and fetched only the first time 3D is shown;
 nothing is added to the page itself. If they fail to load, the view says so and keeps the
@@ -209,7 +210,7 @@ simple bodies; if the device can't hold about 18 frames a second with them, it s
 Simple by itself (unless you picked Animated by hand). Exported pages
 (`python -m hoopsim watch`) keep the simple bodies and stay self-contained; add
 `--animated` (or `export.build_html(..., animation="embed")`) to carry the players inside
-the page, about 1.4 MB more. The motion is from the CMU Graphics Lab Motion Capture
+the page, about 1.6 MB more. The motion is from the CMU Graphics Lab Motion Capture
 Database (free for any use); `tools/build_player_assets.py` builds the model and cuts and
 retargets the clips. Sources, licences and the clip-by-clip list are in
 `spatial/assets/LICENSES.md`. Measured cost: about 0.6 ms of CPU per frame for ten animated

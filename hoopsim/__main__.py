@@ -356,7 +356,7 @@ def main() -> None:
     watch.add_argument("--full", action="store_true",
                        help="a full game: four quarters, transition, substitutions, fatigue, fouls")
     watch.add_argument("--animated", action="store_true",
-                       help="embed the 3D view's animated players in the page (about 1.4 MB more)")
+                       help="embed the 3D view's animated players in the page (about 1.6 MB more)")
     watch.add_argument("--quarter", type=int, help="with --full: export just this period (5 = first overtime)")
 
     web = sub.add_parser("web", help="play as general manager in your browser")

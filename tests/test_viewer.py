@@ -182,7 +182,7 @@ class AnimatedPlayersTests(unittest.TestCase):
         self.assertEqual(base64.b64decode(files["player.glb"]), PLAYER_ASSETS["player.glb"].read_bytes())
         self.assertEqual(files["GLTFLoader.js"], PLAYER_ASSETS["GLTFLoader.js"].read_text(encoding="utf-8"))
         self.assertNotIn("</script", player_block(page))
-        self.assertLess(len(page) - len(plain), 1_600_000)
+        self.assertLess(len(page) - len(plain), 1_900_000)
         self.assertEqual(page.count('id="three-src"'), 1)
 
     def test_asset_budget_and_model(self):

@@ -6,8 +6,8 @@ written as a single binary glTF (hoopsim/spatial/assets/player.glb).
 * Body: MakeHuman's base mesh, default rig weights and shape targets (CC0), shaped into a
   tall athletic man, bound to the mocap skeleton, cut away where the kit covers it and
   simplified. A second shape (the heaviest build) becomes the "bulk" morph target.
-* Kit, hair and gear: made here. The jersey, the top of the shorts, the hair cap, beard,
-  sleeves and bands are layers lifted off the body's own surface; the shorts' legs, shoes
+* Kit, hair and gear: made here. The jersey, the top of the shorts, socks, the hair cap,
+  beard, sleeves and bands are layers lifted off the body's own surface; the shorts' legs, shoes
   and the larger hair styles are fitted to it by measuring it.
 * Motion: the CMU Graphics Lab Motion Capture Database (free for any use), in Bruce
   Hahne's BVH conversion. Every clip is retargeted to the model's skeleton, cut, turned to
@@ -745,6 +745,13 @@ class Body:
         seat = (P[:, 1] < yH + 0.34) & ((trunk & ~thigh & (P[:, 1] > self.crotch - 0.3)) | (thigh & (self.along < 0.24)))
         self.seat_quads = q[seat[q].all(1)]
         cov |= seat & (P[:, 1] < yH + 0.2)
+        # socks: the lower shin and the ankle
+        self.sock = np.zeros(len(P), dtype=bool)
+        for sd in ("Left", "Right"):
+            self.sock |= ((self.dom == ix[sd + "Leg"]) & (self.along > 0.68)) | (self.dom == ix[sd + "Foot"])
+        self.under = np.zeros(len(P), dtype=bool)             # skin under cloth he always wears
+        self.under[np.unique(self.shirt_quads)] = True; self.under[np.unique(self.seat_quads)] = True
+        self.under |= self.sock
         cov |= np.isin(self.dom, [ix[sd + j] for sd in ("Left", "Right") for j in ("Foot", "ToeBase")]) & (P[:, 1] < sk.ankle + 0.16)
         tris = np.concatenate([hu.quads["body"][:, [0, 1, 2]], hu.quads["body"][:, [0, 2, 3]]])
         tris = tris[~cov[tris].all(1)]
@@ -779,6 +786,7 @@ def build_model(sk: Skeleton, body: Body, verts) -> Mesh:
     m = Mesh(); ix = sk.idx; hu = body.hu
     P = body.feet(verts)                                      # every body vertex, this shape
     D = body.D + (P[body.src] - body.P0[body.src])            # the simplified skin, this shape
+    D = D - body.N * (0.045 * body.under[body.src])[:, None]     # (tucked in under his kit, so it can't show through)
     W, dom, src = body.W, body.dom, body.src
     J = lambda n: sk.bindP[ix[n]]
     X, BACK = (1, 0, 0), (0, 0, -1)
@@ -789,26 +797,6 @@ def build_model(sk: Skeleton, body: Body, verts) -> Mesh:
     # ---- skin
     skin = [m.vert(D[i], wts(src[i])) for i in range(len(D))]
     for f in body.F: m.face("skin", skin[f[0]], skin[f[1]], skin[f[2]])
-
-    everyone = np.ones(len(P), dtype=bool)
-
-    def shell(mat, pick, lift, col=(1, 1, 1)):
-        """A layer over part of the skin: the triangles whose corners all pass ``pick``,
-        lifted off the surface."""
-        ids = {}
-        for f in body.F:
-            if pick[f].all():
-                for i in f:
-                    if i not in ids: ids[i] = m.vert(D[i] + body.N[i] * lift, wts(src[i]), col=col)
-                m.face(mat, ids[f[0]], ids[f[1]], ids[f[2]])
-
-    def shell0(mat, pick, lift):
-        """The same from the full-detail body (hair, beard: where an edge must be clean)."""
-        ids = {}
-        for qd in hu.quads["body"][pick[hu.quads["body"]].all(1)]:
-            for i in qd:
-                if i not in ids: ids[i] = m.vert(P[i] + body.N0[i] * lift, wts(i))
-            m.face(mat, ids[qd[0]], ids[qd[1]], ids[qd[2]]); m.face(mat, ids[qd[0]], ids[qd[2]], ids[qd[3]])
 
     def cloth(quads, lift, relax):
         """Where a layer of cloth over part of the body sits: lifted off the surface, then
@@ -833,6 +821,17 @@ def build_model(sk: Skeleton, body: Body, verts) -> Mesh:
                 if nb[v]: new[at[v]] = 0.5 * pos[at[v]] + 0.5 * pos[[at[u] for u in nb[v]]].mean(0)
             pos = new
         return {v: pos[at[v]] for v in vs}
+
+    def shell0(mat, pick, lift, relax=0, col=(1, 1, 1)):
+        """A layer over part of the full-detail body (hair, beard, sleeves, socks: where an
+        edge must be clean), ironed ``relax`` times."""
+        quads = hu.quads["body"][pick[hu.quads["body"]].all(1)]
+        if not len(quads): return
+        where = cloth(quads, lambda i: lift, relax); ids = {}
+        for qd in quads:
+            for i in qd:
+                if i not in ids: ids[i] = m.vert(where[i], wts(i), col=col)
+            m.face(mat, ids[qd[0]], ids[qd[1]], ids[qd[2]]); m.face(mat, ids[qd[0]], ids[qd[2]], ids[qd[3]])
 
     # ---- eyes (MakeHuman's own eyeballs) and brows
     for k, grp in enumerate(("helper-l-eye", "helper-r-eye")):
@@ -863,7 +862,7 @@ def build_model(sk: Skeleton, body: Body, verts) -> Mesh:
     sq = body.shirt_quads; on = np.unique(sq)
     zc = body.P0[on, 2].mean(); top = body.P0[on, 1].max()
     turn = lambda i: (np.arctan2(-(body.P0[i, 2] - zc), body.P0[i, 0]) / (2 * np.pi)) % 1.0
-    hang = lambda i: 0.04 + 0.09 * float(np.clip((yS - 0.35 - body.P0[i, 1]) / 0.6, 0, 1)) ** 1.3   # looser below the chest
+    hang = lambda i: 0.05 + 0.09 * float(np.clip((yS - 0.35 - body.P0[i, 1]) / 0.6, 0, 1)) ** 1.3   # looser below the chest
     where = cloth(sq, hang, relax=5)
     ids = {}
     for qd in sq:
@@ -903,8 +902,7 @@ def build_model(sk: Skeleton, body: Body, verts) -> Mesh:
             sel = slab(((dom == wK) | (dom == wF)) & (dist < 0.3), off @ shin, h, 0.05)
             return (an + shin * h, sx_, sy_, dist[sel].max() + pad, dist[sel].max() + pad, [(wF, 1)])
         m.loft("shoes", [shin_ring(h, pad) for h, pad in ((0.24, 0.02), (0.12, 0.035), (-0.02, 0.045))], sides=12, bulk=False)
-        d, al = dom[src], body.along[src]
-        shell("kit", ((d == wK) & (al > 0.7)) | (d == wF), 0.012, col=WHITE)         # the sock
+        shell0("kit", body.sock & np.isin(dom, [wK, wF]), 0.016, relax=2, col=WHITE)   # the sock
         foot = np.isin(dom, [wF, wT]) & (P[:, 1] < an[1] + 0.05)
         fd = np.array([toe[0] - an[0], 0, toe[2] - an[2]]); fd /= np.linalg.norm(fd); side = np.cross((0, 1, 0), fd)
         s_ = (P[foot] - an) @ fd; heel, tip = s_.min() - 0.035, s_.max() + 0.045
@@ -921,9 +919,10 @@ def build_model(sk: Skeleton, body: Body, verts) -> Mesh:
 
         # ---- gear that hugs the limb: arm sleeve, wristband, leg sleeve
         tag = sd[0]
-        shell("sleeve_" + tag, ((d == ix[sd + "Arm"]) & (al > 0.5)) | ((d == ix[sd + "ForeArm"]) & (al < 0.9)), 0.012)
-        shell0("wrist_" + tag, (dom == ix[sd + "ForeArm"]) & (body.along > 0.72) & (body.along < 0.95), 0.02)
-        shell("leg_" + tag, ((d == ix[sd + "UpLeg"]) & (al > 0.78)) | ((d == wK) & (al < 0.62)), 0.012)
+        al = body.along
+        shell0("sleeve_" + tag, ((dom == ix[sd + "Arm"]) & (al > 0.5)) | ((dom == ix[sd + "ForeArm"]) & (al < 0.9)), 0.03, relax=2)
+        shell0("wrist_" + tag, (dom == ix[sd + "ForeArm"]) & (al > 0.72) & (al < 0.95), 0.04, relax=1)
+        shell0("leg_" + tag, ((dom == ix[sd + "UpLeg"]) & (al > 0.78)) | ((dom == wK) & (al < 0.62)), 0.03, relax=2)
 
     # ---- hair: one style is shown per player (or none), in his hair colour; beard; headband
     hc, hr = body.hc, body.hr; wH = [(ix["Head"], 1)]
