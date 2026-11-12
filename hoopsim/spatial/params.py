@@ -39,22 +39,24 @@ class SpatialParams:
     sag_max: float = 0.61
     shooter_sag: float = 0.931           # sag multiplier off good shooters
     # --- closeouts and contests ------------------------------------------------
-    closeout_base: float = 4.82          # closeout gap on an 11-rated shooter (ft)
+    # Closeouts brake in time now (defender_brake), so they arrive under control and
+    # stop where they aim: the gaps were 4.82 / 2.8 when they overran (README "Defence that recovers").
+    closeout_base: float = 5.5           # closeout gap on an 11-rated shooter (ft)
     closeout_slope: float = 0.413        # tighter by this per point of three-point rating
-    closeout_min: float = 2.8
+    closeout_min: float = 3.4
     closeout_max: float = 5.5
     closeout_speed: float = 1.033         # top-speed multiplier while closing out on a catch
     contest_reach: float = 1.648          # contests at release stop at hand's length (ft)
     # --- shot model ------------------------------------------------------------
     contest_inside: float = 1.126         # multiplies the contest penalty at the rim and close
-    contest_outside: float = 1.602        # ... and on mid-range and three-point jumpers
-    rim_make_adj: float = -0.03           # added to the open make chance at the rim (was 0; README "Patient offence")
+    contest_outside: float = 1.7          # ... and on mid-range and three-point jumpers (was 1.602; README "Defence that recovers")
+    rim_make_adj: float = -0.025          # added to the open make chance at the rim (README "Patient offence": -0.03; "Defence that recovers")
     three_make_adj: float = -0.0204         # added to the open make chance from three
     foul_scale: float = 1.0               # multiplies shooting-foul chances (search chose 1.28; held at 1, see README)
     # --- turnovers and rebounds ------------------------------------------------
-    dribble_turnover_per_sec: float = 0.045   # with a defender in your face (was 0.0576)
-    pass_steal_scale: float = 0.045       # was 0.213, when ~5% of passes were lost (NBA ~2-2.5%)
-    errant_pass: float = 0.007            # passes thrown away or fumbled (not picked off; was 0.0184)
+    dribble_turnover_per_sec: float = 0.04    # with a defender in your face (was 0.0576, then 0.045; on-ball men stay closer since README "Defence that recovers")
+    pass_steal_scale: float = 0.037       # was 0.213, when ~5% of passes were lost (NBA ~2-2.5%), then 0.045 (README "Defence that recovers")
+    errant_pass: float = 0.0062           # passes thrown away or fumbled (not picked off; was 0.0184, then 0.007)
     defensive_rebound_edge: float = 3.2   # was 4.576 (full-game ORB% .21 against .26)
     # --- rotation lag (the defence falls behind as the ball moves) -------------
     rotation_lag: float = 0.6             # extra reaction (in reactions) per level of scramble
@@ -62,7 +64,7 @@ class SpatialParams:
     scramble_decay: float = 0.2           # scramble levels recovered per second
     scramble_max: float = 3.0
     # --- set plays (plays.py) ---------------------------------------------------
-    entry_actions: float = 3.0            # entry actions before attacking, at pace 10
+    entry_actions: float = 2.0            # entry actions before attacking, at pace 10 (was 3; README "Defence that recovers")
     entry_read: float = 1.12              # a catch worth this many points (wide open) is shot in the entry
     deny_rate: float = 0.45               # chance a set defence denies a swing receiver (scaled by skill)
     entry_pnr: float = 0.5                # weight of a closing pick-and-roll among the set's last actions
@@ -80,14 +82,28 @@ class SpatialParams:
     # ``patience_full`` or more on the shot clock, fading to nothing at ``patience_none``.
     # Great looks (worth ``patience_great``+ points) and beaten defenders are taken anyway.
     patience: float = 0.3
-    patience_full: float = 14.0
-    patience_none: float = 4.0
+    patience_full: float = 16.0           # was 14 (README "Defence that recovers")
+    patience_none: float = 3.0            # was 4 (README "Defence that recovers")
     patience_great: float = 1.25
-    patience_three: float = 0.25          # ... scaled by this for threes (a catch-and-shoot three is a wanted shot)
+    patience_three: float = 0.8           # ... scaled by this for threes (0.25 when closeouts overran; README "Defence that recovers")
     patience_hold: float = 0.3            # ... and standing on the ball by this share of it
     # Off-ball spacing: after a catch, a perimeter man this close (ft) to the ball or a
     # teammate's spot fills the nearest open spot instead (0: off).
     respace_gap: float = 12.0
+    respace_corner_cost: float = 20.0     # ... a corner counts as this much further away (ft; README "Defence that recovers")
+    corner_lift: float = 22.0             # a corner man lifts to the wing on a drive on his side below this y (ft; 0: off)
+    # Defence that recovers (README "Defence that recovers"): closeouts that brake in
+    # time, keep coming through the shot and are anticipated as such, off-ball men
+    # tracked continuously, and sag set by how well the man shoots. 0 / 1: off.
+    defender_brake: float = 0.8           # defenders slow down in time to stop at their spot (share of accel)
+    closeout_burst: float = 1.35          # acceleration multiplier while closing out (a straight sprint)
+    contest_run: float = 5.0              # a defender this far from a rising shooter runs at him (ft; 0: lunge only)
+    contest_stop: float = 3.0             # ... a jump-shot contest stops this far off him, hand up (ft; 0: off)
+    contest_lunge: float = 1.0            # a defender nearer than that steps in at most this far (ft; was 2.5)
+    offball_lead: float = 0.5             # off-ball defenders play where their man will be this soon (s)
+    offball_track: float = 1.0            # 1: off-ball defenders track their man between reads
+    sag_shooter_slope: float = 0.06       # sag shrinks by this share per point of the man's three rating above 11
+    pullup_lead: float = 0.45             # on a pull-up the on-ball man gives ground as on a drive (s of lead; was 0.2)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -153,6 +169,17 @@ LEGACY_PARAMS = SpatialParams(
     relocate_shooter=0.0,
     patience=0.0,
     respace_gap=0.0,
+    respace_corner_cost=0.0,
+    corner_lift=0.0,
+    defender_brake=0.0,
+    closeout_burst=1.0,
+    contest_run=0.0,
+    contest_stop=0.0,
+    contest_lunge=2.5,
+    offball_lead=0.0,
+    offball_track=0.0,
+    sag_shooter_slope=0.0,
+    pullup_lead=0.2,
 )
 
 # Searched fields: (low, high). Everything else stays at its default.

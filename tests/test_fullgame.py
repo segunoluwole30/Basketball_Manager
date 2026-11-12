@@ -127,9 +127,14 @@ class ShortGameTests(unittest.TestCase):
 
     def test_fouling_out(self):
         league = short_league(9, quarter_minutes=6, personal_foul_limit=3)
-        g = FullGame(league, 1, 2, random.Random(4))
-        g.run()
-        fouled = [s for side in g.sides.values() for s in side.roster if g.fouled_out(s)]
+        # The first game in which someone fouls out (which seed that is depends on the
+        # engine: seed 4 until README "Defence that recovers").
+        for seed in range(4, 16):
+            g = FullGame(league, 1, 2, random.Random(seed))
+            g.run()
+            fouled = [s for side in g.sides.values() for s in side.roster if g.fouled_out(s)]
+            if fouled:
+                break
         self.assertTrue(fouled)
         for s in fouled:
             self.assertIsNotNone(s.fouled_out_at)

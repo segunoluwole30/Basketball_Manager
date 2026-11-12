@@ -43,9 +43,13 @@ class ParamsTests(unittest.TestCase):
         # speed instead of 22 + 1.2, screens and free-throw walks steered too) and jump
         # shots a longer release (README "Patient offence"); both are physics, not
         # SpatialParams (was 0835b914b14e3971 / 34-25).
+        # Re-pinned when body separation got a second pass (a body pushed into a third
+        # is settled in the same tick; README "Defence that recovers"): physics, not
+        # SpatialParams. The other defence changes are SpatialParams that LEGACY_PARAMS
+        # switches off (was 6981a00e73f0ff0d / 22-40).
         g = play(LEGACY_PARAMS)
-        self.assertEqual(fingerprint(g), "6981a00e73f0ff0d")
-        self.assertEqual(g.score, {"home": 22, "away": 40})
+        self.assertEqual(fingerprint(g), "0f704bf0fb0f2453")
+        self.assertEqual(g.score, {"home": 25, "away": 38})
 
     def test_params_change_behaviour(self):
         loose = DEFAULT_PARAMS.with_values(help_trigger=10.0, closeout_speed=0.7, contest_outside=0.5)

@@ -312,7 +312,7 @@ def on_catch(g: "HalfCourtGame", mate: "Agent") -> None:
     spot = mate.pos
     closer, dd = g.nearest_defender(spot)
     rt = g.release_time(mate, True)
-    contest = max(0.0, dd - g.closing_speed(closer, mate) * (0.35 + rt))
+    contest = g.predicted_contest(closer, mate, dd, rt)
     ep = g.shot_value(mate, p=spot, contest_d=contest, defender=closer, catch=True)
     read = g.p.entry_read
     if C.is_three(spot):                 # the coach's three-point appetite moves the bar
