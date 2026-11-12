@@ -1,7 +1,7 @@
 # Animated players: sources and licences
 
 Everything the 3D view's animated players need, where it came from and what it may be
-used for. Total: about 0.7 MB (`player.glb` 0.55 MB, the three loader modules 0.15 MB),
+used for. Total: about 0.7 MB (`player.glb` 0.57 MB, the three loader modules 0.15 MB),
 fetched by the web app only when 3D is first shown.
 
 | File | What | Source | Licence |

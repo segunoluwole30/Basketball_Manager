@@ -844,7 +844,19 @@ window.GAME = /*GAME_DATA*/null;
   // from the three.js copy the page carries as inert text. World units are feet: X along
   // the court (0 at half court, the left basket at -47), Y up, Z across (= court x, so the
   // near sideline is +25, as at the bottom of the 2D view).
-  const HEIGHT = { PG: 6.25, SG: 6.45, SF: 6.65, PF: 6.8, C: 6.95 };
+  // Each player's build in 3D. The page may carry his real height and wingspan (ht, ws: cm)
+  // and weight (wt: kg), as the web app's pages do; without them he gets what is typical for
+  // his position, varied a little by his name (so it is the same every time).
+  const BUILD = { PG: [190.5, 88], SG: [196.5, 93], SF: [202.5, 100], PF: [207, 108], C: [212, 115] };   // cm, kg
+  function physique(pl) {
+    const b = BUILD[pl.pos] || BUILD.SF, h = hash(pl.name);
+    const ht = pl.ht > 0 ? pl.ht : b[0] + ((h % 9) - 4) * 0.9;
+    const wt = pl.wt > 0 ? pl.wt : b[1] * (ht / b[0]) * (ht / b[0]) * (1 + (((h >>> 4) % 11) - 5) * 0.012);
+    const ws = pl.ws > 0 ? pl.ws : ht * (1.04 + ((h >>> 8) % 7) * 0.007);
+    const bmi = wt / (ht * ht / 10000);
+    // girth: how thick he is drawn against a 24.5 BMI frame (stretched a little so it reads from the stands)
+    return { H: ht / 30.48, girth: Math.max(0.86, Math.min(1.3, 1 + (Math.sqrt(bmi / 24.5) - 1) * 1.8)), reach: ws / ht };
+  }
   const SKIN = ["#8d5524", "#c68642", "#e0ac69", "#6b4423", "#f1c27d", "#4a2c17", "#a86b3c"];
   const hash = (s) => { let h = 7; for (const ch of String(s)) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h; };
   const wrapAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
@@ -929,7 +941,7 @@ window.GAME = /*GAME_DATA*/null;
     const v1 = new THREE.Vector3(), v2 = new THREE.Vector3(), v3 = new THREE.Vector3(), v4 = new THREE.Vector3();
 
     function attach(fg, pl, H, skin) {
-      const model = rig.clone(rig.gltf.scene);
+      const model = rig.clone(rig.gltf.scene), body = rig.meta.body, ph = fg.build;
       model.scale.setScalar(H / H0);
       const jersey = new THREE.MeshLambertMaterial({ map: env.jerseyTexture(pl, true) });
       const bones = {};
@@ -939,7 +951,14 @@ window.GAME = /*GAME_DATA*/null;
         const nm = o.material.name;
         o.material = nm === "skin" ? skin : nm === "jersey" ? jersey : nm === "shorts" ? env.teamMat[pl.side] : kit;
         o.castShadow = env.shadows; o.frustumCulled = false;
+        // his weight: the model's "bulk" shape, more of it (or less than none) for his frame
+        if (body && ph && o.morphTargetInfluences && o.morphTargetInfluences.length) o.morphTargetInfluences[0] = (ph.girth - 1) / (body.bulk_girth - 1);
       });
+      // his wingspan: arms a little longer or shorter than the model's
+      if (body && ph) {
+        const arm = Math.max(0.88, Math.min(1.12, (ph.reach * H0 - (body.span - 2 * body.arm)) / (2 * body.arm)));
+        for (const sd of ["Left", "Right"]) if (bones[sd + "Arm"]) bones[sd + "Arm"].scale.setScalar(arm);
+      }
       fg.body.add(model);
       fg.rig = { model, jersey, bones, mixer: new THREE.AnimationMixer(model), acts: {}, w: {}, k: H / H0,
                  phase: (hash(fg.key || pl.name) % 100) / 100, free: hash(pl.name) % 7, carry: [], active: [],
@@ -1695,6 +1714,14 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     };
     const shoeMat = new THREE.MeshLambertMaterial({ color: 0x1d1f24 });
     const skinMats = SKIN.map((c) => new THREE.MeshLambertMaterial({ color: c }));
+    const skinByColour = {};
+    // a player's skin: what the page says (skin: an index into the tones, or a #rrggbb colour), else by his name
+    function skinOf(pl) {
+      if (Number.isInteger(pl.skin) && skinMats[pl.skin]) return skinMats[pl.skin];
+      if (typeof pl.skin === "string" && /^#[0-9a-f]{6}$/i.test(pl.skin))
+        return skinByColour[pl.skin] || (skinByColour[pl.skin] = new THREE.MeshLambertMaterial({ color: pl.skin }));
+      return skinMats[hash(pl.name + "s") % skinMats.length];
+    }
     const teamMat = { home: new THREE.MeshLambertMaterial(), away: new THREE.MeshLambertMaterial() };
     const ringMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.9, depthWrite: false });
     const figures = {};
@@ -1741,10 +1768,10 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     }
     function figure(key, pl) {
       if (figures[key]) return figures[key];
-      const H = (HEIGHT[pl.pos] || 6.6) + ((hash(pl.name) % 9) - 4) * 0.03;
-      const skin = skinMats[hash(pl.name + "s") % skinMats.length];
+      const build = physique(pl), H = build.H, skin = skinOf(pl);
       const root = new THREE.Group(), turn = new THREE.Group(), body = new THREE.Group();   // root: where; turn: which way
       root.add(turn); turn.add(body);                             // body: the simple figure (the animated one sits beside it)
+      body.scale.set(build.girth, 1, build.girth);
       const hip = H * 0.47, torsoH = H * 0.35;
       const legs = [-1, 1].map((sd) => {
         const leg = new THREE.Group();
@@ -1776,7 +1803,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       label.center.set(0.5, 0); label.position.y = H + 0.6; label.renderOrder = 10;
       root.add(label);
       scene.add(root);
-      return (figures[key] = { root, body: turn, simple: body, legs, arms, label, jersey, pl, key, H, skin, rig: null, x: 0, z: 0, heading: 0,
+      return (figures[key] = { root, body: turn, simple: body, legs, arms, label, jersey, pl, key, H, skin, build, rig: null, x: 0, z: 0, heading: 0,
                                phase: hash(key) % 7, seen: -1, labelKey: "", tex: [null, null], theme: colorsVersion, aspect: 1 });
     }
     const ring = new THREE.Mesh(geo.ring, ringMat);                // under the ball handler
@@ -2257,6 +2284,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
              bodies: () => ({ mode: bodyMode, rig: !!anim, auto: bodyAuto, clips: anim ? anim.names : [],
                               players: st ? st.players.map((q) => { const fg = figures[q.key], r = fg && fg.rig;
                                 return { key: q.key, n: q.n, off: q.off, sp: +(q.sp || 0).toFixed(1), animated: !!(r && r.model.visible),
+                                         name: q.pl.name, feet: +fg.H.toFixed(2), girth: +fg.build.girth.toFixed(2), reach: +fg.build.reach.toFixed(3),
                                          clips: r ? Object.keys(r.acts).filter((k) => r.acts[k].enabled).map((k) => k + ":" + r.acts[k].weight.toFixed(2)) : [] }; }) : [] }),
              cues: (p) => (anim ? anim.cues(p) : null),
              orbit: (yaw, pitch, zoom) => { user.yaw = yaw; user.pitch = pitch; user.zoom = zoom; dirty = 3; },

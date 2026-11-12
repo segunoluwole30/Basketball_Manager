@@ -31,6 +31,7 @@ MIRROR = "https://raw.githubusercontent.com/una-dinosauria/cmu-mocap/master/data
 SKELETON_FROM = "124_05"          # the subject whose proportions the model takes
 HEIGHT = 6.5                      # feet, floor to the top of the head in the T-pose
 FPS = 30
+BULK_GIRTH = 1.25                 # the "bulk" morph target: the body this many times as thick
 SRC_FPS = 120
 
 # name: (file, first, last source frame (120 Hz), kind, options)
@@ -464,8 +465,9 @@ def dribble_marks(sk, pos, q):
 
 # ---------------------------------------------------------------- the model
 class Mesh:
-    def __init__(self):
+    def __init__(self, girth=1.0):
         self.v, self.n, self.uv, self.col, self.j, self.w, self.tri = [], [], [], [], [], [], {}
+        self.girth = girth                                    # how thick the body is drawn (1: the model as designed)
 
     def vert(self, p, weights, uv=(0, 0), col=(1, 1, 1)):
         ws = sorted(((float(w), int(j)) for j, w in weights if w > 1e-4), reverse=True)[:4]
@@ -478,12 +480,13 @@ class Mesh:
     def face(self, mat, a, b, c):
         self.tri.setdefault(mat, []).append((a, b, c))
 
-    def loft(self, mat, rings, cap_start=False, cap_end=False, col=(1, 1, 1), uv=None, sides=16):
+    def loft(self, mat, rings, cap_start=False, cap_end=False, col=(1, 1, 1), uv=None, sides=16, bulk=True):
         """rings: [(centre, x axis, y axis, rx, ry, weights[, squareness])], each a ring of
         ``sides`` points: an ellipse, or with squareness > 2 a rounded box."""
         N = sides; rows = []
         for ri, ring in enumerate(rings):
             c, ax, ay, rx, ry, wts = ring[:6]; e = 2 / (ring[6] if len(ring) > 6 else 2)
+            if bulk: rx, ry = rx * self.girth, ry * self.girth        # (head, hands and feet stay as they are)
             row = []
             for k in range(N + 1):                            # the seam is doubled for the texture
                 ang = 2 * np.pi * k / N; cs, sn = np.cos(ang), np.sin(ang)
@@ -551,21 +554,21 @@ def smooth(x):
     x = min(1.0, max(0.0, x)); return x * x * (3 - 2 * x)
 
 
-def ellipsoid(mesh, mat, c, r, weights, col=(1, 1, 1), lat0=-90, lat1=90, rows=7, sides=12, shape=None):
+def ellipsoid(mesh, mat, c, r, weights, col=(1, 1, 1), lat0=-90, lat1=90, rows=7, sides=12, shape=None, bulk=False):
     """shape(sin latitude) -> (x scale, z scale, z shift): a jaw, a hairline."""
     rings = []
     for i in range(rows + 1):
         lat = np.radians(lat0 + (lat1 - lat0) * i / rows)
         rr = max(np.cos(lat), 0.02); kx, kz, dz = shape(np.sin(lat)) if shape else (1, 1, 0)
         rings.append((np.asarray(c) + [0, np.sin(lat) * r[1], dz], (1, 0, 0), (0, 0, -1), r[0] * rr * kx, r[2] * rr * kz, weights))
-    mesh.loft(mat, rings, lat0 > -89, lat1 < 89, col, sides=sides)
+    mesh.loft(mat, rings, lat0 > -89, lat1 < 89, col, sides=sides, bulk=bulk)
 
 
-def build_model(sk: Skeleton) -> Mesh:
+def build_model(sk: Skeleton, girth: float = 1.0) -> Mesh:
     """The player, in the T-pose: +X is his left, +Z his front. Four materials: skin (tinted
     per player), jersey (textured: number, trim), shorts (team colour) and kit (vertex
     colours: hair, eyes, socks, shoes, trim)."""
-    m = Mesh(); P = sk.bindP; ix = sk.idx
+    m = Mesh(girth); P = sk.bindP; ix = sk.idx
     J = lambda n: P[ix[n]]
     SKIN, JERSEY, SHORTS, KIT = "skin", "jersey", "shorts", "kit"
     WHITE, SHOE, HAIR, EYE = (0.85, 0.85, 0.85), (0.02, 0.02, 0.026), (0.008, 0.006, 0.005), (0.004, 0.004, 0.004)   # linear RGB
@@ -607,18 +610,18 @@ def build_model(sk: Skeleton) -> Mesh:
               [(0.0, 0.155), (0.14, 0.17), (0.38, 0.165), (0.66, 0.135), (0.9, 0.105), (1.0, 0.1)]],
              hint=(0, 1, 0), cap_start=True, flat=0.92)
         ellipsoid(m, SKIN, J(sd + "Arm") + [sx * -0.02, -0.01, 0], (0.275, 0.27, 0.26),
-                  [(ix[sd + "Shoulder"], .5), (ix[sd + "Arm"], .5)], rows=6, sides=12)
+                  [(ix[sd + "Shoulder"], .5), (ix[sd + "Arm"], .5)], rows=6, sides=12, bulk=True)
         # hand: palm, fingers curling down a little, thumb forward (the T-pose's palms face down)
         wr = J(sd + "Hand"); d = sk.bindW[ix[sd + "Hand"]] @ sk.ends[ix[sd + "Hand"]]; d = d / np.linalg.norm(d)
         ax, ay = frame_for(d, (0, 1, 0)); wHn = [(ix[sd + "Hand"], 1)]
         m.loft(SKIN, [(wr + d * t + np.asarray(ay) * dy, ax, ay, w, th, wHn, 2.6) for t, w, th, dy in
                       ((-0.03, 0.1, 0.085, 0), (0.1, 0.14, 0.07, 0), (0.3, 0.165, 0.06, -0.005), (0.42, 0.16, 0.05, -0.015),
                        (0.58, 0.15, 0.04, -0.05), (0.72, 0.13, 0.034, -0.1), (0.8, 0.08, 0.025, -0.135))],
-               cap_end=True, sides=10)
+               cap_end=True, sides=10, bulk=False)
         tb = wr + d * 0.14 + np.array([0, -0.01, 0.13]); td = np.array([sx * 0.55, -0.25, 0.8]); td /= np.linalg.norm(td)
         tx, ty = frame_for(td, (0, 1, 0))
         m.loft(SKIN, [(tb + td * t, tx, ty, r, r, wHn) for t, r in ((0, 0.05), (0.1, 0.048), (0.2, 0.04), (0.25, 0.02))],
-               cap_end=True, sides=6)
+               cap_end=True, sides=6, bulk=False)
         # leg: thigh, knee, a calf that bulges behind
         limb(m, SKIN, sk, [sd + "UpLeg", sd + "Leg", sd + "Foot"],
              [[(0.25, 0.33), (0.5, 0.3), (0.75, 0.25), (0.92, 0.22)],
@@ -633,7 +636,7 @@ def build_model(sk: Skeleton) -> Mesh:
         toe = J(sd + "ToeBase"); fd = np.array([toe[0] - an[0], 0, toe[2] - an[2]]); fl = np.linalg.norm(fd); fd /= fl
         side = np.cross((0, 1, 0), fd); sole = an[1] - sk.ankle
         m.loft(KIT, [(an + up * t, ax, ay, r, r * 1.05, [(wF, 1)]) for t, r in ((0.3, 0.17), (0.12, 0.175), (-0.02, 0.18))],
-               col=SHOE, sides=12)
+               col=SHOE, sides=12, bulk=False)
         last = ((-0.34, 0.11, 0.3, 0), (-0.26, 0.165, 0.4, 0), (0.0, 0.185, 0.42, 0), (0.45, 0.2, 0.33, 0.25),
                 (0.9, 0.215, 0.25, 0.8), (1.25, 0.2, 0.2, 1), (1.47, 0.15, 0.15, 1), (1.56, 0.07, 0.1, 1))
         for colr, lo, grow in ((SHOE, 0.07, 0.0), (WHITE, 0.0, 0.012)):
@@ -642,7 +645,7 @@ def build_model(sk: Skeleton) -> Mesh:
                 hi = hgt if colr is SHOE else 0.085
                 rings.append((np.array([an[0], sole + (lo + hi) / 2, an[2]]) + fd * (t * fl), side, (0, 1, 0), w + grow,
                               (hi - lo) / 2, [(wF, 1 - wt), (wT, wt)], 3.0))
-            m.loft(KIT, rings, cap_start=True, cap_end=True, col=colr, sides=12)
+            m.loft(KIT, rings, cap_start=True, cap_end=True, col=colr, sides=12, bulk=False)
         # shorts leg: a loose tube over the thigh, with a white hem
         hp = J(sd + "UpLeg")
         ax, ay = frame_for(kn - hp, X); wU = ix[sd + "UpLeg"]
@@ -676,7 +679,7 @@ class Glb:
         return len(self.acc) - 1
 
 
-def write_glb(path, sk, mesh, clips, extras):
+def write_glb(path, sk, mesh, clips, extras, heavy=None):
     g = Glb(); F, U8, U16, I16 = 5126, 5121, 5123, 5122
     v, nrm = mesh.arrays()
     nodes = []
@@ -698,11 +701,17 @@ def write_glb(path, sk, mesh, clips, extras):
                               U8, "VEC4", 34962, normalized=True),
              "JOINTS_0": g.add(np.array(mesh.j, dtype=np.uint8), U8, "VEC4", 34962),
              "WEIGHTS_0": g.add(np.array(mesh.w, dtype=np.float32), F, "VEC4", 34962)}
+    # one morph target, "bulk": the same mesh drawn BULK_GIRTH times as thick (the viewer sets
+    # it per player from his weight; a negative weight slims him)
+    bulk = None
+    if heavy is not None:
+        bulk = g.add((heavy.arrays()[0] - v).astype(np.float32), F, "VEC3", minmax=True)
     mats, prims = [], []
     for name in ("skin", "jersey", "shorts", "kit"):
         idx = g.add(np.array(mesh.tri[name], dtype=np.uint16).reshape(-1), U16, "SCALAR", 34963)
         mats.append({"name": name, "pbrMetallicRoughness": {"baseColorFactor": [1, 1, 1, 1], "metallicFactor": 0, "roughnessFactor": 0.9}})
         prims.append({"attributes": attrs, "indices": idx, "material": len(mats) - 1})
+        if bulk is not None: prims[-1]["targets"] = [{"POSITION": bulk}]
     nodes.append({"name": "Body", "mesh": 0, "skin": 0})
     nodes.append({"name": "Player", "children": [0, len(KEEP)]})
     anims = []
@@ -718,7 +727,9 @@ def write_glb(path, sk, mesh, clips, extras):
     doc = {"asset": {"version": "2.0", "generator": "hoopsim tools/build_player_assets.py",
                      "copyright": "Model: hoopsim. Motion: CMU Graphics Lab Motion Capture Database (mocap.cs.cmu.edu)"},
            "scene": 0, "scenes": [{"nodes": [len(KEEP) + 1]}], "nodes": nodes,
-           "meshes": [{"name": "Body", "primitives": prims}], "materials": mats,
+           "meshes": [dict({"name": "Body", "primitives": prims},
+                           **({"weights": [0.0], "extras": {"targetNames": ["bulk"]}} if bulk is not None else {}))],
+           "materials": mats,
            "skins": [{"joints": list(range(len(KEEP))), "inverseBindMatrices": ibm, "skeleton": 0}],
            "animations": anims, "buffers": [{"byteLength": len(g.bin)}], "bufferViews": g.views, "accessors": g.acc,
            "extras": {"hoopsim": extras}}
@@ -761,9 +772,12 @@ def main(argv=None):
             mm = dict(meta, mirrored=True)
             if "side" in mm: mm["side"] = -mm["side"]
             clips[name + "_m"] = (t, mp.astype(np.float32), mq, mm)
-    mesh = build_model(sk)
-    extras = {"version": 1, "height": HEIGHT, "fps": FPS, "clips": {n: c[3] for n, c in clips.items()}}
-    size = write_glb(Path(args.out), sk, mesh, clips, extras)
+    mesh, heavy = build_model(sk), build_model(sk, BULK_GIRTH)
+    span = 2 * float(sk.bindP[sk.idx["LeftHand"]][0]) + 2 * 0.8          # fingertip to fingertip in the T-pose
+    arm = float(sk.bindP[sk.idx["LeftHand"]][0] - sk.bindP[sk.idx["LeftArm"]][0]) + 0.8
+    extras = {"version": 2, "height": HEIGHT, "fps": FPS, "clips": {n: c[3] for n, c in clips.items()},
+              "body": {"bulk_girth": BULK_GIRTH, "span": round(span, 3), "arm": round(arm, 3)}}
+    size = write_glb(Path(args.out), sk, mesh, clips, extras, heavy)
     tris = sum(len(t) for t in mesh.tri.values())
     print(f"{args.out}: {size / 1024:.0f} KB, {len(mesh.v)} vertices, {tris} triangles, {len(KEEP)} joints, {len(clips)} clips")
     for n, c in clips.items():

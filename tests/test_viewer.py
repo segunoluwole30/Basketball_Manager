@@ -216,6 +216,48 @@ class AnimatedPlayersTests(unittest.TestCase):
         for name in ("dribble_idle", "dribble_walk", "dribble_run"):
             self.assertTrue(clips[name]["dribble"]["bounces"], name)
 
+    def test_builds_per_player(self):
+        """Height, weight and wingspan shape each player: one mesh, a "bulk" shape and arm length."""
+        doc = read_glb(PLAYER_ASSETS["player.glb"])[4]
+        mesh = doc["meshes"][0]
+        self.assertEqual(mesh["extras"]["targetNames"], ["bulk"])
+        self.assertEqual(mesh["weights"], [0.0])                   # as designed until the viewer sets it
+        for prim in mesh["primitives"]:
+            self.assertEqual(list(prim["targets"][0]), ["POSITION"])
+        body = doc["extras"]["hoopsim"]["body"]
+        self.assertGreater(body["bulk_girth"], 1.1)
+        self.assertGreater(body["span"], 2 * body["arm"])
+        src = self.template
+        self.assertEqual(src.count("function physique(pl)"), 1)
+        # real numbers when the page has them, the position's typical build otherwise
+        self.assertIn("const ht = pl.ht > 0 ? pl.ht : b[0]", src)
+        self.assertIn("const wt = pl.wt > 0 ? pl.wt : b[1]", src)
+        self.assertIn("const ws = pl.ws > 0 ? pl.ws : ht", src)
+        self.assertIn("o.morphTargetInfluences[0] = (ph.girth - 1) / (body.bulk_girth - 1);", src)
+        self.assertIn('bones[sd + "Arm"].scale.setScalar(arm);', src)
+        self.assertIn("function skinOf(pl)", src)                  # a stored skin tone wins over the name's
+        # exported pages carry no builds: nothing to look players up in
+        self.assertNotIn('"ht":', build_html(self.data))
+
+    def test_web_pages_carry_real_builds(self):
+        try:
+            from hoopsim.web.session import GameSession
+        except ImportError:
+            self.skipTest("web extras not installed")
+        import tempfile
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        session = GameSession(saves_dir=tmp.name)
+        session.new_game(seed=3, num_teams=4)
+        known = next(iter(session.league.players.values()))
+        data = {"home": {"players": [{"num": known.jersey_number, "name": known.name, "pos": "PG", "ca": 100}]},
+                "away": {"players": [{"num": 1, "name": "Nobody Atall", "pos": "C", "ca": 100}]}}
+        out = session._viewer_builds(data)
+        row = out["home"]["players"][0]
+        self.assertEqual((row["ht"], row["wt"], row["ws"]),
+                         (known.physique.height_cm, known.physique.weight_kg, known.physique.wingspan_cm))
+        self.assertNotIn("ht", out["away"]["players"][0])          # not in the league: sized by position
+
     def test_licences_recorded(self):
         notes = (PLAYER_ASSETS["player.glb"].parent / "LICENSES.md").read_text(encoding="utf-8")
         for needle in ("mocap.cs.cmu.edu", "NSF EIA-0196217", "GLTFLoader.js", "SkeletonUtils.js",

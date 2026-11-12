@@ -174,7 +174,17 @@ ball (a rebound, a block, the rim on a dunk). A clip that is still running when 
 possession ends plays on through the pause and into the next one. Replays recorded before
 the cues existed get shots, passes, catches and rebounds read off the frames instead.
 
-The files (`spatial/assets/player.glb`, 0.55 MB, plus three.js r160's `GLTFLoader`,
+Each player has his own build. In the browser interface the page carries his real height,
+weight and wingspan (looked up in the league when the page is served, so recordings are
+unchanged): height scales the whole figure, weight sets how much of the model's "bulk"
+shape he gets (a morph target: the same mesh drawn thicker, or thinner than designed), and
+wingspan lengthens or shortens his arms. The simple bodies get the height and the width
+too. Without those numbers (exported pages, or a player who has left the league) he gets
+the typical build for his position, varied a little by his name. Skin tone is still picked
+by name: players have no stored look yet, but a `skin` field on a player in the page data
+(an index into the viewer's tones, or `#rrggbb`) is used when present.
+
+The files (`spatial/assets/player.glb`, 0.57 MB, plus three.js r160's `GLTFLoader`,
 `BufferGeometryUtils` and `SkeletonUtils` in `spatial/vendor/`, 0.15 MB, unmodified) are
 served by the web app at `/viewer-assets/` and fetched only the first time 3D is shown;
 nothing is added to the page itself. If they fail to load, the view says so and keeps the
