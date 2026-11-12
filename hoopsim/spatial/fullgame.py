@@ -55,6 +55,7 @@ from ..engine import DEFAULT_TUNING as SEASON_TUNING
 from ..engine import GameSim, PlayEvent, Tuning
 from ..injuries import draw_injury
 from ..lineup import lineup_is_usable, plan_rotation
+from ..systems import offense_style
 from ..models import (BoxScore, DefensiveScheme, GameResult, Injury, League, Player, PlayerLine,
                       Position, TeamBox)
 from . import court as C
@@ -720,6 +721,7 @@ class FullGame:
     def _push_after_make(self, offense: Side, tempo: Optional[str] = None) -> float:
         base = self.ot.push_after_score
         logit = math.log(base / (1 - base)) + self.ot.pace_effect * (offense.tactics.pace - 10)
+        logit += offense_style(offense.tactics).push_after_make     # seven seconds or less
         if tempo == "push":
             logit += 2.0                        # the coach: push it after makes too
         return 1 / (1 + math.exp(-logit))

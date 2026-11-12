@@ -942,8 +942,19 @@ window.GAME = /*GAME_DATA*/null;
       l.children[1].addEventListener("change", (e) => command({ type: "tactics", changes: { [key]: e.target.value } }));
       return l;
     };
+    const SYSTEMS = { system: [["balanced", "Balanced"], ["pace_space", "Pace and Space"], ["seven_seconds", "Seven Seconds"],
+      ["motion", "Motion"], ["triangle", "Triangle"], ["grit_grind", "Grit and Grind"], ["inside_out", "Inside-Out"],
+      ["heliocentric", "Heliocentric"]], defense_system: [["man", "Balanced man"], ["switch", "Switch everything"],
+      ["drop", "Drop coverage"], ["zone", "Zone"], ["press", "Full-court press"]] };
+    const system = (key, label) => {                 // a system resets the sliders to its own
+      const l = document.createElement("label"); l.className = "t";
+      l.innerHTML = `<span>${label}</span><select>${SYSTEMS[key].map(([k, n]) => `<option value="${k}" ${t[key] === k ? "selected" : ""}>${n}</option>`).join("")}</select><span></span>`;
+      l.children[1].addEventListener("change", (e) => command({ type: "tactics", changes: { [key]: e.target.value } }));
+      return l;
+    };
+    box.append(system("system", "Offence"), system("defense_system", "Defence"));
     box.append(slider("pace", "Pace"), slider("three", "Threes"), slider("crash", "Crash glass"),
-      select("focus", "Focus", ["inside", "balanced", "perimeter"]), select("defense", "Defence", ["man", "switch", "zone", "press"]));
+      select("focus", "Focus", ["inside", "balanced", "perimeter"]), select("defense", "Scheme", ["man", "switch", "zone", "press"]));
     tac.appendChild(box);
     coach.appendChild(tac);
     const msg = document.createElement("div"); msg.className = "msg"; msg.id = "coachMsg";

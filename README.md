@@ -1063,6 +1063,62 @@ What didn't work or is still off:
   ORB .18 and FTA/FGA .17 (both below estimates). The full-game numbers are real
   data, so they decide.
 
+## Coaching systems (`hoopsim/systems.py`, web: **Tactics**)
+Presets like NBA 2K's coach settings. Choosing a system **sets the sliders** (pace,
+three-point rate, crash the glass, offensive focus, defensive scheme), which you can
+still adjust. While it's selected, it also keeps a **style** that both engines play:
+the shots it hunts, how the ball is shared, how often it runs, which set plays it
+calls and how many, and small standing nudges to players' decisions (like a coach's
+shouts, smaller).
+
+| Offence | Identity |
+|---|---|
+| Balanced | No strong identity |
+| Pace and Space | Spread pick-and-roll, threes, few mid-range shots, runs a bit |
+| Seven Seconds or Less | Pushes after rebounds, steals and makes; shoots early; fewer sets |
+| Motion (Princeton) | Hand-offs, down-screens, swings; shots spread around; most assists |
+| Triangle | Post entries, cuts, mid-range reads; more sets |
+| Grit and Grind | Slow, inside, crashes the glass, doesn't run |
+| Inside-Out | Feeds the post big, kicks out when he draws help |
+| Heliocentric | The star runs pick-and-roll and takes his shots; fewest assists |
+
+| Defence | Identity |
+|---|---|
+| Balanced man | The default |
+| Switch everything | Switches screens: no open pick-and-roll looks, mismatches to hunt |
+| Drop coverage | The big drops and everyone sags: fewer shots at the rim, more pull-up threes |
+| Zone | Packs the paint |
+| Full-court press | Picks up full court (see "Where the defence picks up"), forces turnovers, tires legs |
+
+**Fit.** The ★ ratings show how well each system suits your roster, and AI teams pick
+what suits theirs: shooters go Pace and Space, a dominant post big gets Inside-Out or
+the Triangle, a star guard runs Heliocentric. In the real-NBA league Denver gets the
+Triangle (Jokić) and Oklahoma City goes Heliocentric. League files keep their teams'
+real pace and three-point settings, and a file can name a team's systems
+(`"offense_system"`, `"defense_system"`).
+
+The wrong system hurts. Inside systems cost a team of shooters with ordinary bigs
+several points per 100 possessions, while for a strong post team they match or beat
+Balanced. In a live match the Coach panel switches systems for that game only. The
+CLI command is `tactics system=triangle defense_system=drop`.
+
+**Measured.** These numbers come from the same team, opponents and seeds, with only
+the system changed (statistical engine, 400 games each):
+
+| System | Possessions | Three-point share | Star's share of shots |
+|---|---|---|---|
+| Balanced | 99 | 47% | 21% |
+| Pace and Space | 103 | 57% | |
+| Seven Seconds or Less | 104 | | |
+| Grit and Grind | 94 | 33% | |
+| Triangle | | 39% | |
+| Heliocentric | | | 29% |
+
+Drop coverage raises opponents' three-point share by about 3 points. With every AI team
+on a system, the statistical league stays calibrated: 98.8 possessions, 111 points and
+42% threes, against 98.4, 111 and 42% all-Balanced. The spatial engine runs about 2
+possessions a game faster (104 against 102; the NBA is 99.4); points stay on target.
+
 ## All-Star Weekend (`hoopsim/allstar.py`, web: **League → All-Star**)
 Seasons long enough for an All-Star break (60+ games) get the NBA's mid-February
 weekend. Everything happens on its date as you sim:

@@ -29,6 +29,7 @@ from typing import Optional
 
 from ..lineup import plan_rotation
 from ..models import League, Player
+from ..systems import defense_style, offense_style
 from . import court as C
 from . import plays
 from .court import CLOSE_ZONE, MID_ZONE, RIM, RIM_ZONE, THREE_ZONE
@@ -1641,10 +1642,10 @@ class HalfCourtGame:
     def shout_bias(self, h: Agent, kind: str, action: tuple) -> float:
         """The offence's coach shouting from the bench (``self.shouts``): attack the rim,
         look for threes, slow it down, push the pace, feed the post, get X the ball."""
+        b = self.system_bias(h, kind, action)
         s = self.shouts.get(self.side)
         if not s:
-            return 0.0
-        b = 0.0
+            return b
         sh = self.SHOUTS
         if kind == "shoot":
             zone = action[1]
@@ -1679,13 +1680,48 @@ class HalfCourtGame:
                     b += sh[tempo]["early"]
         return b
 
+    def system_bias(self, h: Agent, kind: str, action: tuple) -> float:
+        """The offence's coaching system (systems.py): standing nudges to its players'
+        choices, smaller than a shout (more threes, post feeds, pass the ball...)."""
+        st = offense_style(self.teams[self.side].tactics)
+        if not st.bias and not st.star_ball:
+            return 0.0
+        bias, b = st.bias, 0.0
+        if kind == "shoot":
+            zone = action[1]
+            b += bias.get("three" if zone == THREE_ZONE else "mid" if zone == MID_ZONE else "inside", 0.0)
+        elif kind in ("drive", "pnr", "post"):
+            b += bias.get(kind, 0.0)
+        elif kind == "pass":
+            mate = action[1]
+            b += bias.get("pass", 0.0)
+            if "feed" in bias and mate.slot >= 3 and C.dist_to_rim(mate.pos) < 11:
+                b += bias["feed"]
+            if st.star_ball and mate is self.star(self.side):
+                b += st.star_ball
+        if st.star_ball and h is self.star(self.side) and kind in ("shoot", "drive", "post", "pnr"):
+            b += 0.5 * st.star_ball
+        if self.shot_clock > 10:
+            if kind in ("hold", "reset"):
+                b += bias.get("hold", 0.0)
+            elif kind in ("shoot", "drive", "pnr"):
+                b += bias.get("early", 0.0)
+        return b
+
+    def star(self, side: str) -> Agent:
+        """The best player of ``side`` on the floor (heliocentric offences feed him)."""
+        return max(self.agents[side], key=lambda a: a.p.current_ability)
+
     def shout_defense(self) -> tuple[float, float]:
         """The defence's shout: (extra on-ball cushion in ft, extra sag toward the paint).
-        Pressure the ball gets up on him and stays home; protect the paint sits back."""
-        s = self.shouts.get("away" if self.side == "home" else "home")
+        Pressure the ball gets up on him and stays home; protect the paint sits back.
+        A drop-coverage system sits back too, all game."""
+        defending = "away" if self.side == "home" else "home"
+        st = defense_style(self.teams[defending].tactics)
+        s = self.shouts.get(defending)
         if not s:
-            return 0.0, 0.0
-        gap = sag = 0.0
+            return st.gap, st.sag
+        gap, sag = st.gap, st.sag
         for key, (g, k) in self.DEFENSE_SHOUTS.items():
             if key in s:
                 gap, sag = gap + g, sag + k

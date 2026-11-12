@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from .injuries import draw_injury
+from .systems import defense_style, offense_style
 from .lineup import lineup_is_usable, plan_rotation
 from .models import (
     BoxScore, DefensiveScheme, Game, GameResult, Injury, League, OffensiveFocus, Player,
@@ -471,6 +472,11 @@ class _GameSim:
             w[RIM] *= 4; w[MID] *= 0.5
         if putback:
             w[RIM] *= 3; w[CLOSE] *= 1.5; w[THREE] *= 0.3
+        # Coaching systems: the shots this offence hunts, and what this defence gives up.
+        for zone, factor in offense_style(offense.tactics).zone.items():
+            w[zone] *= factor
+        for zone, factor in defense_style(defense.tactics).opp_zone.items():
+            w[zone] *= factor
         for zone, factor in (bias or {}).items():
             w[zone] *= factor
         return [w[z] for z in ZONES]
@@ -493,6 +499,7 @@ class _GameSim:
                  - 0.009 * (rim_d - 10))
             if scheme is DefensiveScheme.ZONE:
                 p -= 0.02
+            p += defense_style(defense.tactics).rim_make      # drop coverage: a big waiting at the rim
             if fast_break:
                 p += 0.08
             if putback:
@@ -541,10 +548,14 @@ class _GameSim:
             slot = offense.lineup.index(putback)
         else:
             # Pass-first players take fewer shots.
-            weights = [math.exp(USAGE * (_offense_skill(ig) - 10)
+            style = offense_style(offense.tactics)
+            weights = [math.exp(USAGE * style.usage_scale * (_offense_skill(ig) - 10)
                                 - 0.03 * (ig.p.tendencies.passing - 10)
                                 + (0.35 * (ig.r("three_point") - 10) if need_three or heave else 0))
                        for ig in offense.lineup]
+            if style.star and not (need_three or heave):     # heliocentric: the star takes his shots
+                best = max(range(5), key=lambda i: _offense_skill(offense.lineup[i]))
+                weights[best] *= 1 + style.star
             slot = rng.choices(range(5), weights)[0]
         shooter = offense.lineup[slot]
         defender = self._defender(offense, defense, slot)
@@ -635,7 +646,8 @@ class _GameSim:
             return None
         mates = [ig for ig in offense.lineup if ig is not shooter]
         passing = sum(ig.r("passing") for ig in mates) / len(mates)
-        p = self.t.assist[zone] * math.exp(0.05 * (passing - 10)) * (0.75 if fast_break else 1.0)
+        p = (self.t.assist[zone] * math.exp(0.05 * (passing - 10)) * (0.75 if fast_break else 1.0)
+             * offense_style(offense.tactics).assist)
         if self.rng.random() >= p:
             return None
         w = [math.exp(0.45 * ((ig.r("passing") + ig.r("vision")) / 2 - 10)
@@ -678,6 +690,7 @@ class _GameSim:
         fb_base = {"steal": t.fast_break_after_steal, "drb": t.fast_break_after_rebound}.get(transition, 0)
         fb_base *= math.exp(0.05 * (pace - 10)
                             + 0.04 * (defense.tactics.crash_offensive_glass - 10))
+        fb_base *= offense_style(offense.tactics).fast_break
         # Teams protecting a lead or holding for a last shot don't run.
         fast_break = mode in ("normal", "hurry") and rng.random() < fb_base
         if fast_break:

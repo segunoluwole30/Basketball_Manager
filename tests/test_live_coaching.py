@@ -15,7 +15,7 @@ def coached_games(shouts=None, seeds=SEEDS, user="home"):
     turnovers and the on-ball cushion of the other side's handlers."""
     tot = Counter()
     for seed in seeds:
-        g = FullGame(generate_league(seed=5), 1, 2, random.Random(seed))
+        g = FullGame(generate_league(seed=5, systems=False), 1, 2, random.Random(seed))
         m = g.attach_manager(user)
         for name, extra in (shouts or {}).items():
             m["shouts"][name] = dict({"left": None}, **extra)
@@ -96,7 +96,7 @@ class ShoutTests(unittest.TestCase):
         self.assertGreater(t["post_ups"], self.base["post_ups"] * 1.15)
 
     def test_get_him_the_ball(self):
-        league = generate_league(seed=5)
+        league = generate_league(seed=5, systems=False)
         g = FullGame(league, 1, 2, random.Random(0))
         target = g.home.lineup[2].p.id                     # a wing, not the point guard
         t = self.run_with("ball_to", player=target)
@@ -123,11 +123,11 @@ class ShoutTests(unittest.TestCase):
 
 class CoachingStateTests(unittest.TestCase):
     def game(self, seed=3, side="home"):
-        g = FullGame(generate_league(seed=5), 1, 2, random.Random(seed), record=True)
+        g = FullGame(generate_league(seed=5, systems=False), 1, 2, random.Random(seed), record=True)
         return g, g.attach_manager(side)
 
     def test_untouched_commands_change_nothing(self):
-        a = FullGame(generate_league(seed=5), 1, 2, random.Random(3), record=True)
+        a = FullGame(generate_league(seed=5, systems=False), 1, 2, random.Random(3), record=True)
         b, m = self.game()
         self.assertEqual(m["endgame"], {"last_shot": "auto", "two_for_one": "auto", "foul": "auto"})
         self.assertEqual(a.run().result, b.run().result)
@@ -229,7 +229,7 @@ class CoachingStateTests(unittest.TestCase):
 class LiveCommandTests(unittest.TestCase):
     def setUp(self):
         from hoopsim.spatial.live import LiveMatch
-        league = generate_league(seed=5)
+        league = generate_league(seed=5, systems=False)
         league.rules.quarter_minutes = 3
         game = min(league.games.values(), key=lambda g: g.id)
         league.user_team_id = game.home_team_id

@@ -9,7 +9,7 @@ from hoopsim.spatial.values import HEURISTIC
 
 
 def game(params=DEFAULT_PARAMS, pace=None, seed=4):
-    league = generate_league(seed=41)
+    league = generate_league(seed=41, systems=False)
     if pace is not None:
         for t in league.teams.values():
             t.tactics.pace = pace
@@ -137,7 +137,7 @@ class DenialTests(unittest.TestCase):
         self.assertLess(g.stats["denials"], 0.9 * swings)
 
     def test_zones_do_not_deny(self):
-        league = generate_league(seed=41)
+        league = generate_league(seed=41, systems=False)
         from hoopsim.models import DefensiveScheme
         for t in league.teams.values():
             t.tactics.defensive_scheme = DefensiveScheme.ZONE

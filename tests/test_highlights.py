@@ -52,7 +52,7 @@ class ClassifyTests(unittest.TestCase):
 class GameHighlightTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        g = FullGame(generate_league(seed=5), 1, 5, random.Random(0), record=True)
+        g = FullGame(generate_league(seed=5, systems=False), 1, 5, random.Random(0), record=True)
         g.run()
         cls.data = g.to_dict()
 

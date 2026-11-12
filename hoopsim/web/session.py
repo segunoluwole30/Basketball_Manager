@@ -23,6 +23,7 @@ from ..engine import clear_healed, play_day, store_result, tick_injuries
 from ..generate import generate_league
 from .. import allstar, editor
 from ..news import post as post_news
+from ..systems import describe as describe_systems, fit_for_team
 from ..models import MATCH_ENGINES
 from ..lineup import POSITIONS
 from ..manager import (
@@ -491,6 +492,8 @@ class GameSession:
         return {"pace": t.pace, "three": t.three_point_rate, "crash": t.crash_offensive_glass,
                 "depth": t.rotation_depth, "focus": t.offensive_focus.value,
                 "defense": t.defensive_scheme.value,
+                "system": t.offense_system, "defense_system": t.defense_system,
+                "systems": describe_systems(), "fit": fit_for_team(lg, lg.user_team_id),
                 "choices": {"focus": [f.value for f in OffensiveFocus],
                             "defense": [d.value for d in DefensiveScheme]}}
 

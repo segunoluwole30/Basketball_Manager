@@ -15,7 +15,7 @@ from hoopsim.spatial.values import HEURISTIC
 
 
 def play(params, seed=5, possessions=40):
-    league = generate_league(seed=41)
+    league = generate_league(seed=41, systems=False)
     g = HalfCourtGame(league, 1, 2, random.Random(seed), record=True, model=HEURISTIC, params=params)
     g.play(possessions)
     return g

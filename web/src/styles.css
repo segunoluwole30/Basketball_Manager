@@ -516,3 +516,13 @@ ul.plain li { padding: 3px 0; }
 .as-details summary { cursor: pointer; font-weight: 600; }
 .chip-star { border-color: var(--accent, #d0661c); color: var(--accent, #d0661c); }
 .table tr.as-sub th { position: static; text-align: left; }
+
+/* ---- Coaching systems ---- */
+.systems { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; margin: 4px 0 12px; }
+.system-card { display: flex; flex-direction: column; gap: 3px; text-align: left; padding: 8px 10px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--panel); color: var(--text); cursor: pointer; font: inherit; }
+.system-card:hover { background: var(--row-hover); }
+.system-card.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; background: var(--accent-soft); }
+.system-head { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+.fit-stars { color: var(--accent); font-size: 12px; letter-spacing: 1px; white-space: nowrap; }
+.fit-stars .muted { color: var(--border); }

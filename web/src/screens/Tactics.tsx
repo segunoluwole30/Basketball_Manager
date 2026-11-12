@@ -121,20 +121,51 @@ const FOCUS_HELP: Record<string, string> = {
   perimeter: "Spaces five-out and hunts threes.",
 };
 const DEFENSE_HELP: Record<string, string> = {
-  man: "Man-to-man with drop coverage.",
+  man: "Man-to-man, help when beaten (Drop coverage is a defensive system above).",
   switch: "Swap assignments on screens.",
   zone: "Packs the paint, concedes perimeter looks.",
   press: "Forces turnovers but gets beaten off the dribble more, and tires players.",
 };
 
+const Stars = ({ n }: { n: number }) => (
+  <span className="fit-stars" title={`Fit for your roster: ${n} of 5`} aria-label={`fit ${n} of 5`}>
+    {"★".repeat(n)}<span className="muted">{"★".repeat(5 - n)}</span>
+  </span>
+);
+
+/** Coaching systems: pick one and it sets the sliders below; its style stays while it's selected. */
+function SystemPicker({ side, list, value, fit, onPick }: { side: string; list: any[]; value: string; fit: Record<string, number>; onPick: (s: any) => void }) {
+  return (
+    <div className="systems" role="radiogroup" aria-label={`${side} system`}>
+      {list.map((s) => (
+        <button key={s.key} type="button" role="radio" aria-checked={value === s.key}
+          className={`system-card ${value === s.key ? "on" : ""}`} onClick={() => onPick(s)}>
+          <span className="system-head"><b>{s.name}</b><Stars n={fit[s.key] ?? 3} /></span>
+          <span className="muted small">{s.blurb}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function TeamTactics({ t }: { t: any }) {
   const { act, busy } = useGame();
   const [v, setV] = useState<any>(t);
   useEffect(() => setV(t), [t]);
-  const changed = ["pace", "three", "crash", "depth", "focus", "defense"].some((k) => v[k] !== t[k]);
+  const changed = ["pace", "three", "crash", "depth", "focus", "defense", "system", "defense_system"].some((k) => v[k] !== t[k]);
+  const pickOffense = (s: any) => setV({ ...v, system: s.key, pace: s.sliders.pace, three: s.sliders.three, crash: s.sliders.crash, focus: s.sliders.focus });
+  const pickDefense = (s: any) => setV({ ...v, defense_system: s.key, defense: s.sliders.defense });
+  const offName = t.systems.offense.find((s: any) => s.key === v.system)?.name;
+  const preset = t.systems.offense.find((s: any) => s.key === v.system)?.sliders;
+  const tweaked = preset && (preset.pace !== v.pace || preset.three !== v.three || preset.crash !== v.crash || preset.focus !== v.focus);
   return (
     <Panel title="Team tactics">
       <div className="form">
+        <div className="slider-label">Offensive system <span className="muted small">{offName}{tweaked ? " (sliders adjusted)" : ""}</span></div>
+        <SystemPicker side="Offence" list={t.systems.offense} value={v.system} fit={t.fit.offense} onPick={pickOffense} />
+        <div className="slider-label">Defensive system</div>
+        <SystemPicker side="Defence" list={t.systems.defense} value={v.defense_system} fit={t.fit.defense} onPick={pickDefense} />
+        <p className="muted small">A system sets the sliders below and keeps its style while selected: the shots it hunts, how the ball moves, which sets it runs and how often it runs. ★ = how well it suits your roster.</p>
         {SLIDERS.map((s) => (
           <label key={s.key} className="slider-row">
             <span className="slider-label">{s.label}</span>
@@ -153,7 +184,7 @@ function TeamTactics({ t }: { t: any }) {
           <span className="muted small">{FOCUS_HELP[v.focus]}</span>
         </div>
         <div className="choice-group">
-          <span className="slider-label">Defence</span>
+          <span className="slider-label">Scheme</span>
           {t.choices.defense.map((f: string) => (
             <label key={f} className={`choice ${v.defense === f ? "choice-on" : ""}`} title={DEFENSE_HELP[f]}>
               <input type="radio" name="defense" checked={v.defense === f} onChange={() => setV({ ...v, defense: f })} /> {f}
@@ -163,7 +194,7 @@ function TeamTactics({ t }: { t: any }) {
         </div>
         <div className="row gap">
           <button className="btn btn-primary btn-small" disabled={!changed || busy}
-            onClick={() => act(() => api.post("/api/tactics", { pace: v.pace, three: v.three, crash: v.crash, depth: v.depth, focus: v.focus, defense: v.defense }), "Tactics saved")}>
+            onClick={() => act(() => api.post("/api/tactics", { system: v.system, defense_system: v.defense_system, pace: v.pace, three: v.three, crash: v.crash, depth: v.depth, focus: v.focus, defense: v.defense }), "Tactics saved")}>
             Save tactics
           </button>
           <button className="btn btn-small btn-ghost" disabled={!changed} onClick={() => setV(t)}>Reset</button>

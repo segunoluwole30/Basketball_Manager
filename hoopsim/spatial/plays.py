@@ -28,6 +28,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Optional
 
+from ..systems import offense_style
 from . import court as C
 from .court import RIM
 
@@ -52,8 +53,10 @@ def plan(g: "HalfCourtGame") -> Optional[dict]:
         return None
     if g.shot_clock < MIN_CLOCK:
         return None
-    pace = g.teams[g.side].tactics.pace
-    n = round(p.entry_actions * max(0.3, 1 - 0.06 * (pace - 10)) + g.rng.uniform(-0.75, 0.75))
+    tactics = g.teams[g.side].tactics
+    pace = tactics.pace
+    n = round(p.entry_actions * max(0.3, 1 - 0.06 * (pace - 10)) + g.rng.uniform(-0.75, 0.75)
+              + offense_style(tactics).entry)                 # motion and triangle run more sets
     n = max(0, min(MAX_ACTIONS, n))
     if n == 0:
         return None
@@ -137,6 +140,9 @@ def start_next(g: "HalfCourtGame", play: dict) -> bool:
     if (closing and screeners and g.pnr_used < 3 and C.dist_to_rim(h.pos) > 18
             and g.shot_clock >= MIN_CLOCK + 1):
         options.append(("pnr", g.p.entry_pnr))
+    weights = offense_style(g.teams[g.side].tactics).plays     # the system's favourite actions
+    if weights:
+        options = [(k, w * weights.get(k, 1.0)) for k, w in options]
     force = play.pop("force", None)
     if force is not None:                    # a called set: that action if it can be run at all
         kind, who = force

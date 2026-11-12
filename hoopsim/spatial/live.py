@@ -203,7 +203,16 @@ class LiveMatch:
         elif kind == "tactics":
             t = side.tactics
             changed = []
-            for key, value in (cmd.get("changes") or {}).items():
+            changes = dict(cmd.get("changes") or {})
+            for key, kw in (("system", "offense"), ("defense_system", "defense")):
+                if key in changes:                     # a system first: it sets the sliders
+                    from ..systems import apply
+                    try:
+                        apply(t, **{kw: str(changes.pop(key))})
+                    except ValueError as e:
+                        raise LiveError(str(e))
+                    changed.append(key.replace("_", " "))
+            for key, value in changes.items():
                 attr = LIVE_TACTICS.get(key)
                 if attr is None:
                     raise LiveError(f"unknown tactic '{key}' (try: {', '.join(LIVE_TACTICS)})")
@@ -340,7 +349,8 @@ class LiveMatch:
                                      if m["ato_next"] else None),
                         "endgame": dict(m["endgame"])},
             "tactics": {"pace": t.pace, "three": t.three_point_rate, "crash": t.crash_offensive_glass,
-                        "focus": t.offensive_focus.value, "defense": t.defensive_scheme.value},
+                        "focus": t.offensive_focus.value, "defense": t.defensive_scheme.value,
+                        "system": t.offense_system, "defense_system": t.defense_system},
         }
 
     def header(self) -> dict:

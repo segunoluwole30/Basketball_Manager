@@ -187,6 +187,15 @@ def load_league_file(source: Union[str, Path, dict], *, seed: int = 0) -> League
         if n < 5:
             raise LeagueFileError(f"{league.teams[tid].abbreviation} has {n} players; a team needs at least 5")
         auto_lineup(league, tid)
+    from .systems import DEFENSE, OFFENSE, apply, assign_ai_systems
+    assign_ai_systems(league, random.Random(f"systems|{seed}"),
+                      keep_sliders=frozenset(i for i, t in enumerate(teams, 1) if t.get("tactics")))
+    for i, t in enumerate(teams, 1):                 # a file can name a team's systems
+        o, d = t.get("offense_system"), t.get("defense_system")
+        if o is not None and o not in OFFENSE or d is not None and d not in DEFENSE:
+            raise LeagueFileError(f"team {i}: unknown coaching system ({o}, {d})")
+        if o or d:
+            apply(league.teams[i].tactics, offense=o, defense=d)
     for p in league.players.values():
         if p.age(start) <= 20 and p.draft_year is None:
             p.draft_year = season

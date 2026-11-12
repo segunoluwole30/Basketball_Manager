@@ -183,14 +183,25 @@ def set_auto_lineup(league: League, on: bool) -> str:
 TACTIC_KEYS = {
     "pace": "pace", "three": "three_point_rate", "crash": "crash_offensive_glass",
     "depth": "rotation_depth", "focus": "offensive_focus", "defense": "defensive_scheme",
+    "system": "offense_system", "defense_system": "defense_system",
 }
 
 
 def set_tactics(league: League, **changes) -> tuple[bool, str]:
     """pace/three/crash 1-20, depth 5-15, focus inside|balanced|perimeter,
     defense man|switch|zone|press."""
+    from .systems import DEFENSE, OFFENSE, apply
     t = _user_team(league).tactics
+    # A system first (it sets the sliders), then any slider changes on top.
+    for key, table, kw in (("system", OFFENSE, "offense"), ("defense_system", DEFENSE, "defense")):
+        if key in changes:
+            value = str(changes[key])
+            if value not in table:
+                return False, f"unknown {key.replace('_', ' ')} '{value}' (try: {', '.join(table)})"
+            apply(t, **{kw: value})
     for key, value in changes.items():
+        if key in ("system", "defense_system"):
+            continue
         attr = TACTIC_KEYS.get(key)
         if attr is None:
             return False, f"unknown tactic '{key}' (try: {', '.join(TACTIC_KEYS)})"
@@ -212,7 +223,9 @@ def set_tactics(league: League, **changes) -> tuple[bool, str]:
 
 def describe_tactics(league: League) -> str:
     t = _user_team(league).tactics
-    return (f"pace {t.pace}, three {t.three_point_rate}, focus {t.offensive_focus.value}, "
+    from .systems import DEFENSE, OFFENSE
+    return (f"{OFFENSE[t.offense_system].name} / {DEFENSE[t.defense_system].name}: "
+            f"pace {t.pace}, three {t.three_point_rate}, focus {t.offensive_focus.value}, "
             f"defense {t.defensive_scheme.value}, crash {t.crash_offensive_glass}, depth {t.rotation_depth}")
 
 

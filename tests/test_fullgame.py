@@ -12,7 +12,7 @@ from hoopsim.spatial.fullgame import FullGame
 
 
 def short_league(seed: int, quarter_minutes: int = 3, **rules):
-    league = generate_league(seed=seed)
+    league = generate_league(seed=seed, systems=False)
     league.rules.quarter_minutes = quarter_minutes
     league.rules.overtime_minutes = 2
     for k, v in rules.items():
@@ -25,7 +25,7 @@ class FullGameTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.league = generate_league(seed=5)
+        cls.league = generate_league(seed=5, systems=False)
         cls.game = FullGame(cls.league, 1, 2, random.Random(11), record=True)
         cls.sim = cls.game.run()
 
@@ -179,7 +179,7 @@ class NonShootingFoulTests(unittest.TestCase):
     def fouls(self, rate: float) -> float:
         from dataclasses import replace
         from hoopsim.spatial.fullgame import DEFAULT_GAME_TUNING
-        league = generate_league(seed=5)
+        league = generate_league(seed=5, systems=False)
         gt = replace(DEFAULT_GAME_TUNING, non_shooting_foul_per_second=rate)
         n = 0
         for i in range(3):
@@ -199,7 +199,7 @@ class NonShootingFoulTests(unittest.TestCase):
 class FatigueShootingTests(unittest.TestCase):
     def test_fatigue_takes_the_same_fraction_off_every_shot(self):
         from hoopsim.spatial import HalfCourtGame
-        league = generate_league(seed=5)
+        league = generate_league(seed=5, systems=False)
         g = HalfCourtGame(league, 1, 2, random.Random(0))
         g.play_possession("home")
         shooter = g.offense[1]
@@ -214,7 +214,7 @@ class FatigueShootingTests(unittest.TestCase):
 
 class ManagerTests(unittest.TestCase):
     def game(self, seed=3):
-        league = generate_league(seed=5)
+        league = generate_league(seed=5, systems=False)
         return FullGame(league, 1, 2, random.Random(seed), record=True)
 
     def test_no_manager_plays_exactly_as_before(self):
@@ -253,7 +253,7 @@ class InboundTests(unittest.TestCase):
     def possessions(self, **gt):
         from dataclasses import replace
         from hoopsim.spatial.fullgame import DEFAULT_GAME_TUNING
-        league = generate_league(seed=5)
+        league = generate_league(seed=5, systems=False)
         g = FullGame(league, 1, 2, random.Random(4), record=True,
                      game_tuning=replace(DEFAULT_GAME_TUNING, **gt))
         g.run()
@@ -309,7 +309,7 @@ class DeadBallInboundTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.game = FullGame(generate_league(seed=5), 1, 2, random.Random(4), record=True)
+        cls.game = FullGame(generate_league(seed=5, systems=False), 1, 2, random.Random(4), record=True)
         cls.game.run()
         ps = cls.game.possessions
         cls.after_dead = [(a, b) for a, b in zip(ps, ps[1:]) if a["result"] == "dead" and a["period"] == b["period"]]
@@ -364,7 +364,7 @@ class DeadBallInboundTests(unittest.TestCase):
         # A defence that jumps every passing lane does pick some off: turnovers and steals.
         steals = 0
         for seed in (1, 2):
-            g = FullGame(generate_league(seed=seed), 1, 2, random.Random(seed), record=True,
+            g = FullGame(generate_league(seed=seed, systems=False), 1, 2, random.Random(seed), record=True,
                          open_tuning=replace(DEFAULT_OPEN_TUNING, inbound_steal=4.0))
             g.run()
             self.assertEqual(g.stats["inbound_steals"], g.hc.stats["inbound_steals"])
@@ -378,7 +378,7 @@ class DeadBallInboundTests(unittest.TestCase):
 
     def test_late_timeout_inbounds_from_the_frontcourt_sideline(self):
         for seed in range(12):
-            g = FullGame(generate_league(seed=5), 1, 2, random.Random(seed), record=True)
+            g = FullGame(generate_league(seed=5, systems=False), 1, 2, random.Random(seed), record=True)
             it = g.iter_game()
             next(it)                                       # a real possession: players somewhere
             if g.possessions[-1]["result"] not in ("drb", "score", "ft"):
@@ -417,7 +417,7 @@ class DeadBallInboundTests(unittest.TestCase):
     def test_switching_dead_ball_inbounds_off_jumps(self):
         from dataclasses import replace
         from hoopsim.spatial.fullgame import DEFAULT_GAME_TUNING
-        g = FullGame(generate_league(seed=5), 1, 2, random.Random(4), record=True,
+        g = FullGame(generate_league(seed=5, systems=False), 1, 2, random.Random(4), record=True,
                      game_tuning=replace(DEFAULT_GAME_TUNING, dead_ball_inbounds=False))
         g.run()
         self.assertEqual(g.stats["inbounds"], 0)

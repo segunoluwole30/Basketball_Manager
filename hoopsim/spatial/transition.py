@@ -34,6 +34,7 @@ from typing import Optional
 
 from . import court as C
 from .court import RIM
+from ..systems import offense_style
 from .sim import Agent, HalfCourtGame
 
 FULL = C.FULL_LENGTH
@@ -197,6 +198,8 @@ class OpenCourt:
         base = {"steal": t.push_after_steal, "drb": t.push_after_drb}.get(self.how, t.push_after_score)
         pace = self.g.teams[self.side].tactics.pace
         logit = math.log(base / (1 - base)) + t.pace_effect * (pace - 10)
+        style = offense_style(self.g.teams[self.side].tactics)
+        logit += style.push_after_make if self.how == "score" else style.push   # the system: run or walk
         # Already ahead of the defence: anyone would run.
         if self.how != "score":
             h = self.holder

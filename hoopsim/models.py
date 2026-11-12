@@ -364,6 +364,8 @@ class Tactics:
     rotation_depth: int = 9        # how many players get regular minutes
     starters: list[int] = field(default_factory=list)          # 5 player ids
     minutes_targets: dict[int, int] = field(default_factory=dict)  # player id -> mpg
+    offense_system: str = "balanced"   # coaching systems (systems.py): style beyond the sliders
+    defense_system: str = "man"
 
     def __post_init__(self) -> None:
         for name in ("pace", "three_point_rate", "crash_offensive_glass"):
@@ -384,6 +386,8 @@ class Tactics:
             "crash_offensive_glass": self.crash_offensive_glass,
             "rotation_depth": self.rotation_depth,
             "starters": list(self.starters),
+            "offense_system": self.offense_system,
+            "defense_system": self.defense_system,
             # JSON object keys must be strings
             "minutes_targets": {str(k): v for k, v in self.minutes_targets.items()},
         }
@@ -398,6 +402,8 @@ class Tactics:
             crash_offensive_glass=d["crash_offensive_glass"],
             rotation_depth=d["rotation_depth"],
             starters=list(d.get("starters", [])),
+            offense_system=d.get("offense_system", "balanced"),
+            defense_system=d.get("defense_system", "man"),
             minutes_targets={int(k): v for k, v in d.get("minutes_targets", {}).items()},
         )
 

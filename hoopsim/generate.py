@@ -265,7 +265,10 @@ def generate_schedule(league: League, rng: random.Random) -> None:
 
 def generate_league(*, seed: int = 0, num_teams: int = 12, season: int = 2026,
                     roster_size: int = 13, free_agents: int = 30,
-                    scouting_noise: float = 25.0, name: str = "Hoops League") -> League:
+                    scouting_noise: float = 25.0, name: str = "Hoops League",
+                    systems: bool = True) -> League:
+    """``systems``: give teams the coaching systems (systems.py) that suit their rosters
+    (False: every team plays the neutral Balanced / man defaults)."""
     if not 2 <= num_teams <= len(TEAM_NAMES):
         raise ValueError(f"num_teams must be 2-{len(TEAM_NAMES)}")
     rng = random.Random(seed)
@@ -308,6 +311,9 @@ def generate_league(*, seed: int = 0, num_teams: int = 12, season: int = 2026,
             league.add_player(pick)
     for tid in order:
         auto_lineup(league, tid)
+    if systems:
+        from .systems import assign_ai_systems
+        assign_ai_systems(league, random.Random(f"systems|{seed}"))   # coaching systems that suit each roster
 
     for _ in range(free_agents):
         # Free agents are the leftovers: mostly fringe players, the odd useful vet.
