@@ -54,7 +54,7 @@ class HurtPlayerTests(unittest.TestCase):
     def setUpClass(cls):
         league = short_league(4)
         cls.games = []
-        for i in range(4):
+        for i in range(6):          # 4 gave only two injuries with some engine versions
             g = FullGame(league, 1, 2, random.Random(10 + i), record=True, season_tuning=boosted(20))
             g.run()
             cls.games.append(g)
@@ -88,7 +88,9 @@ class HurtPlayerTests(unittest.TestCase):
                 left_at_once += 1
                 self.assertTrue(any(e.text.startswith("Sub: ") and e.text.endswith(f"for {s.p.name} (injured)")
                                     for e in g.events))
-            if s.on_court:                                 # only if nobody was left on the bench
+            # Still on the floor only if nobody was left on the bench, or he was hurt on
+            # the game's last play (no dead ball left to sub him out).
+            if s.on_court and s.hurt_at < g.elapsed:
                 self.assertFalse([b for b in side.bench if not g.unavailable(b)])
         self.assertGreater(left_at_once, 0)
 

@@ -7,7 +7,10 @@ from hoopsim import generate_league
 from hoopsim.spatial import court as C
 from hoopsim.spatial.fullgame import FullGame
 
-SEEDS = tuple(range(100, 112))    # 12 games: fewer are too few to see a shout through the noise
+# 24 games: 12 were too few to see every shout through the noise once the defence
+# recovered (README "Defence that recovers": shot-mix shouts moved by +0.02 to +0.09
+# per 12-game batch).
+SEEDS = tuple(range(100, 124))
 
 
 def coached_games(shouts=None, seeds=SEEDS, user="home"):
@@ -61,7 +64,7 @@ def per_poss(t, side, what):
 
 
 class ShoutTests(unittest.TestCase):
-    """Each shout moves what it should (three games each against the same three
+    """Each shout moves what it should (``SEEDS`` games each against the same games
     without it; user team at home)."""
 
     @classmethod
@@ -76,14 +79,16 @@ class ShoutTests(unittest.TestCase):
 
     def test_attack_the_rim(self):
         t = self.run_with("attack_rim")
-        self.assertGreater(share(t, "home", "rim"), share(self.base, "home", "rim") + 0.02)   # ~+0.05-0.07 over 24 games
+        # ~+0.05 over 48 games since README "Defence that recovers" (+0.02 to +0.09 per
+        # 12-game batch; these seeds +0.021), so the bar sits inside that (was +0.02).
+        self.assertGreater(share(t, "home", "rim"), share(self.base, "home", "rim") + 0.012)
         self.assertLess(share(t, "home", "three"), share(self.base, "home", "three"))
 
     def test_look_for_threes(self):
         t = self.run_with("threes")
-        # With the patient offence (README "Patient offence") the shout adds ~+0.027 to the
-        # three share over 48 games (+0.005 to +0.046 per 12-game batch; these seeds
-        # +0.023), so the bar sits inside that (was +0.025).
+        # The shout adds ~+0.05 to the three share over 48 games since README "Defence that
+        # recovers" (+0.04 to +0.075 per 12-game batch; these seeds +0.057). It was ~+0.027
+        # with the patient offence, when the bar went down to +0.015 (was +0.025).
         self.assertGreater(share(t, "home", "three"), share(self.base, "home", "three") + 0.015)
         self.assertLess(share(t, "home", "mid"), share(self.base, "home", "mid"))
 
@@ -104,22 +109,25 @@ class ShoutTests(unittest.TestCase):
         target = g.home.lineup[2].p.id                     # a wing, not the point guard
         t = self.run_with("ball_to", player=target)
         before = self.base[f"fga_{target}"] / self.base["home_fga"]
-        # ~x1.23 over 48 games with the patient offence (x1.08-x1.43 per 12-game batch;
-        # these seeds x1.080), so the bar sits inside that (was x1.08).
-        self.assertGreater(t[f"fga_{target}"] / t["home_fga"], before * 1.05)
+        # ~x1.25 over 48 games since README "Defence that recovers" (x1.04-x1.40 per
+        # 12-game batch; these 24 seeds x1.18). It was ~x1.23 with the patient offence,
+        # when the bar went down to x1.05 on 12 games.
+        self.assertGreater(t[f"fga_{target}"] / t["home_fga"], before * 1.12)
 
     def test_pressure_the_ball(self):
         t = self.run_with("pressure")
         self.assertLess(t["away_cushion"] / t["away_cushion_n"],
                         self.base["away_cushion"] / self.base["away_cushion_n"] - 0.4)
         # Up on the ball, the defence strips more dribblers.
-        # ~x1.39 over 48 games with the patient offence (x1.03-x1.83 per 12-game batch;
-        # these seeds x1.27), so the bar sits inside that (was x1.3).
+        # ~x1.26 over 48 games since README "Defence that recovers" (x1.04-x1.63 per
+        # 12-game batch; these seeds x1.43), so the bar sits inside that (was x1.3).
         self.assertGreater(per_poss(t, "away", "stripped"), 1.15 * per_poss(self.base, "away", "stripped"))
 
     def test_protect_the_paint(self):
         t = self.run_with("paint")
-        self.assertGreater(share(t, "away", "three"), share(self.base, "away", "three") + 0.04)
+        # ~+0.045 over 48 games since README "Defence that recovers" (+0.017 to +0.061 per
+        # 12-game batch; these seeds +0.038), so the bar sits inside that (was +0.04).
+        self.assertGreater(share(t, "away", "three"), share(self.base, "away", "three") + 0.025)
         self.assertLess(share(t, "away", "rim"), share(self.base, "away", "rim") + 0.01)
 
     def test_foul_now(self):

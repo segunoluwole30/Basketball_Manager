@@ -42,15 +42,16 @@ FULL = C.FULL_LENGTH
 # corner three) and the trailer's spot at the top of the arc (~25 ft from the rim).
 CORNER_LANE = (22.6, 4.5)
 TRAIL_LANE = (6.0, 29.5)
+WING_LANE = (19.5, 20.5)    # the ball-side wing stopping at the 45 instead of the corner
 
 
 @dataclass
 class OpenCourtTuning:
     sprint: float = 1.40            # open-court top speed, relative to half-court speed
     dribble_sprint: float = 1.28    # pushing the ball
-    jog: float = 0.70               # walking it up (an NBA walk-up: ~4-5 s from baseline to half court; was 0.55)
+    jog: float = 0.74               # walking it up (an NBA walk-up: ~4-5 s from baseline to half court; was 0.55, then 0.70)
     push_after_steal: float = 0.92
-    push_after_drb: float = 0.43     # was 0.38 (README "Patient offence")
+    push_after_drb: float = 0.39     # was 0.38 (README "Patient offence"), then 0.43 (README "Defence that recovers")
     push_after_score: float = 0.08   # was 0.06
     pace_effect: float = 0.05       # push chance (logit) per point of pace tactics
     secure_drb: tuple = (0.35, 0.75)   # land, turn, find the outlet
@@ -68,6 +69,9 @@ class OpenCourtTuning:
     ahead_steal: float = 0.08       # interception chance scale for an ahead pass
     pass_speed: float = 42.0
     trail_shooter: int = 10         # a trailing big this good from three trails to the arc
+    # The ball-side wing stops at the wing this often instead of running to the corner
+    # (both wings in the corners made half of early-offence threes corner threes; was 0).
+    ball_side_wing: float = 0.7
     # Early offence: after a push, the half court keeps the runners on their lanes
     # (corners, trail spot) instead of re-forming the set.
     early_spots: bool = True
@@ -222,7 +226,8 @@ class OpenCourt:
             # to the elbow if he can't.
             sides = [-ball_side, ball_side]
             for a, s in zip(sorted(guards, key=lambda a: a.x * -ball_side, reverse=True), sides):
-                lanes[id(a)] = (s * CORNER_LANE[0], CORNER_LANE[1])
+                lane = WING_LANE if s == ball_side and self.rng.random() < self.t.ball_side_wing else CORNER_LANE
+                lanes[id(a)] = (s * lane[0], lane[1])
             for i, a in enumerate(sorted(bigs, key=lambda a: C.dist_to_rim(a.pos))):
                 if i == 0:
                     lanes[id(a)] = (-ball_side * 3.5, 7.0)

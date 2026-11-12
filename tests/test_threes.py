@@ -1,5 +1,6 @@
 """Three-point volume mechanisms: shooting bigs and guards in generation, transition
 lanes behind the arc, early-offence spots, off-the-dribble jumpers, relocation."""
+import math
 import random
 import statistics
 import unittest
@@ -10,7 +11,7 @@ from hoopsim.models import Position
 from hoopsim.spatial import HalfCourtGame
 from hoopsim.spatial import court as C
 from hoopsim.spatial.params import DEFAULT_PARAMS, LEGACY_PARAMS
-from hoopsim.spatial.transition import CORNER_LANE, TRAIL_LANE, OpenCourt
+from hoopsim.spatial.transition import CORNER_LANE, TRAIL_LANE, WING_LANE, OpenCourt
 
 
 class GenerationTests(unittest.TestCase):
@@ -53,7 +54,14 @@ class TransitionLaneTests(unittest.TestCase):
     def test_wings_run_to_the_corners_and_shooters_trail_to_the_arc(self):
         g, oc = open_court()
         corners = [a for a in oc.offense if id(a) in oc.lanes and oc.lanes[id(a)][1] == CORNER_LANE[1]]
-        self.assertEqual(len(corners), 2)
+        wings = [a for a in oc.offense if id(a) in oc.lanes and oc.lanes[id(a)][1] == WING_LANE[1]]
+        # The weak-side wing runs to the corner; the ball-side one to the corner or, more
+        # often, the wing (README "Defence that recovers").
+        self.assertGreaterEqual(len(corners), 1)
+        self.assertEqual(len(corners) + len(wings), 2)
+        ball_side = 1 if oc.holder.x >= 0 else -1
+        for a in wings:
+            self.assertEqual(math.copysign(1, oc.lanes[id(a)][0]), ball_side)
         for a in oc.offense:
             lane = oc.lanes.get(id(a))
             if lane is None or a.slot < 3 or lane[1] < 10:

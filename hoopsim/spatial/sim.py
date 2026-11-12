@@ -41,6 +41,10 @@ ZONES = (RIM_ZONE, CLOSE_ZONE, MID_ZONE, THREE_ZONE)
 ACCEL_BASE = 15.0           # ft/s² for a speed-10 player
 ACCEL_PER_POINT = 0.6       # ... per point of speed rating
 SCREEN_BRAKE = 1.4          # a screen stops a defender this much harder (body contact)
+TRACK_MODES = ("setup", "probe", "drive", "pass", "post", "pullup")   # off-ball defenders track their man
+SEPARATE_PASSES = 2         # body-separation passes per tick (was 1)
+_PAIRS10 = [(i, j) for i in range(10) for j in range(i + 1, 10)]
+LIFT_SPOT = (19.5, 20.5)    # where a lifting corner man goes (the wing)
 ROUTINE_PRESSURE = 2.0      # a perimeter pass is routine unless the on-ball man is this close (ft; was 3)
 
 
@@ -116,6 +120,7 @@ class Agent:
         self.ease = 3.0
         self.cut_until = -1.0
         self.last_cut = -9.0
+        self.track: Optional[tuple] = None    # off-ball defender: (ball, sag) as he last read them
         # Full-game hooks (fullgame.py): make-chance penalty from fatigue, game-day
         # form (a make-chance multiplier from morale and the night), and distance
         # run (drives energy drain).
@@ -149,7 +154,11 @@ class Agent:
         self.vx += sx
         self.vy += sy
 
-    def move(self, dt: float, now: float, speed_boost: float = 1.0) -> None:
+    def move(self, dt: float, now: float, speed_boost: float = 1.0, accel_boost: float = 1.0,
+             brake: float = 0.0) -> None:
+        """``accel_boost``: acceleration multiplier (a closeout sprint); ``brake``: slow
+        down in time to stop at the target, decelerating at this share of the
+        acceleration limit (0: ease in only)."""
         if now < self.stuck_until:             # caught on a screen: body contact stops him
             self.steer((0.0, 0.0), dt, SCREEN_BRAKE * self.accel)
         else:
@@ -157,8 +166,10 @@ class Agent:
             d = math.hypot(dx, dy)
             top = self.max_speed * speed_boost
             speed = min(top, d * self.ease)    # ease in to the target
+            if brake > 0 and d < 10.0:         # ... braking in time: a body can't stop dead
+                speed = min(speed, math.sqrt(2.0 * brake * self.accel * accel_boost * d))
             want = (dx / d * speed, dy / d * speed) if d > 0.05 else (0.0, 0.0)
-            self.steer(want, dt)
+            self.steer(want, dt, self.accel * accel_boost)
         self.travelled += math.hypot(self.vx, self.vy) * dt
         # A player still in the backcourt (running up in transition) isn't pulled to half court.
         self.x, self.y = C.clamp((self.x + self.vx * dt, self.y + self.vy * dt),
@@ -365,6 +376,7 @@ class HalfCourtGame:
             d.next_think = rng.uniform(0, d.reaction * self.p.reaction_scale)
             d.helping = False
             d.stuck_until = -1.0
+            d.track = None
         self.game_clock: Optional[float] = None
         self.foul_at: Optional[float] = None
         self.foul_by: Optional[Agent] = None
@@ -429,9 +441,14 @@ class HalfCourtGame:
             self.mode = r["mode"]
             self.take_shot(self.holder, r["moving"], released=r["catch"])
         boost = 1.08 if self.mode == "drive" else 0.35 if self.mode == "post" else 1.0
-        for a in self.everyone:
-            a.move(dt, self.now, boost if a is self.holder else
-                   self.p.closeout_speed if a in self.closing else 1.0)
+        p, now, holder, closing = self.p, self.now, self.holder, self.closing
+        for a in self.offense:
+            a.move(dt, now, boost if a is holder else 1.0)
+        for a in self.defense:                 # defenders brake in time to stop where they aim
+            if a in closing:
+                a.move(dt, now, p.closeout_speed, p.closeout_burst, p.defender_brake)
+            else:
+                a.move(dt, now, 1.0, 1.0, p.defender_brake)
         self.separate()
         if self.result is None and (self.game_clock is not None or self.foul_at is not None):
             self.clock_hooks()
@@ -445,20 +462,35 @@ class HalfCourtGame:
         self.record_frame()
 
     def separate(self) -> None:
+        """Keep 1.6 ft of personal space between bodies. A second pass settles bodies
+        that the first pushed into a third (only pairs involving a pushed body)."""
         people = self.everyone
-        for i in range(len(people)):
-            a = people[i]
-            for j in range(i + 1, len(people)):
-                b = people[j]
-                dx, dy = a.x - b.x, a.y - b.y
+        n = len(people)
+        xs = [a.x for a in people]
+        ys = [a.y for a in people]
+        pairs = [(i, j) for i in range(n) for j in range(i + 1, n)] if n != 10 else _PAIRS10
+        moved = set()
+        for _ in range(SEPARATE_PASSES):
+            pushed = set()
+            for i, j in pairs:
+                dx, dy = xs[i] - xs[j], ys[i] - ys[j]
                 d2 = dx * dx + dy * dy
                 if d2 < 2.56 and d2 > 1e-9:             # 1.6 ft personal space
                     d = math.sqrt(d2)
-                    push = (1.6 - d) / 2
-                    a.x += dx / d * push
-                    a.y += dy / d * push
-                    b.x -= dx / d * push
-                    b.y -= dy / d * push
+                    push = (1.6 - d) / 2 / d
+                    xs[i] += dx * push
+                    ys[i] += dy * push
+                    xs[j] -= dx * push
+                    ys[j] -= dy * push
+                    pushed.add(i)
+                    pushed.add(j)
+            if not pushed:
+                break
+            moved |= pushed
+            pairs = [(i, j) for i, j in pairs if i in pushed or j in pushed]
+        half = C.WIDTH / 2
+        for i in moved:                       # nobody is shoved off the floor
+            people[i].x, people[i].y = max(-half, min(half, xs[i])), max(0.0, ys[i])
 
     def record_frame(self) -> None:
         if not self.record:
@@ -511,6 +543,8 @@ class HalfCourtGame:
             d = self.guarded_by(a)
             if d.helping and a.a("three_point") < 12 and a.spot[1] < 22:
                 a.target((math.copysign(3.5, a.x or 1), 5.5))    # cut behind the help
+            elif self.lifts(a, h):
+                a.target((math.copysign(LIFT_SPOT[0], a.spot[0]), LIFT_SPOT[1]))   # baseline drive: lift
             elif (reloc := self.relocate_spot(a, d)) is not None:
                 a.target(reloc)                                  # slide to an open spot on the arc
             else:
@@ -567,10 +601,21 @@ class HalfCourtGame:
             if not free:
                 taken.append(a.spot)
                 continue
-            best = min(free, key=lambda sp: C.dist((sp[0] * mirror, sp[1]), a.pos))
+            # The nearest open spot; a corner only when it's clearly the nearest (fill and
+            # replace lifts men out of the corners more often than it sends them there).
+            best = min(free, key=lambda sp: C.dist((sp[0] * mirror, sp[1]), a.pos)
+                       + (self.p.respace_corner_cost if sp[1] < 10 else 0.0))
             a.spot = (best[0] * mirror, best[1])
             taken.append(a.spot)
             self.stats["respaced"] += 1
+
+    def lifts(self, a: Agent, h: Optional[Agent]) -> bool:
+        """Drive baseline, the corner lifts: a man in the corner on the side of a drive
+        heading along the baseline moves up to the wing behind it (clearing the corner
+        and giving the driver a pass back) instead of standing in his path."""
+        return (self.p.corner_lift > 0 and self.mode == "drive" and h is not None
+                and a.spot[1] < 10 and abs(a.spot[0]) > 15 and h.x * a.spot[0] > 0
+                and abs(h.x) > 6.0 and h.y < self.p.corner_lift)
 
     def relocate_spot(self, a: Agent, d: Agent) -> Optional[tuple[float, float]]:
         """A shooter whose man has left him to help on a drive doesn't stand still: he
@@ -732,11 +777,20 @@ class HalfCourtGame:
                 tagger = self.choose_tagger(threat, exclude=helper)
         doubler = self.post["double"] if self.mode == "post" and self.post else None
         gap_shift, sag_shift = self.shout_defense()
+        zone = self.scheme == "zone"
+        track_now = round(now * 10) % 2 == 0           # off-ball tracking: every other tick (5 Hz)
         for d in self.defense:
             d.helping = d is helper or d is tagger or d is doubler or d is stunter
             if now < d.next_think:
+                if track_now and d.track is not None and not d.helping and self.mode in TRACK_MODES:
+                    # Between reads he keeps his eyes on his man and moves with him;
+                    # where the ball is he only takes in at his next read.
+                    man = self.man_of(d)
+                    if man is not self.holder and man.vx * man.vx + man.vy * man.vy > 1.0:
+                        d.target(self.off_ball_spot(man, d.track[0], d.track[1]))
                 continue
             d.next_think = now + d.reaction * self.p.reaction_scale
+            d.track = None
             self.closing.discard(d)
             if self.mode == "rebound":
                 continue
@@ -746,7 +800,17 @@ class HalfCourtGame:
                 # Get a hand up: lunge in as far as the shooting motion allows, but
                 # contests end at hand's length, not body to body.
                 gap = C.dist(d.pos, self.holder.pos)
-                d.target(C.toward(self.holder.pos, d.pos, max(self.p.contest_reach, gap - 2.5)))
+                p = self.p
+                if p.contest_run > 0 and gap > p.contest_run:
+                    # Still closing out: keep sprinting at him to get a hand up (not
+                    # easing off when he rises), stopping a stride off him.
+                    d.target(C.toward(self.holder.pos, d.pos, max(p.contest_reach, p.contest_stop)))
+                    self.closing.add(d)
+                else:
+                    # Already there: a step in with the hand up (no further in than the
+                    # contest stop unless he was already that tight).
+                    stop = min(gap, p.contest_stop)
+                    d.target(C.toward(self.holder.pos, d.pos, max(p.contest_reach, gap - p.contest_lunge, stop)))
             elif self.play is not None and (deny := plays.defense_target(self, d)) is not None:
                 d.target(deny)                                   # denying the entry pass
             elif d is stunter:
@@ -778,23 +842,44 @@ class HalfCourtGame:
                 gap += {"zone": 1.0, "press": -0.8}.get(self.scheme, 0.0)   # zones sit back, presses get up
                 gap += gap_shift if deep >= 22 or gap_shift < 0 else 0.0     # the coach's shout
                 # Anticipate: play where he's going, not where he was.
-                lead = 0.45 if self.mode == "drive" else 0.2
+                lead = 0.45 if self.mode == "drive" else self.p.pullup_lead if self.mode == "pullup" else 0.2
                 ahead = C.clamp((man.x + man.vx * lead, man.y + man.vy * lead))
                 d.target(C.toward(ahead, RIM, gap))
             else:
-                pass_dist = C.dist(man.pos, ball)
-                # One pass away: stay close. Far side: sink into the paint to help.
-                sag = (self.p.sag_near if pass_dist < 22 else
-                       min(self.p.sag_max, self.p.sag_near + 0.02 + self.p.sag_slope * (pass_dist - 22)))
-                if self.scheme == "zone":
-                    sag = max(sag, 0.22)                         # a zone packs the paint
-                if man.a("three_point") >= 13:
-                    sag *= self.p.shooter_sag                    # shade toward shooters
-                sag += sag_shift
-                mx, my = man.pos
-                tx = mx + (RIM[0] - mx) * sag + (ball[0] - mx) * 0.08
-                ty = my + (RIM[1] - my) * sag + (ball[1] - my) * 0.08
-                d.target((tx, ty))
+                sag = self.off_ball_sag(man, ball, sag_shift, zone)
+                d.target(self.off_ball_spot(man, ball, sag))
+                if self.p.offball_track > 0:
+                    d.track = (ball, sag)
+
+    def off_ball_sag(self, man: Agent, ball: tuple[float, float], sag_shift: float = 0.0,
+                     zone: Optional[bool] = None) -> float:
+        """How far toward the rim (share of the way) a defender plays off an off-ball
+        man with the ball at ``ball``: one pass away close to him, on the far side sunk
+        toward the paint to help; tight to good shooters, well off poor ones."""
+        p = self.p
+        pass_dist = C.dist(man.pos, ball)
+        # One pass away: stay close. Far side: sink into the paint to help.
+        sag = (p.sag_near if pass_dist < 22 else
+               min(p.sag_max, p.sag_near + 0.02 + p.sag_slope * (pass_dist - 22)))
+        if zone if zone is not None else self.scheme == "zone":
+            sag = max(sag, 0.22)                         # a zone packs the paint
+        shooting = man.p.attributes.three_point
+        if shooting >= 13:
+            sag *= p.shooter_sag                         # shade toward shooters
+        if p.sag_shooter_slope > 0:                      # ... and away from poor ones
+            sag *= max(0.4, min(1.4, 1.0 - p.sag_shooter_slope * (shooting - 11)))
+        return sag + sag_shift
+
+    def off_ball_spot(self, man: Agent, ball: tuple[float, float], sag: float) -> tuple[float, float]:
+        """The spot ``sag`` of the way from the man to the rim, a little toward the ball,
+        and where he's going rather than where he was (``offball_lead``)."""
+        lead = self.p.offball_lead
+        if lead > 0 and (man.vx or man.vy):
+            mx, my = C.clamp((man.x + man.vx * lead, man.y + man.vy * lead))
+        else:
+            mx, my = man.x, man.y
+        return (mx + (RIM[0] - mx) * sag + (ball[0] - mx) * 0.08,
+                my + (RIM[1] - my) * sag + (ball[1] - my) * 0.08)
 
     def closeout_gap(self, man: Agent) -> float:
         """Where a closeout stops: about 3 ft on shooters (hand up, still able to
@@ -907,7 +992,7 @@ class HalfCourtGame:
             closer, dd = self.nearest_defender(spot)
             catch = self.just_caught(moving)
             rt = self.release_time(h, catch) if C.zone(spot) in (MID_ZONE, THREE_ZONE) else 0.0
-            predicted = max(0.0, dd - self.closing_speed(closer, h) * (0.35 + rt))
+            predicted = self.predicted_contest(closer, h, dd, rt)
             ep = self.shot_value(h, p=spot, contest_d=predicted, defender=closer, moving=moving,
                                  catch=catch, post=self.mode == "post")
             options.append(("shoot", ("shoot", C.zone(spot)), [1.0, ep, float(C.is_three(spot)), float(moving),
@@ -972,6 +1057,16 @@ class HalfCourtGame:
                 self.next_decision = now + rng.uniform(0.6, 1.2)
         else:
             self.next_decision = now + rng.uniform(0.6, 1.2)
+
+    def predicted_contest(self, closer: Agent, h: Agent, dd: float, rt: float) -> float:
+        """How close the nearest defender will be when a shot goes up ``rt`` seconds
+        after the decision: he keeps coming at his closing speed, but on a jump shot
+        (``rt`` > 0) a closeout stops a stride off the shooter (``contest_stop``)
+        rather than running through him."""
+        arrive = dd - self.closing_speed(closer, h) * (0.35 + rt)
+        if rt > 0 and self.p.contest_stop > 0:
+            return max(min(dd, max(self.p.contest_reach, self.p.contest_stop)), arrive)
+        return max(0.0, arrive)
 
     @staticmethod
     def closing_speed(defender: Agent, target: Agent) -> float:
@@ -1595,7 +1690,7 @@ class HalfCourtGame:
                     moving = True
                     v = min(max(5.0, min(15.0, d / 1.6)), 3.0 * d)   # far: jog there; near: walk, and stop
                     a.steer((dx / d * v, dy / d * v) if d > 0.05 else (0.0, 0.0), dt)
-                    a.x, a.y = a.x + a.vx * dt, a.y + a.vy * dt
+                    a.x, a.y = C.clamp((a.x + a.vx * dt, a.y + a.vy * dt), full=a.y > C.HALF_LENGTH - 0.5)
             if not moving:
                 break
             self.record_frame()

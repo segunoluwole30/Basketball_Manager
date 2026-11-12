@@ -190,6 +190,10 @@ class DefenceTests(unittest.TestCase):
         h.p.attributes.three_point = 7
         g.catch_time = g.now - 0.2
         guard = g.guarded_by(h)
+        # Still closing out, 7 ft off: he sprints at the rising shooter. (A defender
+        # already within 5 ft only steps in a foot with his hand up since README
+        # "Defence that recovers", so the scene's 4.5 ft no longer shows a closeout.)
+        guard.place(*C.toward(h.pos, C.RIM, 7.0))
         start = C.dist(guard.pos, h.pos)
         g.take_shot(h, moving=False)
         self.assertEqual(g.mode, "release")            # the shooting motion takes time...

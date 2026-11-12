@@ -1021,6 +1021,122 @@ Still off:
   retrains with near-identical settings), and 32-game samples differ by up to 7 points
   a game from seed to seed. Judge changes on 64+ games.
 
+### Defence that recovers
+After the patient offence, 46.6% of shots had no defender within 6 ft (NBA 22-32%) and
+eFG was ~.585. Logging the closest defender at every shot, where the shooter's man was
+a second earlier, and the defender's position, target and speed from the pass to the
+release showed:
+* **Mostly catch-and-shoot threes, after one or two passes.** 74% of them were wide open.
+  At the throw, the receiver's man was ~14 ft from the catch point (his help spot plus
+  ~5 ft of trailing a man who was relocating), and he took ~0.6 s to read the pass
+  (`pass_read` plus scramble lag).
+* **Closeouts overran and then backed off.** Defenders had no braking: they sprinted
+  at their spot, overshot it and came back. When the shooter rose, a closing defender
+  was retargeted to only 2.5 ft closer than where he was, so he eased off. On the
+  catch he switched to on-ball spacing (5-7 ft off) mid-closeout.
+* **Off-ball defenders chased stale targets.** Their spot was recomputed only at
+  each read (~0.4 s), from where the man was, not where he was going.
+* **Shooters waited for wide-open looks.** The handler predicted a closing defender
+  would arrive right on top of him, so he passed up every catch with a closeout
+  coming. Even with no patience at all, half of all threes were wide open.
+* **Respacing wasn't the main driver.** Turning `respace` off moved wide-open shots by
+  ~2 points, and keeping it away from the corners moved corner threes by 2-3 points.
+* **Rotation tweaks did little.** A faster `pass_read`, less scramble lag, X-out
+  rotations (the nearest defender takes a skip pass), sticky helpers and helpers
+  meeting the driver nearer the rim each moved the closest-defender mix by 1-2 points
+  or less. Most of these were dropped.
+
+Changes (all in `SpatialParams`, off in `LEGACY_PARAMS`):
+* **Braking** (`defender_brake` 0.8): a defender slows in time to stop at his spot
+  (decelerating at 80% of his acceleration limit). Closeouts arrive under control
+  instead of overrunning. This was the biggest single change (6+ ft from ~36% to ~29%
+  on its own).
+* **Closeouts carry through the shot:** `closeout_burst` 1.35 (a straight-line sprint
+  accelerates harder; the audit's acceleration 99th percentile stays 20.0 ft/s²).
+  `contest_run` 5 ft and `contest_stop` 3 ft: a defender still more than 5 ft away
+  when the shooter rises keeps sprinting and stops a stride off him. One already
+  close steps in at most `contest_lunge` = 1 ft (was 2.5) and no closer than 3 ft,
+  unless he was already that tight. The shot decision predicts the contest the same
+  way (`predicted_contest`): a closeout stops a stride off, it doesn't run through the
+  shooter.
+* **Off-ball defenders track their man** (`offball_track`, `offball_lead` 0.5 s).
+  Between reads they move with their man and play where he is going. The ball's
+  position and the sag are only taken in at each read, so ball-watching and rotation
+  lag still work. Tracking runs every other tick (5 Hz).
+* **Sag set by shooting** (`sag_shooter_slope` 0.06): sag shrinks 6% per point of three
+  rating above 11 (within 0.4-1.4×). Defenders stay attached to shooters and sink off
+  poor ones.
+* **Pull-ups** (`pullup_lead` 0.45 s, was 0.2): the on-ball man gives ground on a pull-up
+  as on a drive. Before, he stood in the dribbler's path, and 52% of pull-up jumpers had
+  a defender inside 2 ft.
+* **Body separation** gets a second pass in the same tick (a body pushed into a third).
+  This is physics, so the legacy pin was re-pinned.
+* **Corners:** respacing treats a corner as 20 ft further away (`respace_corner_cost`).
+  The corner man lifts to the wing on a drive on his side (`corner_lift`). In early
+  offence the ball-side wing stops at the wing 70% of the time (`ball_side_wing`).
+* **Rebalancing for the stronger defence:** `closeout_base` 4.82 → 5.5 and
+  `closeout_min` 2.8 → 3.4 (closeouts now stop where they aim). `contest_outside` 1.602 →
+  1.7. `rim_make_adj` -0.03 → -0.025. `patience_three` 0.25 → 0.8: with tighter
+  closeouts the offence otherwise went to 50%+ threes. Pace and turnovers changed too:
+  `entry_actions` 3 → 2, `patience_full` 14 → 16, `patience_none` 4 → 3,
+  `pass_steal_scale` 0.045 → 0.037, `errant_pass` 0.007 → 0.0062,
+  `dribble_turnover_per_sec` 0.045 → 0.04, walk-up `jog` 0.70 → 0.74, `push_after_drb`
+  0.43 → 0.39.
+* The values were retrained (4 rounds, resumed from the previous values). Retrains
+  were again noisy: with near-identical settings the full-game three share came out
+  anywhere from .39 to .54. The pass-steal, pull-up, patience-window, corner and
+  push changes came after the last retrain and were checked on all three seeds
+  without retraining.
+
+Audit, 48 games (seed 7):
+
+| | before | after | NBA |
+|---|---|---|---|
+| closest defender 0-2 / 2-4 / 4-6 / 6+ ft | 10.8 / 22.7 / 19.8 / 46.8% | 13.6 / 34.3 / 24.4 / 27.7% | 5-11 / 28-38 / 28-36 / 22-32% |
+| defender between attacker and rim | 79.4% | 86.0% | 80-97% |
+| rim / short / mid / threes | 36.5 / 12.8 / 7.7 / 43.0% | 35.4 / 13.0 / 10.1 / 41.5% | 28-36 / 12-20 / 9-16 / 38-44% |
+| corner threes, share of threes | 33.0% | 30.4% | 20-28% |
+| shots with 24-18 / 7-0 s on the shot clock | 10.9 / 15.6% | 12.0 / 16.7% | 14-24 / 16-26% |
+| passes per half-court possession | 2.64 | 2.64 | 2.5-3.6 |
+| acceleration 99th percentile | 20.0 ft/s² | 20.0 | 8-22 |
+| distance per player per 48 min | 3.83 mi | 3.73 | 3.1-3.6 |
+| ok / watch / off | 13 / 8 / 5 | 19 / 6 / 1 | |
+
+Full games, 64 per league (`measure --games 64 --jobs 2`, seeds 0 / 1 / 2):
+
+| | before | after | NBA 2025-26 |
+|---|---|---|---|
+| pace | 96.7 / 98.3 / 99.9 | 96.9 / 98.9 / 101.2 | 99.4 |
+| points | 114.7 / 119.1 / 118.5 | 111.2 / 116.2 / 116.7 | 115.6 |
+| points per 100 | 118.3 / 120.4 / 118.4 | 113.9 / 117.5 / 115.2 | 115.8 |
+| eFG | .584 / .581 / .590 | .553 / .548 / .563 | .546 |
+| 3P% | .38 / .38 / .38 | .36 / .36 / .35 | .36 |
+| three share | .406 / .425 / .421 | .396 / .426 / .420 | .415 |
+| turnovers per 100 | 14.3 / 13.3 / 13.8 | 14.8 / 13.4 / 13.8 | 14.6 |
+| FTA per 100 | 23.4 / 23.9 / 22.1 | 25.2 / 26.8 / 23.5 | 23.6 |
+| ORB% | .254 / .270 / .229 | .258 / .294 / .237 | .260 |
+| within tolerance (of 13) | 12 / 11 / 10 | 12 / 11 / 11 | |
+
+A full game takes ~1.05 s (was ~0.9): off-ball tracking, braking and the second
+separation pass, plus more passes and decisions per possession.
+
+Still off:
+* **0-2 ft (13-14%) and 4-6 ft (24-25%).** Nearly all very tight shots are at exactly
+  1.6 ft, the engine's personal space. They are drives, post-ups and catches at the rim
+  with a defender in body contact, plus some pull-ups. Changing where the helper or the
+  on-ball man aims didn't change them: the attacker runs into the defender.
+* **Corner threes (30-34% by league).** About a quarter of all threes are taken by men
+  whose spot is a corner. That is the 4-out power forward and the 5-out center, and
+  62% of the bigs' threes come from there. Respacing, lifts and transition lanes trim
+  only 2-3 points. Drives end in kick-outs ~70% of the time, and the corner is the
+  natural outlet.
+* **Early shots** (24-18 s) stay ~11-12%. Set plays start with ~19.5 s left, so early
+  shots come only from transition, and transition share is already on target.
+* **Free throws** (23-27 per 100 against 23.6) rose with the tighter contests at the
+  rim, and seed 0 runs ~4 points a game short (its pace is the lowest, as before).
+  The tests' shout bars were re-measured on 48 games. The shout samples grew from 12
+  to 24 games because the shot-mix shouts now move by +0.02 to +0.09 per 12-game batch.
+
 ### Where the defence picks up
 On a walk-up (after a make, or a team that doesn't push), the defence gets back and waits
 instead of picking up the ball full court:
