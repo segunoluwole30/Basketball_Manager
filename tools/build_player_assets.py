@@ -478,20 +478,23 @@ class Mesh:
     def face(self, mat, a, b, c):
         self.tri.setdefault(mat, []).append((a, b, c))
 
-    def loft(self, mat, rings, cap_start=False, cap_end=False, col=(1, 1, 1), uv=None):
-        """rings: [(centre, x axis, y axis, rx, ry, weights)], each an ellipse of N points."""
-        N = 12; rows = []
-        for ri, (c, ax, ay, rx, ry, wts) in enumerate(rings):
+    def loft(self, mat, rings, cap_start=False, cap_end=False, col=(1, 1, 1), uv=None, sides=16):
+        """rings: [(centre, x axis, y axis, rx, ry, weights[, squareness])], each a ring of
+        ``sides`` points: an ellipse, or with squareness > 2 a rounded box."""
+        N = sides; rows = []
+        for ri, ring in enumerate(rings):
+            c, ax, ay, rx, ry, wts = ring[:6]; e = 2 / (ring[6] if len(ring) > 6 else 2)
             row = []
             for k in range(N + 1):                            # the seam is doubled for the texture
-                ang = 2 * np.pi * k / N
-                p = np.asarray(c) + np.asarray(ax) * (np.cos(ang) * rx) + np.asarray(ay) * (np.sin(ang) * ry)
+                ang = 2 * np.pi * k / N; cs, sn = np.cos(ang), np.sin(ang)
+                p = (np.asarray(c) + np.asarray(ax) * (np.sign(cs) * abs(cs) ** e * rx)
+                     + np.asarray(ay) * (np.sign(sn) * abs(sn) ** e * ry))
                 row.append(self.vert(p, wts, (k / N, uv(ri) if uv else ri / max(1, len(rings) - 1)), col))
             rows.append(row)
         for r in range(len(rows) - 1):
             for k in range(N):
                 a, b, c, d = rows[r][k], rows[r][k + 1], rows[r + 1][k], rows[r + 1][k + 1]
-                self.face(mat, a, c, b); self.face(mat, b, c, d)
+                self.face(mat, a, b, c); self.face(mat, b, d, c)          # outward: the ring runs anticlockwise about its axis
         for cap, row, ring, flip in ((cap_start, rows[0], rings[0], False), (cap_end, rows[-1], rings[-1], True)):
             if not cap: continue
             mid = self.vert(ring[0], ring[5], (0.5, 0.5), col)
@@ -524,92 +527,131 @@ def frame_for(d, hint=(0, 0, 1)):
     return x, np.cross(d, x)
 
 
-def limb(mesh, mat, sk, chain, radii, col=(1, 1, 1), hint=(0, 0, 1), cap_start=False, cap_end=False, flat=1.0):
-    """A tube along a chain of joints. radii: per segment, a list of (t, r) along it. The
-    skin blends from one bone to the next round each joint."""
+def limb(mesh, mat, sk, chain, radii, col=(1, 1, 1), hint=(0, 0, 1), cap_start=False, cap_end=False, flat=1.0,
+         sides=14):
+    """A tube along a chain of joints. radii: per segment, a list of (t, r[, push]) along it
+    (push: the ring's centre moved along its second axis, for a calf or a biceps). The skin
+    blends from one bone to the next round each joint."""
     P = sk.bindP; rings = []
     for s in range(len(chain) - 1):
         a, b = sk.idx[chain[s]], sk.idx[chain[s + 1]]
         pa, pb = P[a], P[b]
         ax, ay = frame_for(pb - pa, hint)
-        for t, r in radii[s]:
+        for t, r, *push in radii[s]:
             w = [(a, 1.0)]
-            if t > 0.72 and chain[s].endswith("Shoulder"): w = [(a, 1 - (t - 0.72) / 0.56), (b, (t - 0.72) / 0.56)]
-            elif t > 0.72 and s + 1 < len(chain) - 1: w = [(a, 1 - (t - 0.72) / 0.56), (b, (t - 0.72) / 0.56)]
-            if t < 0.28 and s > 0:
-                prev = sk.idx[chain[s - 1]]; w = [(prev, 0.5 - t / 0.56), (a, 0.5 + t / 0.56)]
-            rings.append((pa + (pb - pa) * t, ax, ay, r, r * flat, w))
-    mesh.loft(mat, rings, cap_start, cap_end, col)
+            if t > 0.7 and (s + 1 < len(chain) - 1 or chain[s].endswith("Shoulder")):
+                k = smooth((t - 0.7) / 0.6); w = [(a, 1 - k), (b, k)]
+            if t < 0.3 and s > 0:
+                prev = sk.idx[chain[s - 1]]; k = smooth(0.5 + t / 0.6); w = [(prev, 1 - k), (a, k)]
+            rings.append((pa + (pb - pa) * t + np.asarray(ay) * (push[0] if push else 0), ax, ay, r, r * flat, w))
+    mesh.loft(mat, rings, cap_start, cap_end, col, sides=sides)
 
 
-def ellipsoid(mesh, mat, c, r, weights, col=(1, 1, 1), lat0=-90, lat1=90, rows=7):
+def smooth(x):
+    x = min(1.0, max(0.0, x)); return x * x * (3 - 2 * x)
+
+
+def ellipsoid(mesh, mat, c, r, weights, col=(1, 1, 1), lat0=-90, lat1=90, rows=7, sides=12, shape=None):
+    """shape(sin latitude) -> (x scale, z scale, z shift): a jaw, a hairline."""
     rings = []
     for i in range(rows + 1):
         lat = np.radians(lat0 + (lat1 - lat0) * i / rows)
-        rr = max(np.cos(lat), 0.02)
-        rings.append((np.asarray(c) + [0, np.sin(lat) * r[1], 0], (1, 0, 0), (0, 0, 1), r[0] * rr, r[2] * rr, weights))
-    mesh.loft(mat, rings, lat0 > -89, lat1 < 89, col)
+        rr = max(np.cos(lat), 0.02); kx, kz, dz = shape(np.sin(lat)) if shape else (1, 1, 0)
+        rings.append((np.asarray(c) + [0, np.sin(lat) * r[1], dz], (1, 0, 0), (0, 0, -1), r[0] * rr * kx, r[2] * rr * kz, weights))
+    mesh.loft(mat, rings, lat0 > -89, lat1 < 89, col, sides=sides)
 
 
 def build_model(sk: Skeleton) -> Mesh:
+    """The player, in the T-pose: +X is his left, +Z his front. Four materials: skin (tinted
+    per player), jersey (textured: number, trim), shorts (team colour) and kit (vertex
+    colours: hair, eyes, socks, shoes, trim)."""
     m = Mesh(); P = sk.bindP; ix = sk.idx
     J = lambda n: P[ix[n]]
     SKIN, JERSEY, SHORTS, KIT = "skin", "jersey", "shorts", "kit"
-    WHITE, SHOE, HAIR = (0.85, 0.85, 0.85), (0.012, 0.012, 0.016), (0.008, 0.006, 0.005)      # linear RGB
-    hips, chest, neck, head = J("Hips"), J("Spine1"), J("Neck"), J("Head")
-    sh_y = J("LeftArm")[1]; sh_x = J("LeftArm")[0]
-    X, Z = (1, 0, 0), (0, 0, 1)
-    wH, wL, wS, wC = ix["Hips"], ix["LowerBack"], ix["Spine"], ix["Spine1"]
-    # torso: jersey from the waist to the shoulders (numbers go on by texture: front at u 0.25)
-    span = sh_y - hips[1]
-    tor = [(-0.16, 0.6, 0.4, [(wH, 1)]), (0.10, 0.57, 0.38, [(wH, .6), (wL, .4)]),
-           (0.30, 0.56, 0.36, [(wL, .5), (wS, .5)]), (0.52, 0.61, 0.38, [(wS, .7), (wC, .3)]),
-           (0.74, 0.69, 0.4, [(wS, .3), (wC, .7)]), (0.90, 0.73, 0.38, [(wC, 1)]),
-           (1.00, 0.69, 0.33, [(wC, 1)]), (1.10, 0.42, 0.26, [(wC, .8), (ix["Neck"], .2)])]
-    spine_z = lambda t: hips[2] + (chest[2] - hips[2]) * min(1, t / 0.6) + 0.04
-    m.loft(JERSEY, [((0, hips[1] + span * t, spine_z(t)), X, (0, 0, -1), rx * sh_x / 0.66, rz, w)
-                    for t, rx, rz, w in tor], cap_end=True, uv=lambda ri: [0, .22, .4, .58, .77, .91, 1, 1][ri])
-    # neck and head
-    limb(m, SKIN, sk, ["Neck", "Head"], [[(0.35, 0.2), (0.6, 0.17), (1.1, 0.17)]], hint=X)
-    hc = head + [0, 0.42, 0.06]
-    wHd = [(ix["Head"], 1)]
-    ellipsoid(m, SKIN, hc, (0.31, 0.41, 0.36), wHd, lat0=-90, lat1=35)
-    ellipsoid(m, KIT, hc + [0, 0.03, -0.05], (0.325, 0.42, 0.375), wHd, HAIR, lat0=22, lat1=90, rows=5)
+    WHITE, SHOE, HAIR, EYE = (0.85, 0.85, 0.85), (0.02, 0.02, 0.026), (0.008, 0.006, 0.005), (0.004, 0.004, 0.004)   # linear RGB
+    hips, head = J("Hips"), J("Head")
+    sh = J("LeftArm"); X, BACK = (1, 0, 0), (0, 0, -1)
+    wH, wL, wS, wC, wN = ix["Hips"], ix["LowerBack"], ix["Spine"], ix["Spine1"], ix["Neck"]
+    # torso: a sleeveless jersey from below the waist to the collar. u runs round it (back at
+    # 0.25, front at 0.75), v from the hem to the collar: the viewer paints number and trim.
+    hem, top = hips[1] - 0.36, sh[1] + 0.2
+    k = sh[0] / 0.84
+    tor = [(hem, 0.62, 0.45, 2.2, [(wH, 1)]), (hips[1] - 0.1, 0.61, 0.44, 2.2, [(wH, 1)]),
+           (hips[1] + 0.22, 0.51, 0.35, 2.2, [(wH, .5), (wL, .5)]), (hips[1] + 0.48, 0.52, 0.35, 2.3, [(wL, .4), (wS, .6)]),
+           (hips[1] + 0.74, 0.6, 0.39, 2.4, [(wS, .6), (wC, .4)]), (sh[1] - 0.36, 0.68, 0.42, 2.5, [(wS, .2), (wC, .8)]),
+           (sh[1] - 0.16, 0.71, 0.41, 2.5, [(wC, 1)]), (sh[1] - 0.02, 0.69, 0.36, 2.4, [(wC, 1)]),
+           (sh[1] + 0.1, 0.5, 0.29, 2.2, [(wC, .75), (wN, .25)]), (top, 0.25, 0.22, 2, [(wC, .6), (wN, .4)])]
+    lean = lambda y: 0.03 + 0.05 * smooth((y - hips[1]) / 0.9) - 0.07 * smooth((y - sh[1] + 0.3) / 0.5)
+    m.loft(JERSEY, [((0, y, hips[2] + lean(y)), X, BACK, rx * k, rz, w, sq) for y, rx, rz, sq, w in tor],
+           uv=lambda ri: (tor[ri][0] - hem) / (top - hem), sides=20)
+    # neck and head: a skull with a jaw, ears, nose, eyes, and a cap of short hair
+    nk = J("Neck1")
+    m.loft(SKIN, [((0, y, z), X, BACK, r, r * 0.95, w) for y, z, r, w in
+                  ((top - 0.12, nk[2] + 0.03, 0.2, [(wC, .5), (wN, .5)]), (nk[1] + 0.1, nk[2] + 0.02, 0.175, [(ix["Neck1"], 1)]),
+                   (head[1] + 0.02, head[2] + 0.04, 0.165, [(ix["Neck1"], .4), (ix["Head"], .6)]),
+                   (head[1] + 0.2, head[2] + 0.07, 0.17, [(ix["Head"], 1)]))], sides=12)
+    hc = head + [0, 0.3, 0.1]; wHd = [(ix["Head"], 1)]
+    jaw = lambda sn: (1 - 0.3 * (-sn) ** 1.5, 1 - 0.12 * (-sn) ** 1.5, 0.07 * -sn) if sn < 0 else (1, 1, 0)
+    ellipsoid(m, SKIN, hc, (0.3, 0.385, 0.35), wHd, rows=11, sides=16, shape=jaw)
+    ellipsoid(m, KIT, hc + [0, 0.02, -0.03], (0.325, 0.405, 0.378), wHd, HAIR, lat0=16, lat1=90, rows=6, sides=16,
+              shape=lambda sn: (1, 1, -0.05 * (1 - sn)))
+    for sx in (1, -1):
+        ellipsoid(m, SKIN, hc + [sx * 0.295, -0.03, -0.03], (0.035, 0.085, 0.055), wHd, rows=4, sides=8)
+        ellipsoid(m, KIT, hc + [sx * 0.115, 0.045, 0.312], (0.034, 0.02, 0.018), wHd, EYE, rows=3, sides=8)
+    ellipsoid(m, SKIN, hc + [0, -0.06, 0.335], (0.036, 0.065, 0.04), wHd, rows=4, sides=8)
     for sd, sx in (("Left", 1), ("Right", -1)):
-        # arm: bare shoulder to the wrist, then a mitten hand
+        # arm: a rounded bare shoulder out of the jersey's armhole, biceps, forearm
         limb(m, SKIN, sk, [sd + "Shoulder", sd + "Arm", sd + "ForeArm", sd + "Hand"],
-             [[(0.62, 0.06), (0.72, 0.16), (0.86, 0.23)], [(0.0, 0.25), (0.14, 0.24), (0.35, 0.21), (0.6, 0.18), (0.86, 0.155)],
-              [(0.0, 0.15), (0.14, 0.165), (0.4, 0.155), (0.75, 0.12), (1.0, 0.1)]], hint=(0, 1, 0), cap_start=True)
+             [[(0.8, 0.1), (0.9, 0.21)],
+              [(0.0, 0.265), (0.1, 0.26), (0.24, 0.235), (0.42, 0.21, 0.015), (0.62, 0.19), (0.82, 0.165), (0.95, 0.155)],
+              [(0.0, 0.155), (0.14, 0.17), (0.38, 0.165), (0.66, 0.135), (0.9, 0.105), (1.0, 0.1)]],
+             hint=(0, 1, 0), cap_start=True, flat=0.92)
+        ellipsoid(m, SKIN, J(sd + "Arm") + [sx * -0.02, -0.01, 0], (0.275, 0.27, 0.26),
+                  [(ix[sd + "Shoulder"], .5), (ix[sd + "Arm"], .5)], rows=6, sides=12)
+        # hand: palm, fingers curling down a little, thumb forward (the T-pose's palms face down)
         wr = J(sd + "Hand"); d = sk.bindW[ix[sd + "Hand"]] @ sk.ends[ix[sd + "Hand"]]; d = d / np.linalg.norm(d)
         ax, ay = frame_for(d, (0, 1, 0)); wHn = [(ix[sd + "Hand"], 1)]
-        m.loft(SKIN, [(wr + d * t, ax, ay, r, r * 0.45, wHn) for t, r in
-                      ((-0.02, 0.09), (0.12, 0.13), (0.3, 0.15), (0.48, 0.13), (0.6, 0.07))], cap_end=True)
-        # leg, sock and shoe
+        m.loft(SKIN, [(wr + d * t + np.asarray(ay) * dy, ax, ay, w, th, wHn, 2.6) for t, w, th, dy in
+                      ((-0.03, 0.1, 0.085, 0), (0.1, 0.14, 0.07, 0), (0.3, 0.165, 0.06, -0.005), (0.42, 0.16, 0.05, -0.015),
+                       (0.58, 0.15, 0.04, -0.05), (0.72, 0.13, 0.034, -0.1), (0.8, 0.08, 0.025, -0.135))],
+               cap_end=True, sides=10)
+        tb = wr + d * 0.14 + np.array([0, -0.01, 0.13]); td = np.array([sx * 0.55, -0.25, 0.8]); td /= np.linalg.norm(td)
+        tx, ty = frame_for(td, (0, 1, 0))
+        m.loft(SKIN, [(tb + td * t, tx, ty, r, r, wHn) for t, r in ((0, 0.05), (0.1, 0.048), (0.2, 0.04), (0.25, 0.02))],
+               cap_end=True, sides=6)
+        # leg: thigh, knee, a calf that bulges behind
         limb(m, SKIN, sk, [sd + "UpLeg", sd + "Leg", sd + "Foot"],
-             [[(0.3, 0.31), (0.55, 0.28), (0.8, 0.23), (0.95, 0.205)],
-              [(0.0, 0.2), (0.1, 0.205), (0.3, 0.22), (0.55, 0.18), (0.8, 0.13)]], hint=X)
-        an = J(sd + "Foot"); wF, wT = ix[sd + "Foot"], ix[sd + "ToeBase"]
+             [[(0.25, 0.33), (0.5, 0.3), (0.75, 0.25), (0.92, 0.22)],
+              [(0.0, 0.215, 0.01), (0.1, 0.205), (0.3, 0.225, -0.035), (0.48, 0.2, -0.03), (0.68, 0.15, -0.01), (0.84, 0.125)]],
+             hint=X)
+        # sock, then a high-top shoe on a white sole
+        an = J(sd + "Foot"); wF, wT, wK = ix[sd + "Foot"], ix[sd + "ToeBase"], ix[sd + "Leg"]
         kn = J(sd + "Leg"); up = (kn - an) / np.linalg.norm(kn - an)
         ax, ay = frame_for(up, X)
-        m.loft(KIT, [(an + up * t, ax, ay, r, r, [(wF, w), (ix[sd + "Leg"], 1 - w)]) for t, r, w in
-                     ((0.62, 0.135, 0.2), (0.3, 0.13, 0.5), (0.0, 0.14, 1))], col=WHITE)
+        m.loft(KIT, [(an + up * t, ax, ay, r, r, [(wF, w), (wK, 1 - w)]) for t, r, w in
+                     ((0.7, 0.132, 0.1), (0.66, 0.142, 0.15), (0.4, 0.135, 0.45), (0.12, 0.14, 0.9))], col=WHITE, sides=12)
         toe = J(sd + "ToeBase"); fd = np.array([toe[0] - an[0], 0, toe[2] - an[2]]); fl = np.linalg.norm(fd); fd /= fl
-        side = np.cross((0, 1, 0), fd)
-        sole = an[1] - sk.ankle
-        shoe = []
-        for t, w, hgt, wt in ((-0.32, 0.13, 0.36, 0), (-0.22, 0.17, 0.42, 0), (0.1, 0.19, 0.4, 0), (0.55, 0.2, 0.3, 0.3),
-                              (0.95, 0.21, 0.24, 0.8), (1.25, 0.19, 0.2, 1), (1.48, 0.12, 0.13, 1)):
-            c = np.array([an[0], sole + hgt / 2, an[2]]) + fd * (t * fl)
-            shoe.append((c, side, (0, 1, 0), w, hgt / 2, [(wF, 1 - wt), (wT, wt)]))
-        m.loft(KIT, shoe, cap_start=True, cap_end=True, col=SHOE)
-        # shorts leg: a loose tube over the thigh
-        hp, kn = J(sd + "UpLeg"), J(sd + "Leg")
+        side = np.cross((0, 1, 0), fd); sole = an[1] - sk.ankle
+        m.loft(KIT, [(an + up * t, ax, ay, r, r * 1.05, [(wF, 1)]) for t, r in ((0.3, 0.17), (0.12, 0.175), (-0.02, 0.18))],
+               col=SHOE, sides=12)
+        last = ((-0.34, 0.11, 0.3, 0), (-0.26, 0.165, 0.4, 0), (0.0, 0.185, 0.42, 0), (0.45, 0.2, 0.33, 0.25),
+                (0.9, 0.215, 0.25, 0.8), (1.25, 0.2, 0.2, 1), (1.47, 0.15, 0.15, 1), (1.56, 0.07, 0.1, 1))
+        for colr, lo, grow in ((SHOE, 0.07, 0.0), (WHITE, 0.0, 0.012)):
+            rings = []
+            for t, w, hgt, wt in last:
+                hi = hgt if colr is SHOE else 0.085
+                rings.append((np.array([an[0], sole + (lo + hi) / 2, an[2]]) + fd * (t * fl), side, (0, 1, 0), w + grow,
+                              (hi - lo) / 2, [(wF, 1 - wt), (wT, wt)], 3.0))
+            m.loft(KIT, rings, cap_start=True, cap_end=True, col=colr, sides=12)
+        # shorts leg: a loose tube over the thigh, with a white hem
+        hp = J(sd + "UpLeg")
         ax, ay = frame_for(kn - hp, X); wU = ix[sd + "UpLeg"]
-        m.loft(SHORTS, [(hp + (kn - hp) * t, ax, ay, r, r, [(wH, wh), (wU, 1 - wh)]) for t, r, wh in
-                        ((-0.05, 0.3, 0.7), (0.1, 0.37, 0.45), (0.35, 0.385, 0.1), (0.7, 0.38, 0), (0.74, 0.31, 0))])
-    # shorts: the waistband down to the crotch
-    m.loft(SHORTS, [((0, hips[1] + y, hips[2] + 0.02), X, (0, 0, -1), rx, rz, [(wH, 1)]) for y, rx, rz in
-                    ((-0.5, 0.16, 0.2), (-0.34, 0.46, 0.33), (-0.1, 0.58, 0.38), (0.12, 0.54, 0.36), (0.2, 0.5, 0.335))],
+        leg = lambda t, r, wh: (hp + (kn - hp) * t, ax, ay, r, r, [(wH, wh), (wU, 1 - wh)])
+        m.loft(SHORTS, [leg(*a) for a in ((-0.05, 0.3, 0.7), (0.08, 0.375, 0.5), (0.3, 0.395, 0.15), (0.55, 0.4, 0), (0.7, 0.405, 0))])
+        m.loft(KIT, [leg(*a) for a in ((0.7, 0.407, 0), (0.745, 0.407, 0), (0.75, 0.33, 0))], col=WHITE)
+    # shorts: the seat, from under the jersey down to the crotch
+    m.loft(SHORTS, [((0, hips[1] + y, hips[2] + 0.04), X, BACK, rx, rz, [(wH, 1)], 2.3) for y, rx, rz in
+                    ((-0.52, 0.14, 0.2), (-0.36, 0.45, 0.34), (-0.12, 0.57, 0.39), (0.06, 0.52, 0.36), (0.12, 0.46, 0.32))],
            cap_start=True, cap_end=True)
     return m
 
