@@ -1782,12 +1782,16 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       x.textAlign = "center"; x.textBaseline = "middle"; x.fillStyle = "#ffffff";
       const n = String(pl.num ?? "");
       if (rigged) {                                               // back at u 0.25, front at 0.75, chest high
+        x.fillStyle = colors[pl.side]; x.fillRect(0, 0, 256, 8);     // (no band across the shoulders)
+        x.fillStyle = "rgba(255,255,255,0.85)";
         x.fillRect(0, 122, 256, 6);                                 // hem; then a stripe down each side
-        x.fillRect(0, 30, 4, 92); x.fillRect(124, 30, 8, 92); x.fillRect(252, 30, 4, 92);
+        x.fillRect(0, 36, 4, 86); x.fillRect(124, 36, 8, 86); x.fillRect(252, 36, 4, 86);
         x.fillStyle = "#ffffff";
-        x.font = `700 44px ${colors.font}`; x.fillText(n, 64, 50);     // back
-        x.font = `700 34px ${colors.font}`; x.fillText(n, 192, 48);    // front
-        return canvasTex(c);
+        x.font = `700 44px ${colors.font}`; x.fillText(n, 64, 46);     // back
+        x.font = `700 34px ${colors.font}`; x.fillText(n, 192, 46);    // front
+        const tx = canvasTex(c);
+        tx.wrapS = THREE.RepeatWrapping;                           // (u runs past 1 across the seam at his side)
+        return tx;
       }
       x.font = `700 72px ${colors.font}`; x.fillText(n, 128, 68);   // back (u = 0.5)
       x.font = `700 44px ${colors.font}`; x.fillText(n, 0, 60); x.fillText(n, 256, 60);   // front (u = 0 = 1)

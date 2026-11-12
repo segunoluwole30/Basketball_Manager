@@ -6,8 +6,9 @@ written as a single binary glTF (hoopsim/spatial/assets/player.glb).
 * Body: MakeHuman's base mesh, default rig weights and shape targets (CC0), shaped into a
   tall athletic man, bound to the mocap skeleton, cut away where the kit covers it and
   simplified. A second shape (the heaviest build) becomes the "bulk" morph target.
-* Kit, hair and gear: generated here and fitted to that body by measuring it: jersey,
-  shorts, shoes and socks; hair styles, beard, headband, sleeves and wristbands.
+* Kit, hair and gear: made here. The jersey, the top of the shorts, the hair cap, beard,
+  sleeves and bands are layers lifted off the body's own surface; the shorts' legs, shoes
+  and the larger hair styles are fitted to it by measuring it.
 * Motion: the CMU Graphics Lab Motion Capture Database (free for any use), in Bruce
   Hahne's BVH conversion. Every clip is retargeted to the model's skeleton, cut, turned to
   face +Z, put in place (the viewer moves players from the replay), resampled to 30 Hz and
@@ -720,9 +721,30 @@ class Body:
         self.N0 = nrm / np.maximum(np.linalg.norm(nrm, axis=1, keepdims=True), 1e-9)
         # what the kit covers: the trunk under the jersey, hips and thighs under the shorts, the feet in the shoes
         yH, yS = J("Hips")[1], J("LeftArm")[1]
-        self.hem, self.collar = yH - 0.38, J("Neck1")[1] - 0.03
-        cov = (self.is_torso | (np.abs(P[:, 0]) < 0.3)) & (P[:, 1] < yS + 0.03) & (np.abs(P[:, 0]) < J("LeftArm")[0] - 0.16) & (P[:, 1] > 2.5)
-        cov |= (np.isin(self.dom, [ix["LeftUpLeg"], ix["RightUpLeg"]]) & (self.along < 0.6))
+        # the jersey is a layer of the body's own surface: a tank top from just above the crotch
+        # to the shoulders, with round armholes and a scooped neck
+        trunk = self.is_torso | np.isin(self.dom, [ix["LeftUpLeg"], ix["RightUpLeg"]])
+        self.crotch = P[trunk & (np.abs(P[:, 0]) < 0.06), 1].min()
+        self.hem = yH + 0.1                                  # it hangs to the hips, over the top of the shorts
+        arm, neck = J("LeftArm") + [0.07, -0.1, 0], J("Neck1") + [0, 0.0, 0.08]
+        limbs = np.isin(self.dom, [ix[sd + j] for sd in ("Left", "Right") for j in ("Arm", "ForeArm", "Hand")])
+        hole = np.minimum(np.linalg.norm(P - arm, axis=1), np.linalg.norm(P - arm * [-1, 1, 1], axis=1)) < 0.25
+        scoop = np.linalg.norm(P - neck, axis=1) < np.where(P[:, 2] > neck[2] - 0.15, 0.26, 0.2)
+        self.shirt = ((P[:, 1] > self.hem) & (P[:, 1] < yS + 0.3) & (np.abs(P[:, 0]) < arm[0] - 0.1) & ~limbs & ~hole
+                      & ~scoop & ~np.isin(self.dom, [ix["Neck1"], ix["Head"]]))
+        q = hu.quads["body"]
+        self.shirt_quads = q[self.shirt[q].all(1)]
+        on = np.zeros(len(P), dtype=bool); on[np.unique(self.shirt_quads)] = True
+        core = on.copy()                                      # the skin well inside its edge is not needed
+        for _ in range(2):
+            edge = np.zeros(len(P), dtype=bool); edge[np.unique(q[~core[q].all(1)])] = True
+            core &= ~edge
+        cov = core | (np.isin(self.dom, [ix["LeftUpLeg"], ix["RightUpLeg"]]) & (self.along < 0.6))
+        # the top of the shorts is a layer of the body too: waist to crotch, and the tops of the thighs
+        thigh = np.isin(self.dom, [ix["LeftUpLeg"], ix["RightUpLeg"]])
+        seat = (P[:, 1] < yH + 0.34) & ((trunk & ~thigh & (P[:, 1] > self.crotch - 0.3)) | (thigh & (self.along < 0.24)))
+        self.seat_quads = q[seat[q].all(1)]
+        cov |= seat & (P[:, 1] < yH + 0.2)
         cov |= np.isin(self.dom, [ix[sd + j] for sd in ("Left", "Right") for j in ("Foot", "ToeBase")]) & (P[:, 1] < sk.ankle + 0.16)
         tris = np.concatenate([hu.quads["body"][:, [0, 1, 2]], hu.quads["body"][:, [0, 2, 3]]])
         tris = tris[~cov[tris].all(1)]
@@ -788,6 +810,30 @@ def build_model(sk: Skeleton, body: Body, verts) -> Mesh:
                 if i not in ids: ids[i] = m.vert(P[i] + body.N0[i] * lift, wts(i))
             m.face(mat, ids[qd[0]], ids[qd[1]], ids[qd[2]]); m.face(mat, ids[qd[0]], ids[qd[2]], ids[qd[3]])
 
+    def cloth(quads, lift, relax):
+        """Where a layer of cloth over part of the body sits: lifted off the surface, then
+        ironed (each point eased toward its neighbours), which takes the muscles out of it
+        and rounds off the stepped edge the body's own mesh would give it. Returns
+        {body vertex: position}."""
+        vs = np.unique(quads); at = {v: k for k, v in enumerate(vs)}
+        pos = P[vs] + body.N0[vs] * np.array([lift(v) for v in vs])[:, None]
+        count = {}
+        for qd in quads:
+            for a, b in zip(qd, np.roll(qd, -1)): count[(min(a, b), max(a, b))] = count.get((min(a, b), max(a, b)), 0) + 1
+        rim = {v for e, c in count.items() if c == 1 for v in e}
+        nb = {v: set() for v in vs}
+        for (a, b), c in count.items():
+            if (a in rim) == (b in rim) and (c == 1 or a not in rim):    # the rim only follows the rim
+                nb[a].add(b); nb[b].add(a)
+            elif a not in rim: nb[a].add(b)
+            elif b not in rim: nb[b].add(a)
+        for _ in range(relax):
+            new = pos.copy()
+            for v in vs:
+                if nb[v]: new[at[v]] = 0.5 * pos[at[v]] + 0.5 * pos[[at[u] for u in nb[v]]].mean(0)
+            pos = new
+        return {v: pos[at[v]] for v in vs}
+
     # ---- eyes (MakeHuman's own eyeballs) and brows
     for k, grp in enumerate(("helper-l-eye", "helper-r-eye")):
         q = hu.quads[grp]; ids = {}
@@ -805,38 +851,37 @@ def build_model(sk: Skeleton, body: Body, verts) -> Mesh:
         m.loft("kit", [(pt, (0, 1, 0), (0, 0, 1), 0.016, 0.008, wH) for pt in (pts if sx > 0 else pts[::-1])],
                cap_start=True, cap_end=True, col=BROW, sides=6, bulk=False)
 
-    # ---- jersey: a loose sleeveless top fitted round the trunk. u runs round it (back at
-    # 0.25, front at 0.75), v from the hem to the collar: the viewer paints number and trim.
-    hem, top, yS, ax = body.hem, body.collar, J("LeftArm")[1], J("LeftArm")[0]
+    # ---- jersey: a layer of the body's own surface, so it fits and moves exactly as he does,
+    # let out a little below the chest so it hangs. u runs round him (back at 0.25, front at
+    # 0.75), v from the hem to the shoulders: the viewer paints number and trim.
+    hem, yS, ax = body.hem, J("LeftArm")[1], J("LeftArm")[0]
     trunk = body.is_torso | np.isin(dom, [ix["LeftUpLeg"], ix["RightUpLeg"]])
     def ring(y, sel, pad, band=0.07, xmax=9.0):
         s = slab(sel & (np.abs(P[:, 0]) < xmax), P[:, 1], y, band)
         z0, z1 = P[s, 2].min(), P[s, 2].max()
         return np.abs(P[s, 0]).max() + pad, (z1 - z0) / 2 + pad, (z0 + z1) / 2, mean_w(s)
-    rings = []
-    ys = [hem, hem + 0.12] + list(np.linspace(hem + 0.3, yS - 0.2, 6)) + [yS - 0.06, yS + 0.05, top]
-    chest = ring(yS - 0.3, trunk, 0.06, xmax=ax - 0.02)
-    for y in ys:
-        strap = y > yS - 0.1
-        # (the arms hang clear of the trunk below the armpit, so everything inside the shoulders is trunk)
-        rx, rz, zc, w = ring(min(y, top - 0.03), everyone if y > yS - 0.4 else trunk, 0.06 if not strap else 0.04,
-                             xmax=(ax - 0.03) if not strap else ax * (0.93 if y < top - 0.01 else 0.42))
-        if y < yS - 0.35: rx, rz = max(rx, chest[0] * 0.95), max(rz, chest[1] * 0.93)     # it hangs from the chest
-        if y >= top - 0.01: rx, rz = rx + 0.02, rz + 0.02
-        rings.append(((0, y, zc), X, BACK, rx, rz, w, 2.3))
-    m.loft("jersey", rings, uv=lambda ri: (ys[ri] - hem) / (top - hem), sides=20, bulk=False)
+    sq = body.shirt_quads; on = np.unique(sq)
+    zc = body.P0[on, 2].mean(); top = body.P0[on, 1].max()
+    turn = lambda i: (np.arctan2(-(body.P0[i, 2] - zc), body.P0[i, 0]) / (2 * np.pi)) % 1.0
+    hang = lambda i: 0.04 + 0.09 * float(np.clip((yS - 0.35 - body.P0[i, 1]) / 0.6, 0, 1)) ** 1.3   # looser below the chest
+    where = cloth(sq, hang, relax=5)
+    ids = {}
+    for qd in sq:
+        us = [turn(i) for i in qd]; wrap = max(us) - min(us) > 0.5     # (across the seam at his left side)
+        corner = []
+        for i, u in zip(qd, us):
+            key = (i, wrap and u < 0.5)
+            if key not in ids:
+                ids[key] = m.vert(where[i], wts(i), (u + (1 if key[1] else 0), (body.P0[i, 1] - hem) / (top - hem)))
+            corner.append(ids[key])
+        m.face("jersey", corner[0], corner[1], corner[2]); m.face("jersey", corner[0], corner[2], corner[3])
 
-    # ---- shorts: a seat from under the jersey to the crotch, a loose leg over each thigh, white hems
-    yH = J("Hips")[1]
-    crotch = body.P0[trunk & (np.abs(body.P0[:, 0]) < 0.06), 1].min()
-    seat = []
-    hipx = J("LeftUpLeg")[0]
-    for y in (crotch - 0.05, crotch + 0.14, crotch + 0.32, yH + 0.05, yH + 0.16):
-        rx, rz, zc, w = ring(max(y, crotch + 0.04), trunk, 0.085, band=0.08)
-        rx = max(rx, hipx + 0.42)                                # out over the tops of the legs: one garment
-        k = 0.5 if y < crotch else 0.85 if y < crotch + 0.2 else 1
-        seat.append(((0, y, zc), X, BACK, rx * k, rz * (0.6 + 0.4 * k), w, 2.3))
-    m.loft("shorts", seat, cap_start=True, cap_end=True, bulk=False)
+    # ---- shorts: fitted round the hips like the jersey, then a loose leg over each thigh, white hems
+    where = cloth(body.seat_quads, lambda i: 0.03, relax=3); ids = {}
+    for qd in body.seat_quads:
+        for i in qd:
+            if i not in ids: ids[i] = m.vert(where[i], wts(i))
+        m.face("shorts", ids[qd[0]], ids[qd[1]], ids[qd[2]]); m.face("shorts", ids[qd[0]], ids[qd[2]], ids[qd[3]])
     for sd, sx in (("Left", 1), ("Right", -1)):
         hp, kn = J(sd + "UpLeg"), J(sd + "Leg"); axis = (kn - hp) / np.linalg.norm(kn - hp); L = np.linalg.norm(kn - hp)
         lx, ly = frame_for(kn - hp, X); thigh = dom == ix[sd + "UpLeg"]
@@ -845,7 +890,8 @@ def build_model(sk: Skeleton, body: Body, verts) -> Mesh:
             off = P[s] - hp; rad = np.linalg.norm(off - np.outer(off @ axis, axis), axis=1).max() + pad
             return (hp + (kn - hp) * t, lx, ly, rad, rad, [(ix["Hips"], wh), (ix[sd + "UpLeg"], 1 - wh)])
         m.loft("shorts", [leg_ring(t, pad, wh) for t, pad, wh in
-                          ((-0.04, 0.03, 0.6), (0.12, 0.075, 0.4), (0.32, 0.095, 0.1), (0.52, 0.105, 0), (0.68, 0.11, 0))], bulk=False)
+                          ((-0.06, -0.01, 0.7), (0.06, 0.04, 0.5), (0.18, 0.075, 0.3), (0.34, 0.095, 0.1), (0.52, 0.105, 0), (0.68, 0.11, 0))],
+               bulk=False)
         r0 = leg_ring(0.68, 0.112, 0); r1 = leg_ring(0.725, 0.112, 0); r2 = leg_ring(0.73, 0.03, 0)
         m.loft("kit", [r0, r1, r2], col=WHITE, bulk=False)
 

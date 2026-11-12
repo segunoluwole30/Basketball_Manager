@@ -242,6 +242,27 @@ class AnimatedPlayersTests(unittest.TestCase):
         # exported pages carry no builds: nothing to look players up in
         self.assertNotIn('"ht":', build_html(self.data))
 
+    def test_jersey_wraps_the_body(self):
+        """The jersey is a layer of the body, textured right round: its u runs past 1 at the seam."""
+        raw = PLAYER_ASSETS["player.glb"].read_bytes()
+        doc = read_glb(PLAYER_ASSETS["player.glb"])[4]
+        size = struct.unpack("<I", raw[12:16])[0]
+        blob = raw[20 + size + 8:]
+        prim = next(p for p in doc["meshes"][0]["primitives"] if doc["materials"][p["material"]]["name"] == "jersey")
+        def read(i, fmt, width):
+            acc = doc["accessors"][i]; view = doc["bufferViews"][acc["bufferView"]]
+            start = view["byteOffset"] + acc.get("byteOffset", 0)
+            return struct.unpack(f"<{acc['count'] * width}{fmt}", blob[start:start + acc["count"] * width * struct.calcsize(fmt)])
+        idx = sorted(set(read(prim["indices"], "H", 1)))
+        self.assertGreater(len(idx), 600)                          # the body's own detail, not a tube of rings
+        uv = read(prim["attributes"]["TEXCOORD_0"], "f", 2)
+        us = [uv[2 * i] for i in idx]; vs = [uv[2 * i + 1] for i in idx]
+        self.assertLess(min(us), 0.05)
+        self.assertGreater(max(us), 1.0)                           # wraps: the viewer's texture repeats
+        self.assertGreaterEqual(min(vs), -0.05)
+        self.assertLessEqual(max(vs), 1.0001)
+        self.assertIn("tx.wrapS = THREE.RepeatWrapping;", self.template)
+
     def test_looks_per_player(self):
         """Hair, beard and gear are parts of the one model, switched on per player."""
         doc = read_glb(PLAYER_ASSETS["player.glb"])[4]
