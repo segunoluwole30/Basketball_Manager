@@ -273,3 +273,73 @@ class BuilderParsingTests(unittest.TestCase):
         self.assertEqual((line["gp"], line["pts"], line["team"], line["franchise"]), (60, 900, "NJN", "BKN"))
         self.assertTrue(line["all_star"])
         self.assertEqual(self.b._career_lines([row("PHO", 82, 2000)], 2010, True)["xx01"]["team"], "PHX")
+
+
+class BuilderRatingTests(unittest.TestCase):
+    """How the NBA builder turns (made-up) stats into ratings and tendencies."""
+    setUpClass = classmethod(BuilderParsingTests.setUpClass.__func__)
+
+    LEAGUE = {"share": {"rim": 0.3, "close": 0.17, "mid": 0.12, "three": 0.41},
+              "rating": dict.fromkeys(("rim", "close", "mid", "three"), 10.0)}
+    AVERAGE = dict.fromkeys(("finishing", "close_range", "mid_range", "three_point", "speed", "ball_handling"), 10)
+
+    @staticmethod
+    def stats(usg=18.0, orb=6.0, drb=15.0, ast=12.0, fga=1000.0, mp=2000.0):
+        tot = dict.fromkeys(("fg", "fga", "fg3", "fg3a", "ft", "fta", "orb", "drb", "ast", "stl", "blk",
+                             "tov", "pf", "pts"), 0.0)
+        tot.update(fga=fga, fg=0.46 * fga, fg3a=0.41 * fga, fg3=0.15 * fga, fta=0.25 * fga, ft=0.19 * fga)
+        zones = {"00_03": (0.3 * fga, 0.2 * fga), "03_10": (0.17 * fga, 0.07 * fga),
+                 "10_16": (0.07 * fga, 0.03 * fga), "16_xx": (0.05 * fga, 0.02 * fga)}
+        return {"g": 70, "gs": 70, "mp": mp, "tot": tot, "zones": zones, "dunk_share": 0.05, "ast_fg2": 0.5,
+                "per": 15, "ts_pct": 0.57, "orb_pct": orb, "drb_pct": drb, "ast_pct": ast, "stl_pct": 1.5,
+                "blk_pct": 1.5, "tov_pct": 12, "usg_pct": usg, "ws_per_48": 0.1, "obpm": 0, "dbpm": 0, "bpm": 0}
+
+    def player(self, height_cm=203, **kw):
+        return {"stats": self.stats(**kw), "height_cm": height_cm, "weight_kg": 100, "age": 26, "experience": 5}
+
+    def test_average_shooter_has_neutral_shot_tendencies(self):
+        t = self.b.shot_tendencies(self.LEAGUE["share"], 1000, self.LEAGUE, self.AVERAGE)
+        self.assertEqual(t, {"drive": 10, "post_up": 10, "mid_range": 10, "three_point": 10})
+        self.assertEqual(self.b.shot_profile(self.stats())["three"], 0.41)
+        self.assertIsNone(self.b.shot_profile(self.stats(fga=10)))
+
+    def test_shot_tendency_is_what_ratings_dont_explain(self):
+        # A great shooter who takes an average share of threes: his rating alone would
+        # have him shoot more, so his tendency holds him back.
+        sniper = {**self.AVERAGE, "three_point": 18}
+        self.assertLess(self.b.shot_tendencies(self.LEAGUE["share"], 1000, self.LEAGUE, sniper)["three_point"], 10)
+        # An average shooter who lives behind the line likes threes.
+        volume = {"rim": 0.15, "close": 0.08, "mid": 0.07, "three": 0.70}
+        t = self.b.shot_tendencies(volume, 1000, self.LEAGUE, self.AVERAGE)
+        self.assertGreater(t["three_point"], 13)
+        self.assertLess(t["drive"], 10)
+
+    def test_shot_tendencies_reproduce_the_mix_in_the_engine(self):
+        import math
+        from hoopsim.engine import DEFAULT_TUNING
+        a = {**self.AVERAGE, "three_point": 14, "finishing": 8}
+        real = {"rim": 0.22, "close": 0.15, "mid": 0.13, "three": 0.50}
+        t = self.b.shot_tendencies(real, 1e9, self.LEAGUE, a)       # a huge sample: no shrinking
+        neutral = dict.fromkeys(("drive", "post_up", "mid_range", "three_point"), 10)
+
+        def mix(ratings, tend):                  # the engine's zone weights, as shares
+            w = {z: self.LEAGUE["share"][z] * math.exp(
+                     self.b.ZONE_RATING_SLOPE[z] * DEFAULT_TUNING.skill_impact * (self.b._zone_rating(ratings, z) - 10)
+                     + self.b.ZONE_TENDENCY[z][1] * (tend[self.b.ZONE_TENDENCY[z][0]] - 10)) for z in real}
+            return {z: v / sum(w.values()) for z, v in w.items()}
+        # The average player takes the league's mix; this one takes about his real mix.
+        base, mine = mix(self.AVERAGE, neutral), mix(a, t)
+        got = {z: self.LEAGUE["share"][z] * mine[z] / base[z] for z in real}
+        for z in real:
+            self.assertAlmostEqual(got[z] / sum(got.values()), real[z], delta=0.02)
+
+    def test_usage_and_rate_features(self):
+        f = self.b.raw_features
+        self.assertGreater(f(self.player(usg=30))["_load"], f(self.player(usg=15))["_load"])
+        # Same rebound rates: the taller player rates lower (the engines add height themselves).
+        tall, short = f(self.player(height_cm=213)), f(self.player(height_cm=196))
+        self.assertLess(tall["defensive_rebounding"], short["defensive_rebounding"])
+        self.assertLess(tall["offensive_rebounding"], short["offensive_rebounding"])
+        # Rates count on a log scale: doubling assists adds the same at any level.
+        p = lambda a: f(self.player(ast=a, mp=1e6))["passing"]  # noqa: E731
+        self.assertAlmostEqual(p(40) - p(20), p(20) - p(10), places=3)

@@ -1358,17 +1358,42 @@ How ratings are derived:
   it. For example: three-point % and volume, rim/short/mid accuracy by distance, assist,
   steal, block and rebound percentages, defensive box plus/minus, size, dunk share.
   These z-scores are then scaled to the spread of generated leagues.
+  * **Shot load.** The engines give shots to the best scorers, so usage rate is added to
+    the scoring ratings (half for threes). A 30%-usage star out-shoots a 15%-usage
+    spot-up shooter with the same percentages.
+  * **Shares on a log scale.** Rebound and assist rates count on a log scale, so the
+    top bigs and playmakers aren't pushed to the rating cap. Part of a player's height
+    is taken out of his rebound ratings, because the engines already favour tall
+    rebounders.
+  * **Shot tendencies are what ratings don't explain.** A great shooter's rating
+    already gets him more threes, so his three tendency is set so that the statistical
+    engine reproduces his real mix of rim, short, mid-range and three-point attempts.
 * **Level:** overall ability comes from impact (shrunk box plus/minus and minutes,
   with salary as a prior when there are few minutes). It is mapped onto the ability
   distribution of a generated league. A real league plays like a generated one (median
   rostered ability 93, 90th percentile ~125), so the engines stay calibrated.
 * **Other attributes:**
   * potential from age;
-  * tendencies from shot profile and usage;
+  * shot tendencies as above; passing and cutting tendencies from assist rate and
+    assisted shots;
   * injury proneness partly from games missed;
   * physique from the roster's height and weight;
   * salary rules approximately 2026-27 (cap $165M, tax $201M, minimum $1.27M, MLE
     $14.1M).
+
+**Checked against a real season.** Three simulated seasons on the statistical engine,
+compared with 2025-26 (players with 30+ games and 15+ minutes):
+
+| | before | after |
+|---|---|---|
+| points per game, correlation | 0.78 | 0.87 |
+| top-60 scorers, points bias | −2.0 | +0.4 |
+| top rebounder / assist man (per game) | 20.3 / 12.9 | 13.4 / 10.3 |
+| team wins vs 2025-26, correlation | 0.63 | 0.76 |
+| team wins vs 2025-26, mean miss | 9.1 | 7.9 |
+
+The rest is the engine's: the minutes shape gives about 120 players 30+ minutes
+(NBA: ~65), and the best scorers average close to 40 points, as in generated leagues.
 
 **Career history.** With history on (the default), `--fetch` also gets every season since
 2003-04, one page per season, plus every draft since 2003. That is about 45 more pages,
