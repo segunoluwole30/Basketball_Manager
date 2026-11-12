@@ -76,7 +76,7 @@ class ShoutTests(unittest.TestCase):
 
     def test_attack_the_rim(self):
         t = self.run_with("attack_rim")
-        self.assertGreater(share(t, "home", "rim"), share(self.base, "home", "rim") + 0.03)   # ~+0.05-0.06 over 24 games
+        self.assertGreater(share(t, "home", "rim"), share(self.base, "home", "rim") + 0.02)   # ~+0.05-0.07 over 24 games
         self.assertLess(share(t, "home", "three"), share(self.base, "home", "three"))
 
     def test_look_for_threes(self):

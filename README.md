@@ -878,6 +878,23 @@ estimate yet below the real per-100 rate in full games, where fatigue and benche
 play. The full-game numbers come from Basketball-Reference and the half-court ones
 are estimates, so the full-game numbers decide.
 
+### Realism audit (`python -m hoopsim.spatial.audit`)
+The audit plays recorded full games and checks what a 3D view would show against NBA
+player-tracking figures:
+* bodies: speed, distance, acceleration, teleports, overlaps, players off the floor;
+* floor: spacing and defenders between their man and the rim;
+* ball: pass speed and shot arc;
+* shots: zones, corner threes, distance, closest defender, shot clock, passes per
+  possession.
+
+Each line reads ok, watch or off. The first run found players teleporting about 275
+times a game:
+* **Free throws:** all ten snapped onto the lane after every shooting foul.
+* **Offensive rebounds:** the rebounder snapped up to 9 ft onto the ball.
+
+Now everyone walks or jogs to the lane in dead-ball time, and the rebounder runs to the
+loose ball. Teleports fell to about 0.1 a game, with box-score calibration unchanged.
+
 ### Where the defence picks up
 On a walk-up (after a make, or a team that doesn't push), the defence gets back and waits
 instead of picking up the ball full court:

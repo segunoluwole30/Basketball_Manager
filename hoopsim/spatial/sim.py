@@ -1477,7 +1477,7 @@ class HalfCourtGame:
             self.stats["orb"] += 1
             self.orb_time = self.now
             self.say(f"Offensive rebound {winner.p.name}!")
-            winner.place(*land)
+            self.chase_loose_ball(winner, land)
             self.holder = winner
             self.last_passer = None
             self.mode, self.mode_since = "probe", self.now
@@ -1485,19 +1485,62 @@ class HalfCourtGame:
             winner.spot = C.clamp(C.toward(RIM, winner.pos, max(C.dist_to_rim(winner.pos), 4.0)))
             self.next_decision = self.now + 0.3
 
+    def walk_to(self, spots: dict, max_seconds: float = 5.0) -> None:
+        """A dead ball (clock stopped): everyone walks, or jogs if it's far, to his spot,
+        recorded frame by frame, then stands on it."""
+        dt = self.t.dt
+        waited = 0.0
+        while waited < max_seconds:
+            moving = False
+            for a, (x, y) in spots.items():
+                dx, dy = x - a.x, y - a.y
+                d = math.hypot(dx, dy)
+                if d > 0.25:
+                    moving = True
+                    v = max(5.0, min(15.0, d / 1.6))          # far: jog there; near: walk
+                    step = min(d, v * dt)
+                    a.x, a.y = a.x + dx / d * step, a.y + dy / d * step
+            if not moving:
+                break
+            self.record_frame()
+            self.now += dt
+            waited += dt
+        for a, (x, y) in spots.items():
+            a.place(x, y)
+
+    def chase_loose_ball(self, winner: Agent, land: tuple[float, float]) -> None:
+        """The ball comes down a step or two from the rebounder: he goes and gets it
+        (everyone keeps moving) instead of appearing on it."""
+        dt = self.t.dt
+        loose = Flight("rebound", land, land, self.now, 1.0, z0=3.0, z1=3.0)
+        winner.target(land)
+        for _ in range(10):
+            if C.dist(winner.pos, land) <= 1.5:
+                break
+            for a in self.everyone:
+                a.move(dt, self.now, 1.25 if a is winner else 1.0)
+            self.flight, saved = loose, self.flight
+            self.record_frame()
+            self.flight = saved
+            self.now += dt
+            if self.game_clock is not None:
+                self.game_clock -= dt
+
     def free_throws(self, shooter: Agent, n: int, fouler: Agent) -> None:
         self.credit(fouler, "pf")
         self.mode = "ft"
-        shooter.place(0.0, C.FREE_THROW_Y)
         others = [a for a in self.everyone if a is not shooter]
         lane = list(LANE_SPOTS)
         defenders = [a for a in others if a in self.defense]
         attackers = [a for a in others if a in self.offense]
+        spots = {shooter: (0.0, C.FREE_THROW_Y)}
         for a, spot in zip(defenders[:2] + attackers[:2] + defenders[2:3] + attackers[2:3], lane):
-            a.place(*spot)
+            spots[a] = spot
         rest = defenders[3:] + attackers[3:]
         for i, a in enumerate(rest):
-            a.place((-1) ** i * (10 + 3 * i), 24.0)
+            spots[a] = ((-1) ** i * (10 + 3 * i), 24.0)
+        held, self.holder = self.holder, shooter          # the official hands him the ball
+        self.walk_to(spots)                                # line up for the free throws (no teleport)
         pct = max(0.35, min(0.95, self.t.free_throw + 0.018 * (shooter.a("free_throw") - 10)) * (1.0 - shooter.fatigue_shot))
         made = 0
         last_missed = False
@@ -1524,6 +1567,7 @@ class HalfCourtGame:
             else:
                 last_missed = True
                 self.say("Free throw missed")
+        self.holder = held
         if last_missed:
             land = C.clamp((self.rng.uniform(-6, 6), RIM[1] + self.rng.uniform(3, 7)))
             self.start_rebound(RIM, land, 0.6, edge=2.2)

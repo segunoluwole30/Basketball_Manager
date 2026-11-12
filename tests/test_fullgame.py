@@ -355,7 +355,7 @@ class DeadBallInboundTests(unittest.TestCase):
         from dataclasses import replace
         from hoopsim.spatial.transition import DEFAULT_OPEN_TUNING
         rare = Counter()
-        for i in range(3):
+        for i in range(4):
             g = FullGame(short_league(i, quarter_minutes=6), 1, 2, random.Random(i))
             g.run()
             rare += g.stats

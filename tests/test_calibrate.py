@@ -36,9 +36,12 @@ class ParamsTests(unittest.TestCase):
         # Re-pinned when player generation changed (stretch bigs, shooting point
         # guards), which changes league 41 itself; with the old generate.py the
         # legacy physics still gives the original pin a5958e8ac648389b / 28-18.
+        # Re-pinned again when free throws and offensive rebounds stopped teleporting
+        # players (they walk to the lane, and run to a loose ball): more frames, and the
+        # rebounder ends up where he really is (was 5ba83331e1e1b1c7 / 29-22).
         g = play(LEGACY_PARAMS)
-        self.assertEqual(fingerprint(g), "5ba83331e1e1b1c7")
-        self.assertEqual(g.score, {"home": 29, "away": 22})
+        self.assertEqual(fingerprint(g), "0835b914b14e3971")
+        self.assertEqual(g.score, {"home": 34, "away": 25})
 
     def test_params_change_behaviour(self):
         loose = DEFAULT_PARAMS.with_values(help_trigger=10.0, closeout_speed=0.7, contest_outside=0.5)
