@@ -895,6 +895,95 @@ times a game:
 Now everyone walks or jogs to the lane in dead-ball time, and the rebounder runs to the
 loose ball. Teleports fell to about 0.1 a game, with box-score calibration unchanged.
 
+### Patient offence, human movement and spacing
+The next audit flagged hurried offences (1.6 passes per half-court possession, 7.6% of
+shots with 7 or fewer seconds on the shot clock), snappy movement (99th-percentile
+acceleration 28 ft/s²) and bunched attackers. What the measurements showed:
+* **Every set possession ended mid-clock.** 79% of shots came with 18-7 s left. The
+  handler mostly picked the option the learned values rated best (72% of shots), so
+  temperature wasn't the cause. With all options valued within ~0.05 points, the first
+  ordinary look after the entry (a drive, a so-so jumper, an entry read) was taken. Set
+  entries ended in a drive 0.3 times per possession, and nothing kept the ball moving.
+* **Passing was too risky to do more of.** About 5% of passes were lost (NBA ~2-2.5%),
+  and the values had learned that.
+* **Time went to the backcourt.** Sets started with ~17.8 s on the shot clock (walk-up
+  at 55% speed, 3.5-6 s bring-up, 1.5-3 s before the first action).
+* **Movement:** the acceleration cap itself (22 + 1.2 per speed point) set the 99th
+  percentile. Free-throw walks started and stopped instantly, and screens stopped a
+  defender dead in a tick.
+* **Spacing:** a receiver took the spot where he caught the ball, so spots drifted
+  together over a possession. The audit also counted free-throw lineups as half-court
+  spacing (that alone was 50.7% → 45.6%).
+
+Changes:
+* **Patience** (`SpatialParams.patience*`, `HalfCourtGame.patience_bias`). Against a set
+  defence, shots, drives without an edge and post-ups lose up to 0.3 points of value
+  with 14+ s on the shot clock, fading to nothing at 4 s. Holding the ball loses 30% of
+  that, so it gets swung instead. Great looks (worth 1.25+ points) and drives past a
+  beaten man are exempt, and threes pay only a quarter. Flows out of transition and
+  end-of-game situations are exempt too. Slow teams are more patient. The "look for
+  threes" shout goes from 0.06 to 0.09 to keep its effect.
+* **Sets:** entries can start down to 8.5 s (was 10) and run to 6 s (was 7.5). A freed
+  catch is driven only with 7 ft of daylight (was 5). The first action comes sooner
+  (0.8-2 s after the bring-up, swing passes 0.4-1 s).
+* **Safer passing:** `pass_steal_scale` 0.213 → 0.045, `errant_pass` 0.018 → 0.007,
+  `dribble_turnover_per_sec` 0.058 → 0.045. A perimeter pass is still routine with the
+  on-ball man 2-3 ft away.
+* **Backcourt:** walk-ups at 70% speed (was 55%), bring-up 3-4.5 s (was 3.5-6), and a
+  little more pushing (after defensive rebounds 0.38 → 0.43, after makes 0.06 → 0.08).
+* **Movement:** acceleration is 15 + 0.6 per speed point (`ACCEL_BASE`,
+  `ACCEL_PER_POINT`). `Agent.steer` is shared by half-court moves, throw-in walks and
+  free-throw walks, and screens brake at 1.4× that. Slower closeouts opened shots, so
+  jump shots take longer to get off (catch 0.30 → 0.45 s, off the dribble 0.36 → 0.50 s),
+  and rim finishing is 3 points harder (`rim_make_adj`).
+* **Spacing:** after every catch, a perimeter man within 12 ft of the ball or a
+  teammate's spot moves to the nearest open spot (top, slots, wings, corners;
+  `respace`). Whoever brings the ball up takes the point.
+* `defensive_rebound_edge` 4.58 → 3.2 (ORB% was .21). The values were retrained.
+
+Audit, 24 games (seed 0):
+
+| | before | after | NBA |
+|---|---|---|---|
+| passes per half-court possession | 1.58 | 2.64 | 2.5-3.6 |
+| shots with 7-0 s on the shot clock | 7.6% | 16.0% | 16-26% |
+| shots with 24-18 s | 12.9% | 12.0% | 14-24% |
+| acceleration, 99th percentile | 28.1 ft/s² | 20.0 | 8-22 |
+| top speed / average speed | 21.4 / 4.56 mph | 21.7 / 4.79 | ≤21.5 / 3.9-4.8 |
+| two attackers within 6 ft (live half court) | 50.7% (45.6% w/o free throws) | 38.7% | 15-45% |
+| closest defender 0-2 / 2-4 / 4-6 / 6+ ft | 13.8 / 29.6 / 24.8 / 31.7% | 10.6 / 23.1 / 19.8 / 46.6% | 5-11 / 28-38 / 28-36 / 22-32% |
+| rim / threes / corner share of threes | 34.5 / 37.8 / 21.9% | 37.6 / 42.4 / 33.1% | 28-36 / 38-44 / 20-28% |
+| ok / watch / off | 14 / 8 / 4 | 14 / 8 / 4 | |
+
+Full games, 64 per league (`measure --games 64 --jobs 2`, seeds 0 / 1 / 2):
+
+| | before | after | NBA 2025-26 |
+|---|---|---|---|
+| pace | 103.8 / 104.5 / 106.1 | 96.7 / 98.3 / 99.9 | 99.4 |
+| points | 114.3 / 115.1 / 114.7 | 114.7 / 119.1 / 118.5 | 115.6 |
+| points per 100 | 110.1 / 109.7 / 107.7 | 118.3 / 120.4 / 118.4 | 115.8 |
+| turnovers per 100 | 16.7 / 15.5 / 16.3 | 14.3 / 13.3 / 13.8 | 14.6 |
+| three share | .371 / .396 / .395 | .406 / .425 / .421 | .415 |
+| eFG | .568 / .542 / .559 | .584 / .581 / .590 | .546 |
+| ORB% | .207 / .236 / .187 | .254 / .270 / .229 | .260 |
+| within tolerance (of 13) | 6 / 10 / 6 | 12 / 11 / 10 | |
+
+Full games take about 0.95 s each (was 0.87).
+
+Still off:
+* **Wide-open shots and eFG.** Patience means early shots are mostly great looks, and
+  closeouts are slower with human acceleration. So 6+ ft shots rose to ~46% and eFG to
+  ~.585. A longer release, earlier help, less sag and harder rim finishing each helped
+  only a little. Pulling eFG down to .546 would take ~7 points a game, unless
+  possessions also produce more shots (FTA and ORB are now on target). A defence that
+  recovers better on the second and third pass is the next job.
+* **Early shots** (24-18 s) stay ~11-12%. They come almost only from transition, and
+  half-court sets start with ~19.5 s left.
+* **Corner threes** are a third of all threes (respacing fills the corners).
+* Retraining the values moves full-game numbers a lot (2-3 possessions of pace between
+  retrains with near-identical settings), and 32-game samples differ by up to 7 points
+  a game from seed to seed. Judge changes on 64+ games.
+
 ### Where the defence picks up
 On a walk-up (after a make, or a team that doesn't push), the defence gets back and waits
 instead of picking up the ball full court:

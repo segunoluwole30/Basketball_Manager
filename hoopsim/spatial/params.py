@@ -48,14 +48,14 @@ class SpatialParams:
     # --- shot model ------------------------------------------------------------
     contest_inside: float = 1.126         # multiplies the contest penalty at the rim and close
     contest_outside: float = 1.602        # ... and on mid-range and three-point jumpers
-    rim_make_adj: float = 0.0             # added to the open make chance at the rim
+    rim_make_adj: float = -0.03           # added to the open make chance at the rim (was 0; README "Patient offence")
     three_make_adj: float = -0.0204         # added to the open make chance from three
     foul_scale: float = 1.0               # multiplies shooting-foul chances (search chose 1.28; held at 1, see README)
     # --- turnovers and rebounds ------------------------------------------------
-    dribble_turnover_per_sec: float = 0.0576   # with a defender in your face
-    pass_steal_scale: float = 0.213
-    errant_pass: float = 0.0184          # passes thrown away or fumbled (not picked off)
-    defensive_rebound_edge: float = 4.576
+    dribble_turnover_per_sec: float = 0.045   # with a defender in your face (was 0.0576)
+    pass_steal_scale: float = 0.045       # was 0.213, when ~5% of passes were lost (NBA ~2-2.5%)
+    errant_pass: float = 0.007            # passes thrown away or fumbled (not picked off; was 0.0184)
+    defensive_rebound_edge: float = 3.2   # was 4.576 (full-game ORB% .21 against .26)
     # --- rotation lag (the defence falls behind as the ball moves) -------------
     rotation_lag: float = 0.6             # extra reaction (in reactions) per level of scramble
     scramble_bend: float = 4.0            # receiver's man this far beyond his closeout spot = defence bent (ft)
@@ -66,7 +66,7 @@ class SpatialParams:
     entry_read: float = 1.12              # a catch worth this many points (wide open) is shot in the entry
     deny_rate: float = 0.45               # chance a set defence denies a swing receiver (scaled by skill)
     entry_pnr: float = 0.5                # weight of a closing pick-and-roll among the set's last actions
-    entry_drive_gap: float = 5.0          # ... and drives a freed catch only with this much daylight (ft)
+    entry_drive_gap: float = 7.0          # ... and drives a freed catch only with this much daylight (ft; was 5)
     routine_pass_risk: float = 0.4        # steal and errant chances on routine perimeter passes
     second_actions: float = 2.0           # resets into a new action after a stalled attack (per possession)
     # Shooting off the dribble and spacing (README "Full-game three-point volume, part 2").
@@ -74,6 +74,20 @@ class SpatialParams:
     pullup_on_the_move: float = 0.0       # 1: value pull-up jumpers as running shots (the old mismatch)
     relocate_shooter: float = 10.0        # shooters this good slide along the arc when their man helps (0: off)
     relocate_degrees: float = 18.0        # ... by this much of the arc
+    # Patience (README "Patient offence"): with the defence set and time on the shot
+    # clock, a team passes up an ordinary look for a better one. Attacking options (a
+    # shot, a drive without an edge, a post-up) lose this many points of value with
+    # ``patience_full`` or more on the shot clock, fading to nothing at ``patience_none``.
+    # Great looks (worth ``patience_great``+ points) and beaten defenders are taken anyway.
+    patience: float = 0.3
+    patience_full: float = 14.0
+    patience_none: float = 4.0
+    patience_great: float = 1.25
+    patience_three: float = 0.25          # ... scaled by this for threes (a catch-and-shoot three is a wanted shot)
+    patience_hold: float = 0.3            # ... and standing on the ball by this share of it
+    # Off-ball spacing: after a catch, a perimeter man this close (ft) to the ball or a
+    # teammate's spot fills the nearest open spot instead (0: off).
+    respace_gap: float = 12.0
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -137,6 +151,8 @@ LEGACY_PARAMS = SpatialParams(
     off_dribble_penalty=0.035,
     pullup_on_the_move=1.0,
     relocate_shooter=0.0,
+    patience=0.0,
+    respace_gap=0.0,
 )
 
 # Searched fields: (low, high). Everything else stays at its default.
@@ -166,16 +182,19 @@ SEARCH_SPACE = {
     "three_make_adj": (-0.05, 0.03),
     "foul_scale": (0.8, 2.0),
     "dribble_turnover_per_sec": (0.02, 0.12),
-    "pass_steal_scale": (0.1, 0.5),
+    "pass_steal_scale": (0.03, 0.5),
     "errant_pass": (0.003, 0.03),
     "defensive_rebound_edge": (3.0, 7.0),
     "rotation_lag": (0.0, 1.2),
     "scramble_decay": (0.1, 0.8),
-    "entry_actions": (0.0, 3.0),
+    "entry_actions": (0.0, 4.5),
     "entry_read": (1.0, 1.35),
     "routine_pass_risk": (0.2, 1.0),
     "entry_drive_gap": (2.0, 8.0),
     "entry_pnr": (0.0, 2.0),
     "deny_rate": (0.0, 1.0),
     "second_actions": (0.0, 3.0),
+    "patience": (0.0, 0.8),
+    "patience_full": (10.0, 20.0),
+    "patience_none": (3.0, 10.0),
 }
