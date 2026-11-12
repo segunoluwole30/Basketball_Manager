@@ -1709,9 +1709,8 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
         x.fillRect(0, 122, 256, 6);                                 // hem; then a stripe down each side
         x.fillRect(0, 30, 4, 92); x.fillRect(124, 30, 8, 92); x.fillRect(252, 30, 4, 92);
         x.fillStyle = "#ffffff";
-        x.translate(256, 0); x.scale(-1, 1);                      // (u runs right to left round the torso)
-        x.font = `700 44px ${colors.font}`; x.fillText(n, 192, 50);
-        x.font = `700 34px ${colors.font}`; x.fillText(n, 64, 48);
+        x.font = `700 44px ${colors.font}`; x.fillText(n, 64, 50);     // back
+        x.font = `700 34px ${colors.font}`; x.fillText(n, 192, 48);    // front
         return canvasTex(c);
       }
       x.font = `700 72px ${colors.font}`; x.fillText(n, 128, 68);   // back (u = 0.5)
