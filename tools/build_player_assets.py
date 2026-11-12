@@ -1,18 +1,22 @@
-"""Build the 3D viewer's animated player: one rigged low-poly model plus motion-capture clips,
+"""Build the 3D viewer's animated player: one rigged model plus motion-capture clips,
 written as a single binary glTF (hoopsim/spatial/assets/player.glb).
 
     python tools/build_player_assets.py [--cache DIR] [--out FILE]
 
-* Motion: the CMU Graphics Lab Motion Capture Database (free for any use, see
-  hoopsim/spatial/assets/LICENSES.md), in Bruce Hahne's BVH conversion. The BVH files are
-  not kept in the repository: this script downloads the ones it needs into ``--cache``.
-* Model: generated here (tubes and ellipsoids skinned to the mocap skeleton), so the clips
-  need no retargeting to a foreign rig and the mesh is the project's own.
+* Body: MakeHuman's base mesh, default rig weights and shape targets (CC0), shaped into a
+  tall athletic man, bound to the mocap skeleton, cut away where the kit covers it and
+  simplified. A second shape (the heaviest build) becomes the "bulk" morph target.
+* Kit, hair and gear: generated here and fitted to that body by measuring it: jersey,
+  shorts, shoes and socks; hair styles, beard, headband, sleeves and wristbands.
+* Motion: the CMU Graphics Lab Motion Capture Database (free for any use), in Bruce
+  Hahne's BVH conversion. Every clip is retargeted to the model's skeleton, cut, turned to
+  face +Z, put in place (the viewer moves players from the replay), resampled to 30 Hz and
+  stored with quantised rotations. Timing marks the viewer needs (release, take-off,
+  natural speed, the dribble's bounces) go in the glTF's top-level ``extras.hoopsim``.
 
-Every clip is retargeted to one symmetric skeleton, cut, turned to face +Z, put in place
-(the viewer moves players from the replay), resampled to 30 Hz and stored with quantised
-rotations. Timing marks the viewer needs (release, take-off, natural speed, the dribble's
-bounces) go in the glTF's top-level ``extras.hoopsim``.
+Sources and licences: hoopsim/spatial/assets/LICENSES.md. Neither the MakeHuman files nor
+the BVH files are kept in the repository: this script downloads what it needs into
+``--cache``. Needs numpy and pyfqmr (mesh simplification; only to build).
 """
 from __future__ import annotations
 
@@ -28,10 +32,8 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "hoopsim" / "spatial" / "assets" / "player.glb"
 MIRROR = "https://raw.githubusercontent.com/una-dinosauria/cmu-mocap/master/data/{sub:03d}/{name}.bvh"
-SKELETON_FROM = "124_05"          # the subject whose proportions the model takes
 HEIGHT = 6.5                      # feet, floor to the top of the head in the T-pose
 FPS = 30
-BULK_GIRTH = 1.25                 # the "bulk" morph target: the body this many times as thick
 SRC_FPS = 120
 
 # name: (file, first, last source frame (120 Hz), kind, options)
@@ -194,49 +196,147 @@ def yaw_mat(a):
     return axis_rot("Y", a)
 
 
+# ---------------------------------------------------------------- the MakeHuman body
+MH_URL = "https://raw.githubusercontent.com/makehumancommunity/makehuman/master/makehuman/data/"
+MH_FILES = {"base.obj": "3dobjs/base.obj", "default.mhskel": "rigs/default.mhskel",
+            "default_weights.mhw": "rigs/default_weights.mhw"}
+MH_TARGETS = {                        # the shapes mixed into the body (MakeHuman "targets")
+    "muscle": "macrodetails/universal-male-young-maxmuscle-averageweight",
+    "heavy": "macrodetails/universal-male-young-maxmuscle-maxweight",
+    "tall": "macrodetails/height/male-young-maxmuscle-averageweight-maxheight",
+    "ideal": "macrodetails/proportions/male-young-maxmuscle-averageweight-idealproportions",
+    "african": "macrodetails/african-male-young", "asian": "macrodetails/asian-male-young",
+    "caucasian": "macrodetails/caucasian-male-young",
+}
+# which of the model's joints each bone of MakeHuman's default rig moves with (by name prefix)
+MH_BONES = [("root", {"Hips": 1}), ("pelvis", {"Hips": 1}), ("spine05", {"Hips": .5, "LowerBack": .5}),
+            ("spine04", {"LowerBack": 1}), ("spine03", {"LowerBack": .4, "Spine": .6}), ("spine02", {"Spine": 1}),
+            ("spine01", {"Spine1": .6, "Neck": .4}), ("breast", {"Spine1": 1}), ("clavicle", {"@Shoulder": 1}),
+            ("shoulder01", {"@Shoulder": .5, "@Arm": .5}), ("neck01", {"Neck": .4, "Neck1": .6}), ("neck02", {"Neck1": 1}),
+            ("neck03", {"Neck1": .5, "Head": .5}), ("upperarm", {"@Arm": 1}), ("lowerarm", {"@ForeArm": 1}),
+            ("wrist", {"@Hand": 1}), ("metacarpal", {"@Hand": 1}), ("finger", {"@Hand": 1}),
+            ("upperleg", {"@UpLeg": 1}), ("lowerleg", {"@Leg": 1}), ("foot", {"@Foot": 1}), ("toe", {"@ToeBase": 1})]
+PARENT = {"Hips": None, "LeftUpLeg": "Hips", "LeftLeg": "LeftUpLeg", "LeftFoot": "LeftLeg", "LeftToeBase": "LeftFoot",
+          "RightUpLeg": "Hips", "RightLeg": "RightUpLeg", "RightFoot": "RightLeg", "RightToeBase": "RightFoot",
+          "LowerBack": "Hips", "Spine": "LowerBack", "Spine1": "Spine", "Neck": "Spine1", "Neck1": "Neck", "Head": "Neck1",
+          "LeftShoulder": "Spine1", "LeftArm": "LeftShoulder", "LeftForeArm": "LeftArm", "LeftHand": "LeftForeArm",
+          "RightShoulder": "Spine1", "RightArm": "RightShoulder", "RightForeArm": "RightArm", "RightHand": "RightForeArm"}
+
+
+class Human:
+    """MakeHuman's base body (CC0): mesh, default rig and skin weights, and the shape targets
+    that turn the neutral base into a tall, athletic man. Units here are MakeHuman's
+    (decimetres); +X is his left, +Y up, +Z his front."""
+
+    def __init__(self, cache: Path):
+        cache.mkdir(parents=True, exist_ok=True)
+
+        def get(name, rel):
+            f = cache / name
+            if not f.exists():
+                print("fetching", MH_URL + rel); urllib.request.urlretrieve(MH_URL + rel, f)
+            return f
+
+        V, quads, groups, g = [], [], {}, None
+        for line in get("base.obj", MH_FILES["base.obj"]).read_text().splitlines():
+            if line.startswith("v "): V.append([float(x) for x in line.split()[1:4]])
+            elif line.startswith("g "): g = line.split()[1]
+            elif line.startswith("f "): groups.setdefault(g, []).append([int(t.split("/")[0]) - 1 for t in line.split()[1:]])
+        self.base = np.array(V)
+        self.quads = {k: np.array(v) for k, v in groups.items() if not k.startswith("joint")}
+        self.nbody = int(self.quads["body"].max()) + 1
+        self.rig = json.loads(get("default.mhskel", MH_FILES["default.mhskel"]).read_text())
+        wts = json.loads(get("default_weights.mhw", MH_FILES["default_weights.mhw"]).read_text())["weights"]
+        self.bone_weights = {b: np.array(w) for b, w in wts.items()}
+        self.targets = {}
+        for key, rel in MH_TARGETS.items():
+            d = np.zeros_like(self.base)
+            for line in get(rel.split("/")[-1] + ".target", "targets/" + rel + ".target").read_text().splitlines():
+                if line and line[0] != "#":
+                    i, x, y, z = line.split(); d[int(i)] = [float(x), float(y), float(z)]
+            self.targets[key] = d
+
+    def shape(self, heavy=0.0):
+        """Every vertex (body, helpers and joint markers) of the player's body; heavy: 0..1
+        towards MakeHuman's heaviest muscular build."""
+        t = self.targets
+        return (self.base + (t["african"] + t["asian"] + t["caucasian"]) / 3 + t["tall"] + 0.5 * t["ideal"]
+                + (1 - heavy) * 0.75 * t["muscle"] + heavy * t["heavy"])
+
+    def joint(self, verts, name):
+        return verts[self.rig["joints"][name]].mean(0)
+
+    def bone(self, verts, bone, end="head"):
+        return self.joint(verts, self.rig["bones"][bone][end])
+
+    def weights(self):
+        """Skin weights of the body's vertices on the model's joints: [nbody, len(KEEP)]."""
+        W = np.zeros((self.nbody, len(KEEP)))
+        for bone, vw in self.bone_weights.items():
+            to = next((m for pre, m in MH_BONES if bone.startswith(pre)), {"Head": 1})     # (the face rig)
+            side = "Left" if bone.endswith(".L") else "Right"
+            sel = vw[:, 0] < self.nbody
+            for jn, share in to.items():
+                np.add.at(W[:, KEEP.index(jn.replace("@", side))], vw[sel, 0].astype(int), vw[sel, 1] * share)
+        return W / np.maximum(W.sum(1, keepdims=True), 1e-9)
+
+
 # ---------------------------------------------------------------- skeleton
 class Skeleton:
-    """The model's skeleton: the kept joints of one subject, made left/right symmetric and
-    scaled to feet. ``rest`` is the bind pose (the BVH's T-pose frame)."""
+    """The model's skeleton: the mocap data's joints, placed where they sit in the MakeHuman
+    body and scaled to feet. The bind pose is the body's own rest pose (arms down and out,
+    legs apart); every joint's rest rotation is the identity."""
 
-    def __init__(self, bv: Bvh):
+    def __init__(self, hu: Human, verts):
         self.names = KEEP
         self.idx = {n: i for i, n in enumerate(KEEP)}
-        kept_parent, offs, ends = [], [], []
-        for n in KEEP:
-            j = bv.idx[n]; off = bv.offset[j].copy(); p = bv.parent[j]
-            while p >= 0 and bv.names[p] not in self.idx:      # fold dropped joints (they don't move)
-                off = off + bv.offset[p]; p = bv.parent[p]
-            kept_parent.append(self.idx[bv.names[p]] if p >= 0 else -1)
-            offs.append(off)
-            ends.append(end_of(bv, j))
-        offs, ends = np.array(offs), np.array(ends)
-        _, rot = bv.local()
-        rest = mat_to_quat(rot[0, [bv.idx[n] for n in KEEP]])
-        # symmetric: average each left joint with its mirrored right twin
-        for n in KEEP:
-            if not n.startswith("Left"): continue
-            a, b = self.idx[n], self.idx["Right" + n[4:]]
-            for arr in (offs, ends):
-                m = (arr[a] + arr[b] * [-1, 1, 1]) / 2
-                arr[a] = m; arr[b] = m * [-1, 1, 1]
-            q = nlerp(rest[a], rest[b] * [1, -1, -1, 1], 0.5)
-            rest[a] = q; rest[b] = q * [1, -1, -1, 1]
-        for n in ("Hips", "LowerBack", "Spine", "Spine1", "Neck", "Neck1", "Head"):
-            j = self.idx[n]; offs[j][0] = 0; ends[j][0] = 0
-            rest[j] = nlerp(rest[j], rest[j] * [1, -1, -1, 1], 0.5)
-        self.parent = kept_parent
-        self.rest = rest; self.rest[0] = [0, 0, 0, 1]
-        W, P = fk(self.parent, offs, np.zeros((1, 3)), quat_to_mat(self.rest)[None])
-        top = (P[0, self.idx["Head"]] + W[0, self.idx["Head"]] @ ends[self.idx["Head"]])[1] + 0.9   # scalp above the joint chain
-        foot = P[0, self.idx["LeftFoot"]][1]
-        self.ankle = 0.27                                    # feet: ankle joint above the floor
-        self.scale = (HEIGHT - self.ankle) / (top - foot)
-        self.offset = offs * self.scale; self.ends = ends * self.scale
+        self.parent = [self.idx[PARENT[n]] if PARENT[n] else -1 for n in KEEP]
+        body = verts[:hu.nbody]
+        self.floor = body[:, 1].min()
+        self.scale = (HEIGHT - 0.06) / (body[:, 1].max() - self.floor)      # (he stands on a sole)
+        P, E, S = self.place(hu, verts)
+        self.bindP = np.array([P[n] for n in KEEP]); self.bindW = np.array([np.eye(3)] * len(KEEP))
+        self.offset = np.array([P[n] - (P[PARENT[n]] if PARENT[n] else 0) for n in KEEP])
+        kids = lambda t: [k for k in range(len(KEEP)) if self.parent[k] == t]
+        self.ends = np.array([(E[n] - P[n]) if n in E else (self.offset[kids(i)[0]] if kids(i) else [0, 1, 0])
+                              for i, n in enumerate(KEEP)])
+        self.second = {self.idx[n]: v / np.linalg.norm(v) for n, v in S.items()}
+        self.rest = np.tile([0.0, 0, 0, 1], (len(KEEP), 1))
+        self.ankle = float(P["LeftFoot"][1])
+        self.hip_height = float(P["Hips"][1])
         self.leg = np.linalg.norm(self.offset[self.idx["LeftLeg"]]) + np.linalg.norm(self.offset[self.idx["LeftFoot"]])
-        W, P = fk(self.parent, self.offset, np.zeros((1, 3)), quat_to_mat(self.rest)[None])
-        self.hip_height = self.ankle - P[0, self.idx["LeftFoot"]][1]
-        self.bindW = W[0]; self.bindP = P[0] + [0, self.hip_height, 0]
+
+    def place(self, hu, verts):
+        """Where the joints sit in a body shape: positions, bone ends and (arms) a second axis."""
+        B = lambda bone, end="head": self.to_feet(hu.bone(verts, bone, end))
+        P, E, S = {}, {}, {}                                    # joint positions, bone ends, a second axis
+        P["Hips"] = P["LowerBack"] = B("spine05")
+        P["Spine"] = B("spine03"); P["Spine1"] = P["Neck"] = B("spine01")
+        P["Neck1"] = B("neck01"); P["Head"] = B("head"); E["Head"] = B("head", "tail")
+        for sd, mh, sx in (("Left", ".L", 1), ("Right", ".R", -1)):
+            P[sd + "Shoulder"] = P["Spine1"]
+            P[sd + "Arm"] = B("upperarm01" + mh); P[sd + "ForeArm"] = B("lowerarm01" + mh); P[sd + "Hand"] = B("wrist" + mh)
+            E[sd + "Hand"] = B("finger3-1" + mh)
+            P[sd + "UpLeg"] = B("upperleg01" + mh); P[sd + "Leg"] = B("lowerleg01" + mh); P[sd + "Foot"] = B("foot" + mh)
+            toe = (B("toe2-1" + mh) + B("toe4-1" + mh)) / 2
+            P[sd + "ToeBase"] = toe; E[sd + "ToeBase"] = toe + (toe - P[sd + "Foot"]) * [0.5, 0, 0.5]
+            # which way the outside of the elbow and the back of the hand face: straight up in
+            # the mocap's zero pose (arms out, palms down), so the arm's twist carries over
+            up, fore = P[sd + "ForeArm"] - P[sd + "Arm"], P[sd + "Hand"] - P[sd + "ForeArm"]
+            S[sd + "Arm"] = S[sd + "ForeArm"] = -sx * np.cross(up, fore)
+            S[sd + "Hand"] = sx * np.cross(B("finger2-1" + mh) - P[sd + "Hand"], B("finger5-1" + mh) - P[sd + "Hand"])
+        for n in KEEP:                                          # exactly symmetric
+            if n.startswith("Left"):
+                r = "Right" + n[4:]
+                for d in (P, E, S):
+                    if n in d: m = (d[n] + d[r] * [-1, 1, 1]) / 2; d[n] = m; d[r] = m * [-1, 1, 1]
+            elif not n.startswith("Right"):
+                P[n] = P[n] * [0, 1, 1]
+                if n in E: E[n] = E[n] * [0, 1, 1]
+        return P, E, S
+
+    def to_feet(self, v):
+        return (np.asarray(v) - [0, self.floor, 0]) * self.scale + [0, 0.06, 0]
 
 
 def end_of(bv, j):
@@ -248,9 +348,20 @@ def end_of(bv, j):
         j = kids[0]
 
 
+def frame(d, s):
+    """An orthonormal frame with its first axis along d and its second as near s as it can be."""
+    d = d / np.linalg.norm(d); s = s - d * (s @ d); s = s / np.linalg.norm(s)
+    return np.stack([d, s, np.cross(d, s)], 1)
+
+
 def retarget(bv: Bvh, sk: Skeleton, a: int, b: int):
-    """Frames a..b of a clip on the model's skeleton: (root positions in feet, local quats)."""
+    """Frames a..b of a clip on the model's skeleton: (root positions in feet, local quats).
+    The mocap's bones and the model's point different ways at rest (its arms are out, the
+    model's down), so each joint's world rotation is taken over with the turn that lines the
+    model's bone up with the mocap's; on the arms the twist is lined up too."""
     pos, rot = bv.local()
+    W0, _ = fk(bv.parent, bv.offset, pos[:1] * 0, rot[:1] * 1)    # frame 0: the conversion's T-pose, head level
+    W0 = W0[0]
     pos, rot = pos[a:b + 1], rot[a:b + 1]
     W, _ = fk(bv.parent, bv.offset, pos, rot)
     Wt = np.zeros((len(pos), len(KEEP), 3, 3))
@@ -258,14 +369,18 @@ def retarget(bv: Bvh, sk: Skeleton, a: int, b: int):
         j, t = bv.idx[n], sk.idx[n]
         kids = [k for k in range(len(KEEP)) if sk.parent[k] == t]
         Wt[:, t] = W[:, j]
-        if len(kids) <= 1 and n != "Hips":                   # line the bone up with the model's
+        if n in ("Neck", "Neck1", "Head"):                      # level when the mocap's T-pose head is
+            Wt[:, t] = W[:, j] @ (W0[0].T @ W0[j]).T
+        elif len(kids) <= 1 and n != "Hips":
             d_src = end_of(bv, j)
             if kids:
                 k = bv.idx[KEEP[kids[0]]]; d_src = bv.offset[k].copy(); p = bv.parent[k]
                 while p != j: d_src = d_src + bv.offset[p]; p = bv.parent[p]
-            d_tgt = sk.offset[kids[0]] if kids else sk.ends[t]
+            d_tgt = sk.ends[t]
             if np.linalg.norm(d_src) > 1e-6 and np.linalg.norm(d_tgt) > 1e-6:
-                Wt[:, t] = W[:, j] @ rot_between(d_tgt, d_src)
+                if t in sk.second: fix = frame(d_src, np.array([0.0, 1, 0])) @ frame(d_tgt, sk.second[t]).T
+                else: fix = rot_between(d_tgt, d_src)
+                Wt[:, t] = W[:, j] @ fix
     loc = np.zeros_like(Wt)
     for t in range(len(KEEP)):
         p = sk.parent[t]
@@ -530,30 +645,6 @@ def frame_for(d, hint=(0, 0, 1)):
     return x, np.cross(d, x)
 
 
-def limb(mesh, mat, sk, chain, radii, col=(1, 1, 1), hint=(0, 0, 1), cap_start=False, cap_end=False, flat=1.0,
-         sides=14):
-    """A tube along a chain of joints. radii: per segment, a list of (t, r[, push]) along it
-    (push: the ring's centre moved along its second axis, for a calf or a biceps). The skin
-    blends from one bone to the next round each joint."""
-    P = sk.bindP; rings = []
-    for s in range(len(chain) - 1):
-        a, b = sk.idx[chain[s]], sk.idx[chain[s + 1]]
-        pa, pb = P[a], P[b]
-        ax, ay = frame_for(pb - pa, hint)
-        for t, r, *push in radii[s]:
-            w = [(a, 1.0)]
-            if t > 0.7 and (s + 1 < len(chain) - 1 or chain[s].endswith("Shoulder")):
-                k = smooth((t - 0.7) / 0.6); w = [(a, 1 - k), (b, k)]
-            if t < 0.3 and s > 0:
-                prev = sk.idx[chain[s - 1]]; k = smooth(0.5 + t / 0.6); w = [(prev, 1 - k), (a, k)]
-            rings.append((pa + (pb - pa) * t + np.asarray(ay) * (push[0] if push else 0), ax, ay, r, r * flat, w))
-    mesh.loft(mat, rings, cap_start, cap_end, col, sides=sides)
-
-
-def smooth(x):
-    x = min(1.0, max(0.0, x)); return x * x * (3 - 2 * x)
-
-
 def ellipsoid(mesh, mat, c, r, weights, col=(1, 1, 1), lat0=-90, lat1=90, rows=7, sides=12, shape=None, bulk=False):
     """shape(sin latitude) -> (x scale, z scale, z shift): a jaw, a hairline."""
     rings = []
@@ -564,129 +655,251 @@ def ellipsoid(mesh, mat, c, r, weights, col=(1, 1, 1), lat0=-90, lat1=90, rows=7
     mesh.loft(mat, rings, lat0 > -89, lat1 < 89, col, sides=sides, bulk=bulk)
 
 
-def build_model(sk: Skeleton, girth: float = 1.0) -> Mesh:
-    """The player, in the T-pose: +X is his left, +Z his front. Four materials: skin (tinted
-    per player), jersey (textured: number, trim), shorts (team colour) and kit (vertex
-    colours: hair, eyes, socks, shoes, trim)."""
-    m = Mesh(girth); P = sk.bindP; ix = sk.idx
-    J = lambda n: P[ix[n]]
-    SKIN, JERSEY, SHORTS, KIT = "skin", "jersey", "shorts", "kit"
-    WHITE, SHOE, HAIR, EYE = (0.85, 0.85, 0.85), (0.02, 0.02, 0.026), (0.008, 0.006, 0.005), (0.004, 0.004, 0.004)   # linear RGB
-    hips, head = J("Hips"), J("Head")
-    sh = J("LeftArm"); X, BACK = (1, 0, 0), (0, 0, -1)
-    wH, wL, wS, wC, wN = ix["Hips"], ix["LowerBack"], ix["Spine"], ix["Spine1"], ix["Neck"]
-    # torso: a sleeveless jersey from below the waist to the collar. u runs round it (back at
+SKIN_TRIS = 5200                  # the bare skin left showing, after simplifying
+TORSO = ("Hips", "LowerBack", "Spine", "Spine1", "Neck", "LeftShoulder", "RightShoulder")
+
+
+def nearest(points, cloud, chunk=512):
+    """For each point, the index of the closest point of the cloud."""
+    out = np.zeros(len(points), dtype=int)
+    for i in range(0, len(points), chunk):
+        d = ((points[i:i + chunk, None, :] - cloud[None, :, :]) ** 2).sum(-1)
+        out[i:i + chunk] = d.argmin(1)
+    return out
+
+
+def slab(sel, values, at, band):
+    """The selected vertices whose value is within ``band`` of ``at``: wider if the mesh is
+    too sparse there to measure anything."""
+    while True:
+        s = sel & (np.abs(values - at) < band)
+        if s.sum() >= 8 or band > 2: return s
+        band *= 1.5
+
+
+class Body:
+    """The MakeHuman body made ready for the player: in feet on the model's skeleton, with
+    what the kit hides cut away and the rest simplified. Built once from the standard shape;
+    another shape (the heavy build) reuses its triangles, so it can be a morph target."""
+
+    def __init__(self, hu: Human, sk: Skeleton, verts):
+        import pyfqmr
+        self.hu, self.sk = hu, sk
+        self.W = hu.weights(); self.dom = self.W.argmax(1)
+        self.P0 = self.feet(verts)
+        ix = sk.idx; P = self.P0; J = lambda n: sk.bindP[ix[n]]
+        self.is_torso = np.isin(self.dom, [ix[n] for n in TORSO])
+        # along each limb bone: 0 at its joint, 1 at the next
+        self.along = np.zeros(len(P))
+        for a, b in (("UpLeg", "Leg"), ("Leg", "Foot"), ("Arm", "ForeArm"), ("ForeArm", "Hand")):
+            for sd in ("Left", "Right"):
+                pa, pb = J(sd + a), J(sd + b); sel = self.dom == ix[sd + a]
+                self.along[sel] = (P[sel] - pa) @ (pb - pa) / ((pb - pa) @ (pb - pa))
+        # MakeHuman's face rig tells jaw from lips from the rest of the head
+        def rigw(pre):
+            w = np.zeros(len(P))
+            for bone, vw in hu.bone_weights.items():
+                if bone.startswith(pre):
+                    sel = vw[:, 0] < len(P); np.add.at(w, vw[sel, 0].astype(int), vw[sel, 1])
+            return w
+        self.jaw, self.lips = rigw("jaw") + rigw("special04"), rigw("oris")
+        head = (self.dom == ix["Head"]) & (P[:, 1] > J("Head")[1] + 0.12)
+        self.eye = np.array([sk.to_feet(hu.bone(verts, "eye.L")), sk.to_feet(hu.bone(verts, "eye.R"))])
+        ey = self.eye[0][1]; skull = head & (P[:, 1] > ey + 0.1)
+        zf, zb = P[skull, 2].max(), P[skull, 2].min()
+        self.hc = np.array([0, ey + 0.06, (zf + zb) / 2])     # the middle of the skull, and its half-sizes
+        self.hr = np.array([np.abs(P[skull, 0]).max(), P[head, 1].max() - ey - 0.06, (zf - zb) / 2])
+        # the scalp: above a hairline that runs from the top of the forehead down to the nape
+        line = ey + 0.27 - 0.55 * np.clip((zf - P[:, 2]) / (zf - zb), 0, 1) ** 0.8
+        self.is_head = self.dom == ix["Head"]
+        self.above_hairline = P[:, 1] - line
+        q = hu.quads["body"]; nrm = np.zeros_like(P)
+        for a, b, c in ((0, 1, 2), (0, 2, 3)):
+            fn = np.cross(P[q[:, b]] - P[q[:, a]], P[q[:, c]] - P[q[:, a]])
+            for k in (a, b, c): np.add.at(nrm, q[:, k], fn)
+        self.N0 = nrm / np.maximum(np.linalg.norm(nrm, axis=1, keepdims=True), 1e-9)
+        # what the kit covers: the trunk under the jersey, hips and thighs under the shorts, the feet in the shoes
+        yH, yS = J("Hips")[1], J("LeftArm")[1]
+        self.hem, self.collar = yH - 0.38, J("Neck1")[1] - 0.03
+        cov = (self.is_torso | (np.abs(P[:, 0]) < 0.3)) & (P[:, 1] < yS + 0.03) & (np.abs(P[:, 0]) < J("LeftArm")[0] - 0.16) & (P[:, 1] > 2.5)
+        cov |= (np.isin(self.dom, [ix["LeftUpLeg"], ix["RightUpLeg"]]) & (self.along < 0.6))
+        cov |= np.isin(self.dom, [ix[sd + j] for sd in ("Left", "Right") for j in ("Foot", "ToeBase")]) & (P[:, 1] < sk.ankle + 0.16)
+        tris = np.concatenate([hu.quads["body"][:, [0, 1, 2]], hu.quads["body"][:, [0, 2, 3]]])
+        tris = tris[~cov[tris].all(1)]
+        used = np.unique(tris); remap = np.full(len(P), -1); remap[used] = np.arange(len(used))
+        simp = pyfqmr.Simplify(); simp.setMesh(P[used], remap[tris])
+        simp.simplify_mesh(target_count=SKIN_TRIS, aggressiveness=4, preserve_border=True, verbose=False)
+        self.D, self.F, _ = simp.getMesh()
+        self.src = used[nearest(self.D, P[used])]             # the body vertex each kept vertex stands for
+        nrm = np.zeros_like(self.D)
+        fn = np.cross(self.D[self.F[:, 1]] - self.D[self.F[:, 0]], self.D[self.F[:, 2]] - self.D[self.F[:, 0]])
+        for k in range(3): np.add.at(nrm, self.F[:, k], fn)
+        self.N = nrm / np.maximum(np.linalg.norm(nrm, axis=1, keepdims=True), 1e-9)
+
+    def feet(self, verts):
+        """A body shape's vertices in feet, on the model's skeleton: where a shape moves the
+        joints (a heavier body is a little shorter), the vertices are moved back with them, so
+        only the change of shape round each bone is left."""
+        P = (verts[:self.hu.nbody] - [0, self.sk.floor, 0]) * self.sk.scale + [0, 0.06, 0]
+        return P - self.W @ self.shift(verts)
+
+    def shift(self, verts):
+        placed = self.sk.place(self.hu, verts)[0]
+        return np.array([placed[n] for n in KEEP]) - self.sk.bindP
+
+
+def build_model(sk: Skeleton, body: Body, verts) -> Mesh:
+    """The player in his rest pose (+X his left, +Z his front) for one body shape. Materials:
+    skin (tinted per player), jersey (textured: number, trim), shorts (team colour), kit
+    (vertex colours: eyes, brows, socks, soles, trim), and the optional parts the viewer
+    switches on per player: hair styles, beard, headband, sleeves, wristbands, leg sleeves,
+    shoes."""
+    m = Mesh(); ix = sk.idx; hu = body.hu
+    P = body.feet(verts)                                      # every body vertex, this shape
+    D = body.D + (P[body.src] - body.P0[body.src])            # the simplified skin, this shape
+    W, dom, src = body.W, body.dom, body.src
+    J = lambda n: sk.bindP[ix[n]]
+    X, BACK = (1, 0, 0), (0, 0, -1)
+    WHITE, DARK, BROW = (0.85, 0.85, 0.85), (0.006, 0.005, 0.005), (0.012, 0.009, 0.007)   # linear RGB
+    wts = lambda i: [(j, W[i, j]) for j in np.nonzero(W[i] > 0.02)[0]]
+    mean_w = lambda sel: [(j, w) for j, w in enumerate(W[sel].mean(0)) if w > 0.04] if sel.any() else [(ix["Hips"], 1)]
+
+    # ---- skin
+    skin = [m.vert(D[i], wts(src[i])) for i in range(len(D))]
+    for f in body.F: m.face("skin", skin[f[0]], skin[f[1]], skin[f[2]])
+
+    everyone = np.ones(len(P), dtype=bool)
+
+    def shell(mat, pick, lift, col=(1, 1, 1)):
+        """A layer over part of the skin: the triangles whose corners all pass ``pick``,
+        lifted off the surface."""
+        ids = {}
+        for f in body.F:
+            if pick[f].all():
+                for i in f:
+                    if i not in ids: ids[i] = m.vert(D[i] + body.N[i] * lift, wts(src[i]), col=col)
+                m.face(mat, ids[f[0]], ids[f[1]], ids[f[2]])
+
+    def shell0(mat, pick, lift):
+        """The same from the full-detail body (hair, beard: where an edge must be clean)."""
+        ids = {}
+        for qd in hu.quads["body"][pick[hu.quads["body"]].all(1)]:
+            for i in qd:
+                if i not in ids: ids[i] = m.vert(P[i] + body.N0[i] * lift, wts(i))
+            m.face(mat, ids[qd[0]], ids[qd[1]], ids[qd[2]]); m.face(mat, ids[qd[0]], ids[qd[2]], ids[qd[3]])
+
+    # ---- eyes (MakeHuman's own eyeballs) and brows
+    for k, grp in enumerate(("helper-l-eye", "helper-r-eye")):
+        q = hu.quads[grp]; ids = {}
+        ev = (verts[np.unique(q)] - [0, sk.floor, 0]) * sk.scale + [0, 0.06, 0] - body.shift(verts)[ix["Head"]]
+        front = ev[:, 2].max(); wH = [(ix["Head"], 1)]
+        for i, v in zip(np.unique(q), ev):
+            ids[i] = m.vert(v + [0, 0, -0.004], wH, col=DARK if v[2] > front - 0.012 else WHITE)
+        for f in q: m.face("kit", ids[f[0]], ids[f[1]], ids[f[2]]); m.face("kit", ids[f[0]], ids[f[2]], ids[f[3]])
+        e = body.eye[k]; sx = 1 if k == 0 else -1; face = (dom == ix["Head"]) & (P[:, 2] > e[2] - 0.12)
+        pts = []
+        for dx in (-0.075, -0.02, 0.04, 0.095):               # along the brow ridge, on the skin
+            at = np.array([e[0] + sx * dx, e[1] + 0.085 - 0.02 * abs(dx - 0.01) / 0.08, 0])
+            near = np.nonzero(face)[0][np.argmin(((P[face][:, :2] - at[:2]) ** 2).sum(1))]
+            pts.append(np.array([at[0], at[1], P[near, 2] + 0.006]))
+        m.loft("kit", [(pt, (0, 1, 0), (0, 0, 1), 0.016, 0.008, wH) for pt in (pts if sx > 0 else pts[::-1])],
+               cap_start=True, cap_end=True, col=BROW, sides=6, bulk=False)
+
+    # ---- jersey: a loose sleeveless top fitted round the trunk. u runs round it (back at
     # 0.25, front at 0.75), v from the hem to the collar: the viewer paints number and trim.
-    hem, top = hips[1] - 0.36, sh[1] + 0.2
-    k = sh[0] / 0.84
-    tor = [(hem, 0.62, 0.45, 2.2, [(wH, 1)]), (hips[1] - 0.1, 0.61, 0.44, 2.2, [(wH, 1)]),
-           (hips[1] + 0.22, 0.51, 0.35, 2.2, [(wH, .5), (wL, .5)]), (hips[1] + 0.48, 0.52, 0.35, 2.3, [(wL, .4), (wS, .6)]),
-           (hips[1] + 0.74, 0.6, 0.39, 2.4, [(wS, .6), (wC, .4)]), (sh[1] - 0.36, 0.68, 0.42, 2.5, [(wS, .2), (wC, .8)]),
-           (sh[1] - 0.16, 0.71, 0.41, 2.5, [(wC, 1)]), (sh[1] - 0.02, 0.69, 0.36, 2.4, [(wC, 1)]),
-           (sh[1] + 0.1, 0.5, 0.29, 2.2, [(wC, .75), (wN, .25)]), (top, 0.25, 0.22, 2, [(wC, .6), (wN, .4)])]
-    lean = lambda y: 0.03 + 0.05 * smooth((y - hips[1]) / 0.9) - 0.07 * smooth((y - sh[1] + 0.3) / 0.5)
-    m.loft(JERSEY, [((0, y, hips[2] + lean(y)), X, BACK, rx * k, rz, w, sq) for y, rx, rz, sq, w in tor],
-           uv=lambda ri: (tor[ri][0] - hem) / (top - hem), sides=20)
-    # neck and head: a skull with a jaw, ears, nose, eyes, and a cap of short hair
-    nk = J("Neck1")
-    m.loft(SKIN, [((0, y, z), X, BACK, r, r * 0.95, w) for y, z, r, w in
-                  ((top - 0.12, nk[2] + 0.03, 0.2, [(wC, .5), (wN, .5)]), (nk[1] + 0.1, nk[2] + 0.02, 0.175, [(ix["Neck1"], 1)]),
-                   (head[1] + 0.02, head[2] + 0.04, 0.165, [(ix["Neck1"], .4), (ix["Head"], .6)]),
-                   (head[1] + 0.2, head[2] + 0.07, 0.17, [(ix["Head"], 1)]))], sides=12)
-    hc = head + [0, 0.3, 0.1]; wHd = [(ix["Head"], 1)]
-    jaw = lambda sn: (1 - 0.3 * (-sn) ** 1.5, 1 - 0.12 * (-sn) ** 1.5, 0.07 * -sn) if sn < 0 else (1, 1, 0)
-    ellipsoid(m, SKIN, hc, (0.3, 0.385, 0.35), wHd, rows=11, sides=16, shape=jaw)
-    # hair: one style is shown per player (or none), in his hair colour. Each is its own
-    # material, so the viewer can switch parts on and off by name.
-    def cap(mat, lat0, grow=1.0, rows=6):
-        ellipsoid(m, mat, hc + [0, 0.02, -0.03], (0.325 * grow, 0.405 * grow, 0.378 * grow), wHd, lat0=lat0, lat1=90,
-                  rows=rows, sides=16, shape=lambda sn: (1, 1, -0.05 * (1 - sn)))
-    cap("hair_short", 16)
-    cap("hair_fade", 44, rows=5)                              # the top only: shaved sides
-    ellipsoid(m, "hair_afro", hc + [0, 0.13, -0.03], (0.42, 0.43, 0.43), wHd, lat0=-4, lat1=90, rows=8, sides=16,
-              shape=lambda sn: (1, 1, -0.13 * (1 - sn)))        # (back off the forehead)
-    cap("hair_flattop", 30)
-    m.loft("hair_flattop", [((0, hc[1] + y, hc[2] - 0.04), X, BACK, 0.265, 0.3, wHd, 3.4) for y in (0.24, 0.52)],
-           cap_end=True, bulk=False)
-    cap("hair_locs", 10, grow=1.02)
-    for a in np.radians(np.arange(55, 306, 25)):             # locks hanging round the sides and back
-        out = np.array([np.sin(a), 0, np.cos(a)]); base = hc + out * [0.3, 0, 0.35] + [0, 0.05, -0.03]
-        lx, ly = frame_for((0, -1, 0), out)
-        m.loft("hair_locs", [(base + out * o + [0, -d, 0], lx, ly, r, r, wHd) for d, o, r in
-                             ((0, 0, 0.05), (0.2, 0.03, 0.055), (0.42, 0.04, 0.05), (0.6, 0.03, 0.035))],
-               cap_end=True, sides=6, bulk=False)
-    cap("hair_bun", 16)
-    ellipsoid(m, "hair_bun", hc + [0, 0.27, -0.34], (0.13, 0.13, 0.13), wHd, rows=5, sides=10)
-    ellipsoid(m, "beard", hc + [0, -0.03, 0.065], (0.27, 0.4, 0.312), wHd, lat0=-88, lat1=-33, rows=5, sides=14)
-    m.loft("headband", [((0, hc[1] + y, hc[2] - 0.01), X, BACK, rx, rz, wHd) for y, rx, rz in
-                        ((0.1, 0.302, 0.352), (0.2, 0.287, 0.336))], bulk=False)
-    for sx in (1, -1):
-        ellipsoid(m, SKIN, hc + [sx * 0.295, -0.03, -0.03], (0.035, 0.085, 0.055), wHd, rows=4, sides=8)
-        ellipsoid(m, KIT, hc + [sx * 0.115, 0.045, 0.312], (0.034, 0.02, 0.018), wHd, EYE, rows=3, sides=8)
-    ellipsoid(m, SKIN, hc + [0, -0.06, 0.335], (0.036, 0.065, 0.04), wHd, rows=4, sides=8)
+    hem, top, yS, ax = body.hem, body.collar, J("LeftArm")[1], J("LeftArm")[0]
+    trunk = body.is_torso | np.isin(dom, [ix["LeftUpLeg"], ix["RightUpLeg"]])
+    def ring(y, sel, pad, band=0.07, xmax=9.0):
+        s = slab(sel & (np.abs(P[:, 0]) < xmax), P[:, 1], y, band)
+        z0, z1 = P[s, 2].min(), P[s, 2].max()
+        return np.abs(P[s, 0]).max() + pad, (z1 - z0) / 2 + pad, (z0 + z1) / 2, mean_w(s)
+    rings = []
+    ys = [hem, hem + 0.12] + list(np.linspace(hem + 0.3, yS - 0.2, 6)) + [yS - 0.06, yS + 0.05, top]
+    chest = ring(yS - 0.3, trunk, 0.06, xmax=ax - 0.02)
+    for y in ys:
+        strap = y > yS - 0.1
+        # (the arms hang clear of the trunk below the armpit, so everything inside the shoulders is trunk)
+        rx, rz, zc, w = ring(min(y, top - 0.03), everyone if y > yS - 0.4 else trunk, 0.06 if not strap else 0.04,
+                             xmax=(ax - 0.03) if not strap else ax * (0.93 if y < top - 0.01 else 0.42))
+        if y < yS - 0.35: rx, rz = max(rx, chest[0] * 0.95), max(rz, chest[1] * 0.93)     # it hangs from the chest
+        if y >= top - 0.01: rx, rz = rx + 0.02, rz + 0.02
+        rings.append(((0, y, zc), X, BACK, rx, rz, w, 2.3))
+    m.loft("jersey", rings, uv=lambda ri: (ys[ri] - hem) / (top - hem), sides=20, bulk=False)
+
+    # ---- shorts: a seat from under the jersey to the crotch, a loose leg over each thigh, white hems
+    yH = J("Hips")[1]
+    crotch = body.P0[trunk & (np.abs(body.P0[:, 0]) < 0.06), 1].min()
+    seat = []
+    hipx = J("LeftUpLeg")[0]
+    for y in (crotch - 0.05, crotch + 0.14, crotch + 0.32, yH + 0.05, yH + 0.16):
+        rx, rz, zc, w = ring(max(y, crotch + 0.04), trunk, 0.085, band=0.08)
+        rx = max(rx, hipx + 0.42)                                # out over the tops of the legs: one garment
+        k = 0.5 if y < crotch else 0.85 if y < crotch + 0.2 else 1
+        seat.append(((0, y, zc), X, BACK, rx * k, rz * (0.6 + 0.4 * k), w, 2.3))
+    m.loft("shorts", seat, cap_start=True, cap_end=True, bulk=False)
     for sd, sx in (("Left", 1), ("Right", -1)):
-        # arm: a rounded bare shoulder out of the jersey's armhole, biceps, forearm
-        limb(m, SKIN, sk, [sd + "Shoulder", sd + "Arm", sd + "ForeArm", sd + "Hand"],
-             [[(0.8, 0.1), (0.9, 0.21)],
-              [(0.0, 0.265), (0.1, 0.26), (0.24, 0.235), (0.42, 0.21, 0.015), (0.62, 0.19), (0.82, 0.165), (0.95, 0.155)],
-              [(0.0, 0.155), (0.14, 0.17), (0.38, 0.165), (0.66, 0.135), (0.9, 0.105), (1.0, 0.1)]],
-             hint=(0, 1, 0), cap_start=True, flat=0.92)
-        ellipsoid(m, SKIN, J(sd + "Arm") + [sx * -0.02, -0.01, 0], (0.275, 0.27, 0.26),
-                  [(ix[sd + "Shoulder"], .5), (ix[sd + "Arm"], .5)], rows=6, sides=12, bulk=True)
+        hp, kn = J(sd + "UpLeg"), J(sd + "Leg"); axis = (kn - hp) / np.linalg.norm(kn - hp); L = np.linalg.norm(kn - hp)
+        lx, ly = frame_for(kn - hp, X); thigh = dom == ix[sd + "UpLeg"]
+        def leg_ring(t, pad, wh):
+            s = slab(thigh, body.along, max(t, 0.12), 0.07)
+            off = P[s] - hp; rad = np.linalg.norm(off - np.outer(off @ axis, axis), axis=1).max() + pad
+            return (hp + (kn - hp) * t, lx, ly, rad, rad, [(ix["Hips"], wh), (ix[sd + "UpLeg"], 1 - wh)])
+        m.loft("shorts", [leg_ring(t, pad, wh) for t, pad, wh in
+                          ((-0.04, 0.03, 0.6), (0.12, 0.075, 0.4), (0.32, 0.095, 0.1), (0.52, 0.105, 0), (0.68, 0.11, 0))], bulk=False)
+        r0 = leg_ring(0.68, 0.112, 0); r1 = leg_ring(0.725, 0.112, 0); r2 = leg_ring(0.73, 0.03, 0)
+        m.loft("kit", [r0, r1, r2], col=WHITE, bulk=False)
+
+        # ---- sock and shoe, sized from the foot
+        an = J(sd + "Foot"); toe = J(sd + "ToeBase"); wF, wT, wK = ix[sd + "Foot"], ix[sd + "ToeBase"], ix[sd + "Leg"]
+        shin = (kn - an) / np.linalg.norm(kn - an); sx_, sy_ = frame_for(shin, X)
+        def shin_ring(h, pad):
+            off = P - an; dist = np.linalg.norm(off - np.outer(off @ shin, shin), axis=1)
+            sel = slab(((dom == wK) | (dom == wF)) & (dist < 0.3), off @ shin, h, 0.05)
+            return (an + shin * h, sx_, sy_, dist[sel].max() + pad, dist[sel].max() + pad, [(wF, 1)])
+        m.loft("shoes", [shin_ring(h, pad) for h, pad in ((0.24, 0.02), (0.12, 0.035), (-0.02, 0.045))], sides=12, bulk=False)
+        d, al = dom[src], body.along[src]
+        shell("kit", ((d == wK) & (al > 0.7)) | (d == wF), 0.012, col=WHITE)         # the sock
+        foot = np.isin(dom, [wF, wT]) & (P[:, 1] < an[1] + 0.05)
+        fd = np.array([toe[0] - an[0], 0, toe[2] - an[2]]); fd /= np.linalg.norm(fd); side = np.cross((0, 1, 0), fd)
+        s_ = (P[foot] - an) @ fd; heel, tip = s_.min() - 0.035, s_.max() + 0.045
+        half = np.abs((P[foot] - an) @ side).max() + 0.03; mid = ((P[foot] - an) @ side).max() - half + 0.03
+        last = ((0.0, 0.55, 0.3, 0), (0.05, 0.82, 0.4, 0), (0.22, 0.92, 0.43, 0), (0.5, 1.0, 0.34, 0.25),
+                (0.74, 1.03, 0.26, 0.8), (0.9, 0.95, 0.21, 1), (0.98, 0.7, 0.16, 1), (1.0, 0.35, 0.11, 1))
+        for mat, colr, lo, grow in (("shoes", (1, 1, 1), 0.07, 0.0), ("kit", WHITE, 0.0, 0.012)):
+            sole = []
+            for u, w, hgt, wt in last:
+                hi = hgt if mat == "shoes" else 0.085
+                c = np.array([an[0], (lo + hi) / 2, an[2]]) + fd * (heel + (tip - heel) * u) + side * mid
+                sole.append((c, side, (0, 1, 0), half * w + grow, (hi - lo) / 2, [(wF, 1 - wt), (wT, wt)], 3.0))
+            m.loft(mat, sole, cap_start=True, cap_end=True, col=colr, sides=12, bulk=False)
+
+        # ---- gear that hugs the limb: arm sleeve, wristband, leg sleeve
         tag = sd[0]
-        limb(m, "sleeve_" + tag, sk, [sd + "Arm", sd + "ForeArm", sd + "Hand"],
-             [[(0.45, 0.217), (0.62, 0.202), (0.82, 0.177), (0.95, 0.167)],
-              [(0.0, 0.167), (0.14, 0.182), (0.38, 0.177), (0.66, 0.147), (0.88, 0.118)]], hint=(0, 1, 0), flat=0.92)
-        limb(m, "wrist_" + tag, sk, [sd + "ForeArm", sd + "Hand"], [[(0.8, 0.132), (0.97, 0.118)]], hint=(0, 1, 0), flat=0.92)
-        # hand: palm, fingers curling down a little, thumb forward (the T-pose's palms face down)
-        wr = J(sd + "Hand"); d = sk.bindW[ix[sd + "Hand"]] @ sk.ends[ix[sd + "Hand"]]; d = d / np.linalg.norm(d)
-        ax, ay = frame_for(d, (0, 1, 0)); wHn = [(ix[sd + "Hand"], 1)]
-        m.loft(SKIN, [(wr + d * t + np.asarray(ay) * dy, ax, ay, w, th, wHn, 2.6) for t, w, th, dy in
-                      ((-0.03, 0.1, 0.085, 0), (0.1, 0.14, 0.07, 0), (0.3, 0.165, 0.06, -0.005), (0.42, 0.16, 0.05, -0.015),
-                       (0.58, 0.15, 0.04, -0.05), (0.72, 0.13, 0.034, -0.1), (0.8, 0.08, 0.025, -0.135))],
-               cap_end=True, sides=10, bulk=False)
-        tb = wr + d * 0.14 + np.array([0, -0.01, 0.13]); td = np.array([sx * 0.55, -0.25, 0.8]); td /= np.linalg.norm(td)
-        tx, ty = frame_for(td, (0, 1, 0))
-        m.loft(SKIN, [(tb + td * t, tx, ty, r, r, wHn) for t, r in ((0, 0.05), (0.1, 0.048), (0.2, 0.04), (0.25, 0.02))],
+        shell("sleeve_" + tag, ((d == ix[sd + "Arm"]) & (al > 0.5)) | ((d == ix[sd + "ForeArm"]) & (al < 0.9)), 0.012)
+        shell0("wrist_" + tag, (dom == ix[sd + "ForeArm"]) & (body.along > 0.72) & (body.along < 0.95), 0.02)
+        shell("leg_" + tag, ((d == ix[sd + "UpLeg"]) & (al > 0.78)) | ((d == wK) & (al < 0.62)), 0.012)
+
+    # ---- hair: one style is shown per player (or none), in his hair colour; beard; headband
+    hc, hr = body.hc, body.hr; wH = [(ix["Head"], 1)]
+    ears = (np.abs(body.P0[:, 0]) > hr[0] * 0.985) & (body.P0[:, 1] < hc[1] + 0.12)
+    scalp = lambda above: body.is_head & (body.above_hairline > above) & ~ears
+    shell0("hair_cap", scalp(0.0), 0.02)                      # short hair; also under the flat top, locs and bun
+    shell0("hair_fade", scalp(0.17), 0.035)                   # the top only: shaved sides
+    ellipsoid(m, "hair_afro", hc + [0, 0.1, -0.03], hr * [1.32, 1.42, 1.22], wH, lat0=-2, lat1=90, rows=8, sides=16,
+              shape=lambda sn: (1, 1, -0.3 * hr[2] * (1 - sn)))     # (back off the forehead)
+    m.loft("hair_flattop", [((0, hc[1] + y, hc[2] - 0.02), X, BACK, hr[0] * 0.84, hr[2] * 0.8, wH, 3.4)
+                            for y in (hr[1] * 0.55, hr[1] * 1.3)], cap_end=True, bulk=False)
+    for a in np.radians(np.arange(60, 301, 24)):              # locks hanging round the sides and back
+        out = np.array([np.sin(a), 0, np.cos(a)]); base = hc + out * [hr[0] * 0.98, 0, hr[2] * 0.98] + [0, 0.04, 0]
+        lx, ly = frame_for((0, -1, 0), out)
+        m.loft("hair_locs", [(base + out * o + [0, -dn, 0], lx, ly, r, r, wH) for dn, o, r in
+                             ((0, 0, 0.04), (0.2, 0.02, 0.045), (0.42, 0.03, 0.042), (0.58, 0.02, 0.03))],
                cap_end=True, sides=6, bulk=False)
-        # leg: thigh, knee, a calf that bulges behind
-        limb(m, SKIN, sk, [sd + "UpLeg", sd + "Leg", sd + "Foot"],
-             [[(0.46, 0.3), (0.6, 0.285), (0.75, 0.25), (0.92, 0.22)],   # (from inside the shorts: nothing to poke through them)
-              [(0.0, 0.215, 0.01), (0.1, 0.205), (0.3, 0.225, -0.035), (0.48, 0.2, -0.03), (0.68, 0.15, -0.01), (0.84, 0.125)]],
-             hint=X)
-        limb(m, "leg_" + tag, sk, [sd + "UpLeg", sd + "Leg", sd + "Foot"],
-             [[(0.78, 0.247), (0.92, 0.23)],
-              [(0.0, 0.225, 0.01), (0.1, 0.215), (0.3, 0.235, -0.035), (0.48, 0.21, -0.03), (0.64, 0.168, -0.012)]], hint=X)
-        # sock, then a high-top shoe on a white sole
-        an = J(sd + "Foot"); wF, wT, wK = ix[sd + "Foot"], ix[sd + "ToeBase"], ix[sd + "Leg"]
-        kn = J(sd + "Leg"); up = (kn - an) / np.linalg.norm(kn - an)
-        ax, ay = frame_for(up, X)
-        m.loft(KIT, [(an + up * t, ax, ay, r, r, [(wF, w), (wK, 1 - w)]) for t, r, w in
-                     ((0.7, 0.132, 0.1), (0.66, 0.142, 0.15), (0.4, 0.135, 0.45), (0.12, 0.14, 0.9))], col=WHITE, sides=12)
-        toe = J(sd + "ToeBase"); fd = np.array([toe[0] - an[0], 0, toe[2] - an[2]]); fl = np.linalg.norm(fd); fd /= fl
-        side = np.cross((0, 1, 0), fd); sole = an[1] - sk.ankle
-        m.loft("shoes", [(an + up * t, ax, ay, r, r * 1.05, [(wF, 1)]) for t, r in ((0.3, 0.17), (0.12, 0.175), (-0.02, 0.18))],
-               sides=12, bulk=False)
-        last = ((-0.34, 0.11, 0.3, 0), (-0.26, 0.165, 0.4, 0), (0.0, 0.185, 0.42, 0), (0.45, 0.2, 0.33, 0.25),
-                (0.9, 0.215, 0.25, 0.8), (1.25, 0.2, 0.2, 1), (1.47, 0.15, 0.15, 1), (1.56, 0.07, 0.1, 1))
-        for colr, lo, grow in ((SHOE, 0.07, 0.0), (WHITE, 0.0, 0.012)):
-            rings = []
-            for t, w, hgt, wt in last:
-                hi = hgt if colr is SHOE else 0.085
-                rings.append((np.array([an[0], sole + (lo + hi) / 2, an[2]]) + fd * (t * fl), side, (0, 1, 0), w + grow,
-                              (hi - lo) / 2, [(wF, 1 - wt), (wT, wt)], 3.0))
-            m.loft("shoes" if colr is SHOE else KIT, rings, cap_start=True, cap_end=True,
-                   col=(1, 1, 1) if colr is SHOE else colr, sides=12, bulk=False)
-        # shorts leg: a loose tube over the thigh, with a white hem
-        hp = J(sd + "UpLeg")
-        ax, ay = frame_for(kn - hp, X); wU = ix[sd + "UpLeg"]
-        leg = lambda t, r, wh: (hp + (kn - hp) * t, ax, ay, r, r, [(wH, wh), (wU, 1 - wh)])
-        m.loft(SHORTS, [leg(*a) for a in ((-0.05, 0.3, 0.7), (0.08, 0.375, 0.5), (0.3, 0.395, 0.15), (0.55, 0.4, 0), (0.7, 0.405, 0))])
-        m.loft(KIT, [leg(*a) for a in ((0.7, 0.407, 0), (0.745, 0.407, 0), (0.75, 0.33, 0))], col=WHITE)
-    # shorts: the seat, from under the jersey down to the crotch
-    m.loft(SHORTS, [((0, hips[1] + y, hips[2] + 0.04), X, BACK, rx, rz, [(wH, 1)], 2.3) for y, rx, rz in
-                    ((-0.52, 0.14, 0.2), (-0.36, 0.45, 0.34), (-0.12, 0.57, 0.39), (0.06, 0.52, 0.36), (0.12, 0.46, 0.32))],
-           cap_start=True, cap_end=True)
+    ellipsoid(m, "hair_bun", hc + [0, hr[1] * 0.75, -hr[2] * 0.9], (0.11, 0.11, 0.11), wH, rows=5, sides=10)
+    low = body.P0[:, 1] < body.eye[0][1] - 0.2
+    shell0("beard", body.is_head & (body.jaw > 0.3) & (body.lips < 0.25) & low & (body.P0[:, 2] > hc[2] - 0.05), 0.012)
+    brow = body.eye[0][1] + 0.13
+    shell0("headband", body.is_head & (body.P0[:, 1] > brow) & (body.P0[:, 1] < brow + 0.2), 0.02)
     return m
 
 
@@ -732,14 +945,15 @@ def write_glb(path, sk, mesh, clips, extras, heavy=None):
                               U8, "VEC4", 34962, normalized=True),
              "JOINTS_0": g.add(np.array(mesh.j, dtype=np.uint8), U8, "VEC4", 34962),
              "WEIGHTS_0": g.add(np.array(mesh.w, dtype=np.float32), F, "VEC4", 34962)}
-    # one morph target, "bulk": the same mesh drawn BULK_GIRTH times as thick (the viewer sets
-    # it per player from his weight; a negative weight slims him)
+    # one morph target, "bulk": the same mesh in MakeHuman's heaviest muscular build (the viewer
+    # sets it per player from his weight; a negative weight slims him)
     bulk = None
     if heavy is not None:
         bulk = g.add((heavy.arrays()[0] - v).astype(np.float32), F, "VEC3", minmax=True)
     mats, prims = [], []
     base = ["skin", "jersey", "shorts", "kit"]                # then the optional parts: hair styles, beard, accessories, shoes
     for name in base + [n for n in mesh.tri if n not in base]:
+        if not mesh.tri[name]: continue
         idx = g.add(np.array(mesh.tri[name], dtype=np.uint16).reshape(-1), U16, "SCALAR", 34963)
         mats.append({"name": name, "pbrMetallicRoughness": {"baseColorFactor": [1, 1, 1, 1], "metallicFactor": 0, "roughnessFactor": 0.9}})
         prims.append({"attributes": attrs, "indices": idx, "material": len(mats) - 1})
@@ -757,7 +971,8 @@ def write_glb(path, sk, mesh, clips, extras, heavy=None):
             channels.append({"sampler": len(samplers) - 1, "target": {"node": j, "path": "rotation"}})
         anims.append({"name": name, "samplers": samplers, "channels": channels})
     doc = {"asset": {"version": "2.0", "generator": "hoopsim tools/build_player_assets.py",
-                     "copyright": "Model: hoopsim. Motion: CMU Graphics Lab Motion Capture Database (mocap.cs.cmu.edu)"},
+                     "copyright": "Body: MakeHuman (makehumancommunity.org), CC0. Kit and hair: hoopsim. "
+                                  "Motion: CMU Graphics Lab Motion Capture Database (mocap.cs.cmu.edu)"},
            "scene": 0, "scenes": [{"nodes": [len(KEEP) + 1]}], "nodes": nodes,
            "meshes": [dict({"name": "Body", "primitives": prims},
                            **({"weights": [0.0], "extras": {"targetNames": ["bulk"]}} if bulk is not None else {}))],
@@ -794,7 +1009,8 @@ def main(argv=None):
             loaded[name] = Bvh(f)
         return loaded[name]
 
-    sk = Skeleton(load(SKELETON_FROM))
+    hu = Human(cache / "makehuman"); verts = hu.shape()
+    sk = Skeleton(hu, verts)
     clips = {}
     for name, spec in CLIPS.items():
         clips[name] = build_clip(name, spec, sk, load)
@@ -804,12 +1020,16 @@ def main(argv=None):
             mm = dict(meta, mirrored=True)
             if "side" in mm: mm["side"] = -mm["side"]
             clips[name + "_m"] = (t, mp.astype(np.float32), mq, mm)
-    mesh, heavy = build_model(sk), build_model(sk, BULK_GIRTH)
-    span = 2 * float(sk.bindP[sk.idx["LeftHand"]][0]) + 2 * 0.8          # fingertip to fingertip in the T-pose
-    arm = float(sk.bindP[sk.idx["LeftHand"]][0] - sk.bindP[sk.idx["LeftArm"]][0]) + 0.8
+    body = Body(hu, sk, verts)
+    mesh, heavy = build_model(sk, body, verts), build_model(sk, body, hu.shape(heavy=1.0))
+    waist = lambda sh: np.ptp(body.feet(sh)[body.is_torso & (np.abs(body.P0[:, 1] - sk.hip_height - 0.45) < 0.08), 0])
+    bulk_girth = float(waist(hu.shape(heavy=1.0)) / waist(verts))             # how much thicker the heavy shape is
+    L = lambda a, b: float(np.linalg.norm(sk.bindP[sk.idx[a]] - sk.bindP[sk.idx[b]]))
+    arm = L("LeftArm", "LeftForeArm") + L("LeftForeArm", "LeftHand") + 0.62         # shoulder to fingertip
+    span = 2 * float(sk.bindP[sk.idx["LeftArm"]][0]) + 2 * arm                     # with the arms straight out
     extras = {"version": 3, "height": HEIGHT, "fps": FPS, "clips": {n: c[3] for n, c in clips.items()},
               "parts": [n for n in mesh.tri if n not in ("skin", "jersey", "shorts", "kit")],
-              "body": {"bulk_girth": BULK_GIRTH, "span": round(span, 3), "arm": round(arm, 3)}}
+              "body": {"bulk_girth": round(bulk_girth, 3), "span": round(span, 3), "arm": round(arm, 3)}}
     size = write_glb(Path(args.out), sk, mesh, clips, extras, heavy)
     tris = sum(len(t) for t in mesh.tri.values())
     print(f"{args.out}: {size / 1024:.0f} KB, {len(mesh.v)} vertices, {tris} triangles, {len(KEEP)} joints, {len(clips)} clips")
