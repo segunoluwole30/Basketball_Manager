@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from ..spatial.export import PLAYER_ASSETS, PLAYER_ASSETS_URL
 from .session import GameSession, UserError
 
 STATIC = Path(__file__).parent / "static"
@@ -365,6 +366,15 @@ def create_app(session: Optional[GameSession] = None) -> FastAPI:
     @app.get("/api/team/gamelog")
     def team_gamelog(team_id: Optional[int] = None):
         return run(game.team_gamelog, team_id)
+
+    # -- the 3D viewer's animated players: loader, model and clips, fetched when 3D is first shown
+    @app.get(PLAYER_ASSETS_URL + "{name}")
+    def viewer_asset(name: str):
+        path = PLAYER_ASSETS.get(name)
+        if path is None or not path.is_file():
+            return JSONResponse(status_code=404, content={"detail": f"no viewer asset {name}"})
+        media = "model/gltf-binary" if name.endswith(".glb") else "text/javascript"
+        return FileResponse(path, media_type=media, headers={"Cache-Control": "public, max-age=86400"})
 
     # -- front end ---------------------------------------------------------------------
     @app.get("/api/{rest:path}")

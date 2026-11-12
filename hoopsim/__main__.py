@@ -257,6 +257,7 @@ def cmd_watch(args) -> None:
     from .spatial import HalfCourtGame
     from .spatial.export import write_html
 
+    anim = "embed" if getattr(args, "animated", False) else None      # 3D: carry the animated players in the page
     league = load_league(args.load) if args.load else generate_league(seed=args.seed)
     by_abbr = {t.abbreviation.lower(): t.id for t in league.teams.values()}
     ids = sorted(league.teams)
@@ -284,7 +285,7 @@ def cmd_watch(args) -> None:
         quarter = getattr(args, "quarter", None)
         if quarter is not None and not 1 <= quarter <= full.period:
             raise SystemExit(f"the game had {full.period} periods")
-        path = write_html(full.to_dict(period=quarter), args.out)
+        path = write_html(full.to_dict(period=quarter), args.out, animation=anim)
         r = sim.result
         ot = f" ({r.overtimes} OT)" if r.overtimes else ""
         part = f"Q{quarter}" if quarter and quarter <= 4 else f"OT{quarter - 4}" if quarter else "full game"
@@ -295,7 +296,7 @@ def cmd_watch(args) -> None:
         return
     game = HalfCourtGame(league, home, away, random.Random(args.seed))
     game.play(args.possessions)
-    path = write_html(game.to_dict(), args.out)
+    path = write_html(game.to_dict(), args.out, animation=anim)
     print(f"{a.abbreviation} {game.score['away']} @ {h.abbreviation} {game.score['home']} "
           f"after {args.possessions} half-court possessions -> {path.resolve()}")
     if not args.no_open:
@@ -354,6 +355,8 @@ def main() -> None:
     watch.add_argument("--no-open", action="store_true", help="don't open the browser")
     watch.add_argument("--full", action="store_true",
                        help="a full game: four quarters, transition, substitutions, fatigue, fouls")
+    watch.add_argument("--animated", action="store_true",
+                       help="embed the 3D view's animated players in the page (about 0.8 MB more)")
     watch.add_argument("--quarter", type=int, help="with --full: export just this period (5 = first overtime)")
 
     web = sub.add_parser("web", help="play as general manager in your browser")
