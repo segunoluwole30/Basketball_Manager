@@ -1,6 +1,7 @@
 """Three-point volume mechanisms: shooting bigs and guards in generation, transition
 lanes behind the arc, early-offence spots, off-the-dribble jumpers, relocation."""
 import math
+from dataclasses import replace
 import random
 import statistics
 import unittest
@@ -55,13 +56,23 @@ class TransitionLaneTests(unittest.TestCase):
         g, oc = open_court()
         corners = [a for a in oc.offense if id(a) in oc.lanes and oc.lanes[id(a)][1] == CORNER_LANE[1]]
         wings = [a for a in oc.offense if id(a) in oc.lanes and oc.lanes[id(a)][1] == WING_LANE[1]]
-        # The weak-side wing runs to the corner; the ball-side one to the corner or, more
-        # often, the wing (README "Defence that recovers").
-        self.assertGreaterEqual(len(corners), 1)
+        # Each wing runs to the corner or stops at the 45: the ball-side one 70% of the time
+        # (README "Defence that recovers"), the weak-side one too since README "Shots with
+        # room" (also 70%).
         self.assertEqual(len(corners) + len(wings), 2)
+        sides = {math.copysign(1, oc.lanes[id(a)][0]) for a in corners + wings}
+        self.assertEqual(sides, {-1.0, 1.0})                 # one wing on each side
+        # With the weak-side wing always running to the corner (the old lanes), there
+        # is always someone in a corner.
+        g, oc = open_court()
+        oc.t = replace(oc.t, weak_side_wing=0.0)
+        oc.lanes = oc.assign_lanes()
+        corners = [a for a in oc.offense if id(a) in oc.lanes and oc.lanes[id(a)][1] == CORNER_LANE[1]]
+        self.assertGreaterEqual(len(corners), 1)
         ball_side = 1 if oc.holder.x >= 0 else -1
-        for a in wings:
-            self.assertEqual(math.copysign(1, oc.lanes[id(a)][0]), ball_side)
+        for a in oc.offense:
+            if id(a) in oc.lanes and oc.lanes[id(a)][1] == WING_LANE[1]:
+                self.assertEqual(math.copysign(1, oc.lanes[id(a)][0]), ball_side)
         for a in oc.offense:
             lane = oc.lanes.get(id(a))
             if lane is None or a.slot < 3 or lane[1] < 10:

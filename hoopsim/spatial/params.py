@@ -51,7 +51,7 @@ class SpatialParams:
     contest_inside: float = 1.126         # multiplies the contest penalty at the rim and close
     contest_outside: float = 1.7          # ... and on mid-range and three-point jumpers (was 1.602; README "Defence that recovers")
     rim_make_adj: float = -0.025          # added to the open make chance at the rim (README "Patient offence": -0.03; "Defence that recovers")
-    three_make_adj: float = -0.0204         # added to the open make chance from three
+    three_make_adj: float = -0.023        # added to the open make chance from three (was -0.0204; README "Shots with room")
     foul_scale: float = 1.0               # multiplies shooting-foul chances (search chose 1.28; held at 1, see README)
     # --- turnovers and rebounds ------------------------------------------------
     dribble_turnover_per_sec: float = 0.04    # with a defender in your face (was 0.0576, then 0.045; on-ball men stay closer since README "Defence that recovers")
@@ -81,11 +81,11 @@ class SpatialParams:
     # shot, a drive without an edge, a post-up) lose this many points of value with
     # ``patience_full`` or more on the shot clock, fading to nothing at ``patience_none``.
     # Great looks (worth ``patience_great``+ points) and beaten defenders are taken anyway.
-    patience: float = 0.3
-    patience_full: float = 16.0           # was 14 (README "Defence that recovers")
+    patience: float = 0.5                 # was 0.3 (README "Shots with room": closeouts stop further off, so more looks pass the bar)
+    patience_full: float = 17.0           # was 14, then 16 (README "Defence that recovers"; "Shots with room")
     patience_none: float = 3.0            # was 4 (README "Defence that recovers")
     patience_great: float = 1.25
-    patience_three: float = 0.8           # ... scaled by this for threes (0.25 when closeouts overran; README "Defence that recovers")
+    patience_three: float = 1.0           # ... scaled by this for threes (0.25 when closeouts overran; README "Defence that recovers"; then 0.8)
     patience_hold: float = 0.3            # ... and standing on the ball by this share of it
     # Off-ball spacing: after a catch, a perimeter man this close (ft) to the ball or a
     # teammate's spot fills the nearest open spot instead (0: off).
@@ -98,12 +98,32 @@ class SpatialParams:
     defender_brake: float = 0.8           # defenders slow down in time to stop at their spot (share of accel)
     closeout_burst: float = 1.35          # acceleration multiplier while closing out (a straight sprint)
     contest_run: float = 5.0              # a defender this far from a rising shooter runs at him (ft; 0: lunge only)
-    contest_stop: float = 3.0             # ... a jump-shot contest stops this far off him, hand up (ft; 0: off)
+    contest_stop: float = 4.0             # ... a jump-shot contest stops this far off him, hand up (ft; 0: off; was 3.0, README "Shots with room")
     contest_lunge: float = 1.0            # a defender nearer than that steps in at most this far (ft; was 2.5)
     offball_lead: float = 0.5             # off-ball defenders play where their man will be this soon (s)
     offball_track: float = 1.0            # 1: off-ball defenders track their man between reads
     sag_shooter_slope: float = 0.06       # sag shrinks by this share per point of the man's three rating above 11
     pullup_lead: float = 0.45             # on a pull-up the on-ball man gives ground as on a drive (s of lead; was 0.2)
+    # Shots with room (README "Shots with room"); 0 switches each off.
+    # Contact: a driver or pull-up shooter picks the ball up before he runs into a man
+    # in front of him (when he'd be within ``gather_contact`` ft of body contact, the
+    # 1.6 ft personal space, on his next step), instead of finishing through him.
+    gather_contact: float = 0.6
+    gather_range: float = 6.0             # ... a driver this close to the rim (ft; further out he keeps going)
+    finish_room: float = 1.5              # finishes go where there is room: angled gathers taken as real steps, the open side of the rim on drives (ft of preference for his side)
+    release_stop: float = 2.0             # a jump shooter plants: he stops at this multiple of his acceleration (0: drifts to a stop)
+    contest_spread: float = 0.75          # contests stop within +-this of contest_stop, one defender and shot to the next (ft)
+    # Threes above the break.
+    step_back: float = 3.0                # a guarded shooter at the arc steps back (or aside) this far into a pull-up three (ft)
+    step_back_shooter: float = 12.0       # ... (and rises behind a screen) if his three-point rating is at least this
+    pop_shooter: float = 13.0             # a screener this good from three pops to the arc instead of rolling
+    pop_recover: float = 0.8              # ... and his man, dropping, recovers to him this long after the screen (s)
+    four_high: float = 0.4                # share of four-out sets run with all four above the break, corners empty
+    # Early offence: this share of walk-ups (at pace 10; more for fast teams) come up
+    # briskly into a quick hitter, taking the first good look while the shot clock is
+    # above ``early_until``; then into the set as usual.
+    early_offense: float = 0.3
+    early_until: float = 17.0
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -180,6 +200,14 @@ LEGACY_PARAMS = SpatialParams(
     offball_track=0.0,
     sag_shooter_slope=0.0,
     pullup_lead=0.2,
+    gather_contact=0.0,
+    release_stop=0.0,
+    finish_room=0.0,
+    step_back=0.0,
+    pop_shooter=0.0,
+    four_high=0.0,
+    early_offense=0.0,
+    contest_spread=0.0,
 )
 
 # Searched fields: (low, high). Everything else stays at its default.

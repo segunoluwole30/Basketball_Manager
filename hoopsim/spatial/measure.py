@@ -291,7 +291,7 @@ def collect_fullgames(games: int, seed: int, jobs: int = 1, params=None, model=N
     for how in ("steal", "drb", "score", "ft"):
         n = s[f"transition_after_{how}"]
         out[f"_transition_after_{how}"] = f"{n / tg:.1f}/game at {s[f'transition_after_{how}_pts'] / max(1, n):.2f}"
-    for adv in ("breakaway", "numbers", "none", "walk"):
+    for adv in ("breakaway", "numbers", "none", "early", "walk"):
         n = s[f"adv_{adv}_n"]
         out[f"_open_court_{adv}"] = f"{n / tg:.1f}/game at {s[f'adv_{adv}_pts'] / max(1, n):.2f}"
     out["_open_court_steals_per_game"] = s["open_court_steals"] / tg

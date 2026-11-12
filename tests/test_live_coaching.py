@@ -90,7 +90,12 @@ class ShoutTests(unittest.TestCase):
         # recovers" (+0.04 to +0.075 per 12-game batch; these seeds +0.057). It was ~+0.027
         # with the patient offence, when the bar went down to +0.015 (was +0.025).
         self.assertGreater(share(t, "home", "three"), share(self.base, "home", "three") + 0.015)
-        self.assertLess(share(t, "home", "mid"), share(self.base, "home", "mid"))
+        # The threes come instead of shots in the paint: rim + short -0.053 on these seeds
+        # (-0.053 over 48 games). Mid-range was the check before README "Shots with room";
+        # with more patience mid-range jumpers are mostly late-clock shots now and the
+        # shout moves them by ~0 (+0.001 over 48 games; -0.001 with twice the penalty).
+        inside = lambda r: share(r, "home", "rim") + share(r, "home", "close")
+        self.assertLess(inside(t), inside(self.base) - 0.02)
 
     def test_slow_it_down_and_push_the_pace(self):
         slow, push = self.run_with("slow"), self.run_with("push")

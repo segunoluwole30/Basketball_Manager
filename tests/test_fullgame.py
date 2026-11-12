@@ -369,8 +369,10 @@ class DeadBallInboundTests(unittest.TestCase):
         self.assertGreater(rare["inbounds"], 40)
         self.assertLess(rare["inbound_steals"], 0.04 * rare["inbounds"])
         # A defence that jumps every passing lane does pick some off: turnovers and steals.
+        # ~1.4 a game, but 0 in some (seeds 1 and 2 since README "Shots with room";
+        # seeds 1-8 gave 0/0/1/1/1/4/1/3), so six games.
         steals = 0
-        for seed in (1, 2):
+        for seed in range(1, 7):
             g = FullGame(generate_league(seed=seed, systems=False), 1, 2, random.Random(seed), record=True,
                          open_tuning=replace(DEFAULT_OPEN_TUNING, inbound_steal=4.0))
             g.run()
