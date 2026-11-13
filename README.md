@@ -120,7 +120,7 @@ the spatial engine wouldn't reproduce the result in the standings.
 **2D / 3D.** The viewer's **2D | 3D** switch (remembered between games) swaps the
 flat court for a 3D one: a to-scale 94×50 ft floor with the same lines, backboards and
 10 ft rims with nets, low-poly players in team colours with their numbers on the jersey,
-and the ball at its real height with a shadow, so shots arc and lobs hang.
+and the ball at its real size and height with a shadow, so shots arc and lobs hang.
 **Labels: Numbers | Names | Off** puts a team-coloured tag over each player (number, or
 number and surname); the ball handler's tag has an orange rim and a ring at his feet.
 While a shot is up a fading trail follows the ball, turning green (made) or red (missed)

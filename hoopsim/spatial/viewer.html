@@ -863,6 +863,7 @@ window.GAME = /*GAME_DATA*/null;
   const hash = (s) => { let h = 7; for (const ch of String(s)) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h; };
   const wrapAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
   const RIM_X = L - 5.25;                                        // world X of the right rim
+  const BALL_R = 0.39;                                           // feet: a size 7 ball, 29.5 inches round
 
   // ---- animated players (3D only). One rigged model with motion-capture clips
   // (spatial/assets/player.glb, built by tools/build_player_assets.py), cloned per player.
@@ -1238,18 +1239,18 @@ window.GAME = /*GAME_DATA*/null;
         for (const nm of ["dribble_idle", "dribble_walk", "dribble_run"]) if ((r.w[nm] || 0) > bw) { bw = r.w[nm] || 0; best = nm; }
         const m = CL[best].dribble, d = CL[best].duration, t = r.acts[best] ? r.acts[best].time : 0;
         palm(m.hand === "L" ? "Left" : "Right", out);
-        out.y -= 0.5;
+        out.y -= BALL_R + 0.04;                                   // under the palm
         for (const [rel, back] of m.bounces) {
           const span = ((back - rel) % d + d) % d, u = (((t - rel) % d + d) % d) / span;
-          if (u >= 0 && u < 1) { out.y = 0.6 + Math.max(0, out.y - 0.6) * Math.pow(Math.abs(1 - 2 * u), 0.75); break; }
+          if (u >= 0 && u < 1) { out.y = BALL_R + Math.max(0, out.y - BALL_R) * Math.pow(Math.abs(1 - 2 * u), 0.75); break; }
         }
-        out.y = Math.max(0.6, out.y);
+        out.y = Math.max(BALL_R, out.y);
         return out;
       }
       const mode = r.ballCue ? r.ballCue.ball : "both";
       palm("Right", out);
-      if (mode === "both") { palm("Left", v3); out.add(v3).multiplyScalar(0.5); out.y += 0.2; }
-      else out.y += 0.35;
+      if (mode === "both") { palm("Left", v3); out.add(v3).multiplyScalar(0.5); out.y += 0.1; }
+      else out.y += BALL_R * 0.8;                                 // on the one hand
       return out;
     }
     // is the shot released at this frame a dunk (so: no arc to trail)?
@@ -1897,9 +1898,9 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     ring.position.y = 0.03; ring.renderOrder = 1;
     scene.add(ring);
 
-    // the ball (a touch over size so it reads from the sideline) and its shadow
+    // the ball (true size) and its shadow
     const ballMat = new THREE.MeshLambertMaterial();
-    const ball = new THREE.Mesh(new THREE.SphereGeometry(0.6, 16, 12), ballMat);
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(BALL_R, 20, 14), ballMat);
     ball.castShadow = true;
     scene.add(ball);
     const blob = document.createElement("canvas"); blob.width = blob.height = 64;
@@ -2160,7 +2161,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
         const u = rel + (to - rel) * k / (n - 1);
         const [x, y] = toCourt(p, spline(fr, u, 2)[0], spline(fr, u, 3)[0]);
         const [wx, wz] = toWorld(x, y);
-        c[k * 3] = wx; c[k * 3 + 1] = Math.max(0.6, spline(fr, u, 4)[0]); c[k * 3 + 2] = wz;
+        c[k * 3] = wx; c[k * 3 + 1] = Math.max(BALL_R, spline(fr, u, 4)[0]); c[k * 3 + 2] = wz;
       }
       // a camera-facing ribbon: each sample pushed out sideways, thin at the tail; the
       // unused samples sit on the last one
@@ -2169,7 +2170,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
         tt.set(c[b * 3] - c[a * 3], c[b * 3 + 1] - c[a * 3 + 1], c[b * 3 + 2] - c[a * 3 + 2]);
         tv.set(camPos.x - c[m * 3], camPos.y - c[m * 3 + 1], camPos.z - c[m * 3 + 2]);
         ts.crossVectors(tt, tv);
-        const len = ts.length() || 1, w = 0.08 + 0.26 * (m / (n - 1));
+        const len = ts.length() || 1, w = (0.08 + 0.26 * (m / (n - 1))) * BALL_R / 0.6;
         ts.multiplyScalar(w / len);
         const x0 = c[m * 3], y0 = c[m * 3 + 1], z0 = c[m * 3 + 2];
         trailPos[k * 6] = x0 - ts.x; trailPos[k * 6 + 1] = y0 - ts.y; trailPos[k * 6 + 2] = z0 - ts.z;
@@ -2322,7 +2323,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
         const [hx, hz] = toWorld(st.holder.x, st.holder.y);
         bX += holderFig.x - hx; bZ += holderFig.z - hz;
         if (!useRig && Math.hypot(st.holder.vx, st.holder.vy) > 4 && bY <= 3.6)
-          bY = 0.6 + (bY - 0.6) * Math.abs(Math.cos(st.time * Math.PI / 0.55));
+          bY = BALL_R + (bY - BALL_R) * Math.abs(Math.cos(st.time * Math.PI / 0.55));
         ring.visible = true; ring.position.x = holderFig.x; ring.position.z = holderFig.z;
       } else ring.visible = false;
       // animated: the ball sits in his hands (and bounces under one on the dribble); once it
@@ -2332,7 +2333,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       if (slamFig) {
         const c = slamFig.rig.slam, after = st.at - c.slam;
         if (after < 0) anim.ballInHand(slamFig, gripPos);
-        else gripPos.set(rimX, Math.max(0.6, 9.7 - 16 * after * after), 0);      // through the net and down
+        else gripPos.set(rimX, Math.max(BALL_R, 9.7 - 16 * after * after), 0);   // through the net and down
         grip = 1; ring.visible = false;
       } else if (useRig && holderFig) { anim.ballInHand(holderFig, gripPos); grip = snap ? 1 : grip + (1 - grip) * (1 - Math.exp(-dtg / 0.05)); }
       else grip = snap || !useRig ? 0 : Math.max(0, grip - dtg / 0.16);
@@ -2341,10 +2342,10 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
         bX = lerp(bX, gripPos.x, g); bY = lerp(bY, gripPos.y, g); bZ = lerp(bZ, gripPos.z, g);
         if (grip < 1 && !holderFig) dirty = Math.max(dirty, 1);
       }
-      bY = Math.max(0.6, bY);
+      bY = Math.max(BALL_R, bY);
       ball.position.set(bX, bY, bZ);
       ball.rotation.x += dtg * 6; ball.rotation.z += dtg * 2;
-      const sh = 1.1 + bY * 0.06;
+      const sh = (1.1 + bY * 0.06) * BALL_R / 0.6;
       shadow.position.x = bX; shadow.position.z = bZ;
       shadow.scale.set(sh, 1, sh);
       shadow.material.opacity = Math.max(0.25, 1 - bY / 22);

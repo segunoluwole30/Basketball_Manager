@@ -277,6 +277,15 @@ class AnimatedPlayersTests(unittest.TestCase):
         self.assertLessEqual(max(vs), 1.0001)
         self.assertIn("tx.wrapS = THREE.RepeatWrapping;", self.template)
 
+    def test_ball_is_true_size(self):
+        src = self.template
+        radius = float(src.split("const BALL_R = ", 1)[1].split(";", 1)[0])
+        self.assertAlmostEqual(radius * 2 * 12, 9.4, delta=0.2)     # inches across: a size 7 ball
+        self.assertIn("new THREE.SphereGeometry(BALL_R, 20, 14)", src)
+        view = src.split("function createView3D(", 1)[1]
+        self.assertNotIn("Math.max(0.6, ", view.split("// ---- camera", 1)[0].split("// the ball (true size)", 1)[1])
+        self.assertIn("bY = Math.max(BALL_R, bY);", view)          # it rests on the floor at its own radius
+
     def test_light_model(self):
         """The same player with far fewer triangles: same skeleton, clips and parts."""
         full, light = (read_glb(PLAYER_ASSETS[n])[4] for n in ("player.glb", "player_light.glb"))
