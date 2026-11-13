@@ -745,15 +745,40 @@ class Body:
         trunk = self.is_torso | np.isin(self.dom, [ix["LeftUpLeg"], ix["RightUpLeg"]])
         self.crotch = P[trunk & (np.abs(P[:, 0]) < 0.06), 1].min()
         self.hem = yH + 0.1                                  # it hangs to the hips, over the top of the shorts
+        # Its outline is where a smooth field crosses zero (positive inside the jersey), and the
+        # body's triangles are cut along that line: the edge of the cloth is then a clean curve,
+        # not the stepped (and at the shoulder, spiky) edge of whichever of the body's own faces
+        # happen to fall inside.
         arm, neck = J("LeftArm") + [0.07, -0.1, 0], J("Neck1") + [0, 0.0, 0.08]
-        limbs = np.isin(self.dom, [ix[sd + j] for sd in ("Left", "Right") for j in ("Arm", "ForeArm", "Hand")])
-        hole = np.minimum(np.linalg.norm(P - arm, axis=1), np.linalg.norm(P - arm * [-1, 1, 1], axis=1)) < 0.25
-        scoop = np.linalg.norm(P - neck, axis=1) < np.where(P[:, 2] > neck[2] - 0.15, 0.26, 0.2)
-        self.shirt = ((P[:, 1] > self.hem) & (P[:, 1] < yS + 0.3) & (np.abs(P[:, 0]) < arm[0] - 0.1) & ~limbs & ~hole
-                      & ~scoop & ~np.isin(self.dom, [ix["Neck1"], ix["Head"]]))
+        W = self.W; col = lambda names: W[:, [ix[n] for n in names]].sum(1)
+        front = np.clip((P[:, 2] - (neck[2] - 0.2)) / 0.1, 0, 1)
+        f = np.minimum.reduce([
+            P[:, 1] - self.hem,                                                     # the hem
+            arm[0] - 0.1 - np.abs(P[:, 0]),                                         # no further out than the shoulder
+            np.minimum(np.linalg.norm(P - arm, axis=1), np.linalg.norm(P - arm * [-1, 1, 1], axis=1)) - 0.25,   # armholes
+            np.linalg.norm(P - neck, axis=1) - (0.2 + 0.06 * front * front * (3 - 2 * front)),                  # neckline: lower in front
+            0.5 - col([sd + j for sd in ("Left", "Right") for j in ("Arm", "ForeArm", "Hand")]),                # not the arms
+            0.5 - col(["Neck1", "Head"])])                                          # nor the neck
+        self.shirt_f = f
         q = hu.quads["body"]
-        self.shirt_quads = q[self.shirt[q].all(1)]
-        on = np.zeros(len(P), dtype=bool); on[np.unique(self.shirt_quads)] = True
+        tris = np.concatenate([q[:, [0, 1, 2]], q[:, [0, 2, 3]]])
+        defs, index, faces = [], {}, []                       # patch vertices: (a, b, t) = a point t of the way from a to b
+        def pv(a, b=None):
+            if b is None: key, d = (a, a), (a, a, 0.0)
+            else:
+                lo, hi = (a, b) if a < b else (b, a)
+                key, d = (lo, hi), (lo, hi, float(f[lo] / (f[lo] - f[hi])))
+            if key not in index: index[key] = len(defs); defs.append(d)
+            return index[key]
+        for t in tris[(f[tris] > 0).any(1)]:
+            poly = []
+            for k in range(3):
+                a, b = t[k], t[(k + 1) % 3]
+                if f[a] > 0: poly.append(pv(a))
+                if (f[a] > 0) != (f[b] > 0): poly.append(pv(a, b))
+            for k in range(1, len(poly) - 1): faces.append((poly[0], poly[k], poly[k + 1]))
+        self.shirt_patch = (defs, np.array(faces))
+        on = f > 0
         core = on.copy()                                      # the skin well inside its edge is not needed
         for _ in range(2):
             edge = np.zeros(len(P), dtype=bool); edge[np.unique(q[~core[q].all(1)])] = True
@@ -769,7 +794,7 @@ class Body:
         for sd in ("Left", "Right"):
             self.sock |= ((self.dom == ix[sd + "Leg"]) & (self.along > 0.68)) | (self.dom == ix[sd + "Foot"])
         self.under = np.zeros(len(P), dtype=bool)             # skin under cloth he always wears
-        self.under[np.unique(self.shirt_quads)] = True; self.under[np.unique(self.seat_quads)] = True
+        self.under[self.shirt_f > 0.03] = True; self.under[np.unique(self.seat_quads)] = True
         self.under |= self.sock
         cov |= np.isin(self.dom, [ix[sd + j] for sd in ("Left", "Right") for j in ("Foot", "ToeBase")]) & (P[:, 1] < sk.ankle + 0.16)
         tris = np.concatenate([hu.quads["body"][:, [0, 1, 2]], hu.quads["body"][:, [0, 2, 3]]])
@@ -817,28 +842,31 @@ def build_model(sk: Skeleton, body: Body, verts) -> Mesh:
     skin = [m.vert(D[i], wts(src[i])) for i in range(len(D))]
     for f in body.F: m.face("skin", skin[f[0]], skin[f[1]], skin[f[2]])
 
-    def cloth(quads, lift, relax):
-        """Where a layer of cloth over part of the body sits: lifted off the surface, then
-        ironed (each point eased toward its neighbours), which takes the muscles out of it
-        and rounds off the stepped edge the body's own mesh would give it. Returns
-        {body vertex: position}."""
-        vs = np.unique(quads); at = {v: k for k, v in enumerate(vs)}
-        pos = P[vs] + body.N0[vs] * np.array([lift(v) for v in vs])[:, None]
+    def iron(pos, faces, relax):
+        """Ease each point of a layer toward its neighbours ``relax`` times: takes the muscles
+        out of cloth. Points on its edge only follow the edge, so the outline keeps its place."""
         count = {}
-        for qd in quads:
-            for a, b in zip(qd, np.roll(qd, -1)): count[(min(a, b), max(a, b))] = count.get((min(a, b), max(a, b)), 0) + 1
+        for fc in faces:
+            for a, b in zip(fc, np.roll(fc, -1)): count[(min(a, b), max(a, b))] = count.get((min(a, b), max(a, b)), 0) + 1
         rim = {v for e, c in count.items() if c == 1 for v in e}
-        nb = {v: set() for v in vs}
+        nb = {}
         for (a, b), c in count.items():
-            if (a in rim) == (b in rim) and (c == 1 or a not in rim):    # the rim only follows the rim
-                nb[a].add(b); nb[b].add(a)
-            elif a not in rim: nb[a].add(b)
-            elif b not in rim: nb[b].add(a)
+            if (a in rim) == (b in rim) and (c == 1 or a not in rim):
+                nb.setdefault(a, set()).add(b); nb.setdefault(b, set()).add(a)
+            elif a not in rim: nb.setdefault(a, set()).add(b)
+            elif b not in rim: nb.setdefault(b, set()).add(a)
+        nb = {v: list(u) for v, u in nb.items()}
         for _ in range(relax):
             new = pos.copy()
-            for v in vs:
-                if nb[v]: new[at[v]] = 0.5 * pos[at[v]] + 0.5 * pos[[at[u] for u in nb[v]]].mean(0)
+            for v, u in nb.items(): new[v] = 0.5 * pos[v] + 0.5 * pos[u].mean(0)
             pos = new
+        return pos
+
+    def cloth(quads, lift, relax):
+        """Where a layer of cloth over part of the body sits: lifted off the surface, then
+        ironed. Returns {body vertex: position}."""
+        vs = np.unique(quads); at = np.full(len(P), -1); at[vs] = np.arange(len(vs))
+        pos = iron(P[vs] + body.N0[vs] * np.array([lift(v) for v in vs])[:, None], at[quads], relax)
         return {v: pos[at[v]] for v in vs}
 
     def shell0(mat, pick, lift, relax=0, col=(1, 1, 1)):
@@ -878,21 +906,25 @@ def build_model(sk: Skeleton, body: Body, verts) -> Mesh:
         s = slab(sel & (np.abs(P[:, 0]) < xmax), P[:, 1], y, band)
         z0, z1 = P[s, 2].min(), P[s, 2].max()
         return np.abs(P[s, 0]).max() + pad, (z1 - z0) / 2 + pad, (z0 + z1) / 2, mean_w(s)
-    sq = body.shirt_quads; on = np.unique(sq)
-    zc = body.P0[on, 2].mean(); top = body.P0[on, 1].max()
-    turn = lambda i: (np.arctan2(-(body.P0[i, 2] - zc), body.P0[i, 0]) / (2 * np.pi)) % 1.0
-    hang = lambda i: 0.05 + 0.09 * float(np.clip((yS - 0.35 - body.P0[i, 1]) / 0.6, 0, 1)) ** 1.3   # looser below the chest
-    where = cloth(sq, hang, relax=5)
-    ids = {}
-    for qd in sq:
-        us = [turn(i) for i in qd]; wrap = max(us) - min(us) > 0.5     # (across the seam at his left side)
+    defs, faces = body.shirt_patch
+    A, B = np.array([d[0] for d in defs]), np.array([d[1] for d in defs]); T = np.array([d[2] for d in defs])[:, None]
+    mixed = lambda arr: arr[A] * (1 - T) + arr[B] * T          # a value at each patch vertex
+    rest = mixed(body.P0); zc = rest[:, 2].mean(); top = rest[:, 1].max()
+    turn = (np.arctan2(-(rest[:, 2] - zc), rest[:, 0]) / (2 * np.pi)) % 1.0
+    # how far off the skin: close on the shoulders, looser below the chest so it hangs
+    hang = (0.05 + 0.1 * np.clip((yS - 0.3 - body.P0[:, 1]) / 0.6, 0, 1) ** 1.3)[:, None]
+    where = iron(mixed(P + body.N0 * hang), faces, relax=5)
+    Wm = mixed(W); ids = {}
+    for fc in faces:
+        us = turn[fc]; wrap = us.max() - us.min() > 0.5         # (across the seam at his left side)
         corner = []
-        for i, u in zip(qd, us):
-            key = (i, wrap and u < 0.5)
+        for i, u in zip(fc, us):
+            key = (i, bool(wrap and u < 0.5))
             if key not in ids:
-                ids[key] = m.vert(where[i], wts(i), (u + (1 if key[1] else 0), (body.P0[i, 1] - hem) / (top - hem)))
+                ids[key] = m.vert(where[i], [(j, Wm[i, j]) for j in np.nonzero(Wm[i] > 0.02)[0]],
+                                  (u + (1 if key[1] else 0), (rest[i, 1] - hem) / (top - hem)))
             corner.append(ids[key])
-        m.face("jersey", corner[0], corner[1], corner[2]); m.face("jersey", corner[0], corner[2], corner[3])
+        m.face("jersey", *corner)
 
     # ---- shorts: fitted round the hips like the jersey, then a loose leg over each thigh, white hems
     where = cloth(body.seat_quads, lambda i: 0.03, relax=3); ids = {}
@@ -908,7 +940,7 @@ def build_model(sk: Skeleton, body: Body, verts) -> Mesh:
             off = P[s] - hp; rad = np.linalg.norm(off - np.outer(off @ axis, axis), axis=1).max() + pad
             return (hp + (kn - hp) * t, lx, ly, rad, rad, [(ix["Hips"], wh), (ix[sd + "UpLeg"], 1 - wh)])
         m.loft("shorts", [leg_ring(t, pad, wh) for t, pad, wh in
-                          ((-0.06, -0.01, 0.7), (0.06, 0.04, 0.5), (0.18, 0.075, 0.3), (0.34, 0.095, 0.1), (0.52, 0.105, 0), (0.68, 0.11, 0))],
+                          ((0.05, 0.0, 0.55), (0.12, 0.045, 0.45), (0.2, 0.075, 0.3), (0.34, 0.095, 0.1), (0.52, 0.105, 0), (0.68, 0.11, 0))],
                bulk=False)
         r0 = leg_ring(0.68, 0.112, 0); r1 = leg_ring(0.725, 0.112, 0); r2 = leg_ring(0.73, 0.03, 0)
         m.loft("kit", [r0, r1, r2], col=WHITE, bulk=False)

@@ -2,7 +2,7 @@
 
 Everything the 3D view's animated players need, where it came from and what it may be
 used for. In the web app a visitor fetches the loader modules (0.15 MB) and one model: `player.glb`
-(1.17 MB) or `player_light.glb` (0.72 MB, the same player with about 40% of the triangles),
+(1.18 MB) or `player_light.glb` (0.71 MB, the same player with about 40% of the triangles),
 only when 3D is first shown. Everything below applies to both models.
 
 | File | What | Source | Licence |

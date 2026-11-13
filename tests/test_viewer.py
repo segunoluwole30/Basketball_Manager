@@ -269,6 +269,11 @@ class AnimatedPlayersTests(unittest.TestCase):
             return struct.unpack(f"<{acc['count'] * width}{fmt}", blob[start:start + acc["count"] * width * struct.calcsize(fmt)])
         idx = sorted(set(read(prim["indices"], "H", 1)))
         self.assertGreater(len(idx), 600)                          # the body's own detail, not a tube of rings
+        # its outline is cut along a smooth curve: points on it lie between the body's vertices,
+        # so they carry blended skin weights that no body vertex has
+        builder = (TEMPLATE.parent.parent.parent / "tools" / "build_player_assets.py").read_text(encoding="utf-8")
+        self.assertIn("self.shirt_patch = (defs, np.array(faces))", builder)
+        self.assertIn("if (f[a] > 0) != (f[b] > 0): poly.append(pv(a, b))", builder)
         uv = read(prim["attributes"]["TEXCOORD_0"], "f", 2)
         us = [uv[2 * i] for i in idx]; vs = [uv[2 * i + 1] for i in idx]
         self.assertLess(min(us), 0.05)
