@@ -31,6 +31,7 @@ class Style:
     zone: dict = field(default_factory=dict)        # {"rim"|"close"|"mid"|"three": shot-choice multiplier}
     usage_scale: float = 1.0                         # <1 spreads shots around, >1 concentrates them
     star: float = 0.0                                # extra shot share for the best scorer (x(1+star))
+    usage_room: float = 0.0                          # raises the shot-share knee and ceiling (engine.usage_ceiling)
     fast_break: float = 1.0                          # fast-break chance multiplier
     assist: float = 1.0                              # assisted-basket chance multiplier
     # Spatial engine
@@ -99,7 +100,7 @@ OFFENSE = {s.key: s for s in [
     System("heliocentric", "Heliocentric",
            "Everything runs through the star: high pick-and-roll and isolation, the rest space.",
            {"pace": 10, "three": 11, "focus": "balanced", "crash": 9},
-           Style(zone={"three": 1.04, "mid": 1.1}, star=1.2, usage_scale=1.1, assist=0.88,
+           Style(zone={"three": 1.04, "mid": 1.1}, star=1.2, usage_room=0.03, usage_scale=1.1, assist=0.88,
                  bias={"pnr": 0.04, "drive": 0.02, "pass": -0.01},
                  plays={"pnr": 1.8, "handoff": 0.6, "downscreen": 0.5, "swing": 0.6}, entry=0, star_ball=0.06)),
 ]}

@@ -11,6 +11,8 @@ from hoopsim.systems import option_ranks
 
 
 def fga_share(league, me, pid, n, engine="statistical", seed0=0):
+    """His share of the team's shots, counting a trip to the line as a shot (FGA + 0.44 FTA):
+    a go-to scorer draws more fouls."""
     league.rules.match_engine = engine
     opps = [t for t in league.teams if t != me]
     mine = tot = 0
@@ -22,8 +24,8 @@ def fga_share(league, me, pid, n, engine="statistical", seed0=0):
             from hoopsim.spatial.season_game import simulate_spatial
             sim = simulate_spatial(league, g, random.Random(seed0 + i), record=False)
         b = sim.box_score.home
-        mine += sum(ln.fga for ln in b.lines if ln.player_id == pid)
-        tot += b.totals().fga
+        mine += sum(ln.fga + 0.44 * ln.fta for ln in b.lines if ln.player_id == pid)
+        tot += b.totals().fga + 0.44 * b.totals().fta
     return mine / tot
 
 

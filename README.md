@@ -1703,9 +1703,10 @@ compared with 2025-26 (players with 30+ games and 15+ minutes):
 | team wins vs 2025-26, correlation | 0.63 | 0.76 |
 | team wins vs 2025-26, mean miss | 9.1 | 7.9 |
 
-The best scorers still average close to 40 points, as in generated leagues; that is the
-engine's. (The minutes shape, which gave about 130 players 30+ minutes, is fixed: see
-"Minutes" below.)
+The best scorers used to average close to 40 points, as in generated leagues; that was
+the engine's and is fixed (see "Star scoring" under the match engine; the table above is
+from before it: now 0.87 and −0.5). (The minutes shape, which gave about 130 players 30+
+minutes, is fixed: see "Minutes" below.)
 
 **Minutes** (`hoopsim/lineup.py` `plan_rotation`). The coach shares out the 240 minutes by
 ability rank, not starting spot, along the 2025-26 NBA curve (a team's best player about
@@ -1913,7 +1914,7 @@ Possession by possession, about 11 ms per game:
 ```
 clock -> turnover? (handler security vs defenders' hands, press/zone)
       -> non-shooting foul? (bonus free throws from the 5th team foul)
-      -> shooter (weighted by scoring skill) -> zone: rim / close / mid / three
+      -> shooter (weighted by scoring skill; shares level off past 22%) -> zone: rim / close / mid / three
          (player tendencies x team 3PT rate x offensive focus x defence scheme)
       -> block? -> shooting foul? (and-ones) -> make? (shooter vs matchup defender
          and rim protector, home edge, clutch, form) -> assist
@@ -1972,6 +1973,84 @@ What it took to get overtime right (it was 2.2%):
 Known gaps:
 - **Guards rebound a little too little.**
 - **No in-game injuries.**
+
+### Star scoring
+
+Simulated stars used to score far too much: over a season the top scorer averaged 45-50
+points in generated leagues and in the real-league file, with usage rates over 50%.
+
+**Why.** The statistical engine picks the shooter with weights `exp(USAGE × (skill − 10))`.
+Nothing stopped the share growing: a player rated far above his teammates took half the
+team's shots while on the floor. The spatial engine had the same problem in another form.
+A star's own shot is nearly always his offence's best-valued option, so he kept the ball.
+
+**What changed (statistical engine, `engine.usage_ceiling`):**
+* **Shares level off.** A player's share of the on-court shots is bent past a knee (22%)
+  toward a ceiling (35%):
+  `knee + room × (1 − exp(−(share − knee) / room))`. The slope is 1 at the knee, so
+  nothing jumps. A Heliocentric offence raises both by 3 points (`Style.usage_room`).
+* **The rest goes to the role players.** What the star gives up is split in equal parts
+  among the teammates below the knee, not in proportion to their shares. The defence
+  loading up on him leaves the others open alike. Nobody is lifted past the knee, so
+  the order of the shares is kept.
+* **Below the knee, better scorers shoot more.** `USAGE` went from 0.34 to 0.42.
+* **Special situations come after the ceiling.** The held-for last shot still goes to
+  the 1st option (×2.5). A needed three or a heave still goes to the shooters.
+* **The go-to scorer draws the fouls.** Shooting-foul odds are multiplied by
+  `exp(2.5 × (share − 0.215))`, so a 33% option draws about a third more. Team free
+  throws stay the same.
+
+**What changed (spatial engine, `HalfCourtGame.usage_bias`):** a player's running share of
+his team's shots while he's on the floor costs value on his own shots and on passes to him:
+`usage_penalty × (share − 0.24)²`, with the share starting from 20% over 10 shots. A 32%
+share costs 0.13 points of value. Drives, post-ups and pick-and-rolls are not taxed.
+Taxing them cost the offence about 4 points per 100 possessions and spread the scoring no
+better. Early offence (shot clock above `early_until`) is not taxed either, because the
+defence isn't set yet, and neither is the man a "get him the ball" shout is for.
+Shooting fouls follow the share as above. `LEGACY_PARAMS`
+switches both off.
+
+**Season leaders, statistical engine** (players with 30+ games and 15+ minutes; seeds 0 / 1 / 2):
+
+| | NBA 2025-26 | before | after |
+|---|---|---|---|
+| generated: top scorer (ppg) | 33.5 | 50.3 / 47.7 / 45.8 | 33.5 / 32.3 / 32.1 |
+| generated: players 28+ / 22+ ppg | 5 / 26 | 7, 7, 2 / 19, 21, 20 | 3, 4, 1 / 21, 21, 14 |
+| real league: top scorer | 33.5 | 46.9 / 49.9 / 44.9 | 33.0 / 32.2 / 32.0 |
+| real league: players 28+ / 22+ ppg | 5 / 26 | 14, 12, 13 / 37, 33, 38 | 7, 5, 7 / 34, 33, 33 |
+| highest usage rate | 37.0 | 50-56 | 37-39 |
+| top 10 scorers: TS% | 0.623 | 0.598-0.627 | 0.611-0.632 |
+| top 10 scorers: FTA per game | 7.8 | 5.1-5.7 | 4.7-6.8 |
+
+**Real league against 2025-26** (three seasons, the same players in both):
+
+| | before | after |
+|---|---|---|
+| points per game, correlation | 0.85 | 0.87 |
+| top-60 scorers, points bias | +1.1 | −0.5 |
+| players with 28+ / 22+ / 20+ (real: 5 / 26 / 44) | 11-14 / 30-35 / 43-44 | 5-7 / 30-33 / 43-44 |
+
+The builder's "Shot load" stays as it is: weakening it lowered the correlation. A gap
+remains: the real league's very best scorers (28+ in 2025-26) come out about 4 points
+short. Their ratings sit at the cap with the next 30 scorers, and they draw fewer free
+throws than in life (about 6 a game against 9-10).
+
+**Team level** stays put:
+* Statistical calibration is 17/17. Points went from 112.6 to 113.7, free throws from
+  21.8 to 21.9, pace stays 98.9, eFG goes from 0.543 to 0.546.
+* Spatial full games (`measure --games 64`, means of seeds 0 / 1 / 2) stay 13/13. Points
+  per 100 went from 114.4 to 114.2, turnovers per 100 from 13.6 to 14.6, three-point
+  share from 0.426 to 0.405, eFG from 0.550 to 0.552.
+* A team's top scorer per game went from 34.1 to 28.4 points.
+* In a 240-game spatial sample (about 16 games a team) the top scorer went from 80.6 to
+  42.6 ppg in a generated league (highest usage 75% to 44%) and from 37.7 to 27.9 in the
+  real league (28+ scorers 14 to 0).
+* The realism audit (`audit --games 48 --seed 7`) goes from 24 ok / 1 watch / 1 off to
+  23 / 2 / 1. The new watch is "top speed seen", 21.56 mph against a 21.5 limit. This is
+  the single fastest frame of the sample. The unchanged engine shows it too on seed 8
+  (21.75).
+* Set plays now add about 10% to possession time rather than 16%
+  (`tests/test_plays.py`). The usage penalty lengthens a plain offence too.
 
 ## Season loop (`hoopsim/season.py`)
 
