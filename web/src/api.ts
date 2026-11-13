@@ -152,6 +152,8 @@ export interface GameView {
   at_home?: boolean;
   won?: boolean;
   score?: string;
+  /** Playoff games: the series and its score after this game (before it, if unplayed). */
+  series?: { title: string; game: number; play_in: string; status: string };
 }
 
 export interface InboxItem {

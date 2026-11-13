@@ -1,4 +1,5 @@
 import { AllStar } from "./AllStar";
+import { Bracket } from "./Bracket";
 import { useState } from "react";
 import { GameView } from "../api";
 import { useFetch, useGame } from "../context";
@@ -16,7 +17,7 @@ export function BoxScoreModal({ id, onClose }: { id: number; onClose: () => void
         <Empty>{g.played ? "Box scores are kept for the current season only." : "Not played yet."}</Empty>
       ) : (
         <div className="box">
-          <div className="muted small">{shortDate(g.date)}{g.playoff ? " · playoffs" : ""}</div>
+          <div className="muted small">{shortDate(g.date)}{g.series ? ` · ${g.series.title}${g.series.play_in ? "" : ` · Game ${g.series.game}`} · ${g.series.status}` : g.playoff ? " · playoffs" : ""}</div>
           <table className="table table-dense linescore">
             <thead><tr><th>Team</th>{g.box.away.periods.map((_: number, i: number) => <th key={i} className="num">{i < 4 ? `Q${i + 1}` : `OT${i - 3}`}</th>)}<th className="num">T</th></tr></thead>
             <tbody>
@@ -161,7 +162,7 @@ function GamesTable({ games, onBox, me }: { games: GameView[]; onBox: (id: numbe
         { key: "away", label: "Away", desc: false, render: (g) => <span className={g.away_id === me ? "me" : ""}>{g.away}</span> },
         { key: "score", label: "Score", sort: (g) => g.day, render: (g) => (g.played ? `${g.away_score} – ${g.home_score}${g.ot ? ` (${g.ot}OT)` : ""}` : "–") },
         { key: "home", label: "Home", desc: false, render: (g) => <span className={g.home_id === me ? "me" : ""}>{g.home}</span> },
-        { key: "res", label: "", render: (g) => (g.won === undefined ? (g.playoff ? <span className="muted small">PO</span> : "") : <b className={g.won ? "good" : "bad"}>{g.won ? "W" : "L"}</b>) },
+        { key: "res", label: "", render: (g) => (g.won === undefined ? (g.playoff ? <span className="muted small" title={g.series?.status}>PO</span> : "") : <b className={g.won ? "good" : "bad"}>{g.won ? "W" : "L"}</b>) },
         { key: "box", label: "", render: (g) => (
           <span className="row gap">
             {g.has_box && <button className="link small" onClick={(e) => { e.stopPropagation(); onBox(g.id); }}>box</button>}
@@ -213,62 +214,12 @@ function Results({ onBox }: { onBox: (id: number) => void }) {
               <button key={g.id} className="score-card" onClick={() => onBox(g.id)} disabled={!g.has_box}>
                 <div className={g.away_score! > g.home_score! ? "winner" : ""}><span>{g.away}</span><b>{g.away_score}</b></div>
                 <div className={g.home_score! > g.away_score! ? "winner" : ""}><span>{g.home}</span><b>{g.home_score}</b></div>
-                <div className="muted small">{g.ot ? `${g.ot}OT` : "Final"}{g.playoff ? " · PO" : ""}</div>
+                <div className="muted small">{g.ot ? `${g.ot}OT` : "Final"}{g.series ? ` · ${g.series.status}` : g.playoff ? " · PO" : ""}</div>
               </button>
             ))}
           </div>
         </Panel>
       )}
-    </Fetched>
-  );
-}
-
-function Bracket({ onBox }: { onBox: (id: number) => void }) {
-  const { state } = useGame();
-  const f = useFetch<any>("/api/playoffs");
-  const me = state?.team?.id;
-  return (
-    <Fetched f={f} what="Loading the bracket">
-      {(d) => {
-        if (!d.series.length) {
-          return <Empty>{d.stage === "regular_season" ? "The playoffs start when the regular season ends." : d.stage === "season_over" ? "The bracket is set: start the playoffs from the top bar." : "No playoff bracket this season yet. Past champions are under History."}</Empty>;
-        }
-        const groups: Record<string, any[]> = {};
-        d.series.forEach((s: any) => { const k = s.conference ?? "Finals"; (groups[k] ??= []).push(s); });
-        return (
-          <div className="bracket">
-            {d.champion && <div className="callout">🏆 {state?.teams?.[String(d.champion)]?.name} are the champions!</div>}
-            {Object.entries(groups).map(([conf, series]) => {
-              const rounds = [...new Set(series.map((s) => s.round))].sort();
-              return (
-                <Panel key={conf} title={conf === "Finals" ? "Finals" : `${conf}`}>
-                  <div className="bracket-rounds">
-                    {rounds.map((r) => (
-                      <div key={r} className="bracket-round">
-                        <div className="muted small">{conf === "Finals" ? "Finals" : `Round ${r}`}</div>
-                        {series.filter((s) => s.round === r).map((s) => (
-                          <div key={s.id} className={`series ${s.high_id === me || s.low_id === me ? "series-me" : ""}`}>
-                            {[["high", s.high_seed, s.high, s.high_wins, s.high_id], ["low", s.low_seed, s.low, s.low_wins, s.low_id]].map(([k, seed, abbr, wins, id]) => (
-                              <div key={k as string} className={`series-team ${s.over && s.winner_id === id ? "winner" : s.over ? "loser" : ""}`}>
-                                <span className="muted small">{seed}</span> <span>{abbr}</span> <b>{wins}</b>
-                              </div>
-                            ))}
-                            <div className="series-games">
-                              {s.games.map((g: GameView, i: number) => (
-                                <button key={g.id} className="link small" onClick={() => onBox(g.id)} title={`${g.away} ${g.away_score} @ ${g.home} ${g.home_score}`}>G{i + 1}</button>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                </Panel>
-              );
-            })}
-          </div>
-        );
-      }}
     </Fetched>
   );
 }

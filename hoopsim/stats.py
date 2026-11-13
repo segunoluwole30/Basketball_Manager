@@ -17,8 +17,9 @@ def season_totals(league: League, season: Optional[int] = None,
     """
     season = league.season if season is None else season
     totals: dict[int, dict] = defaultdict(lambda: defaultdict(float))
+    play_in = {gid for s in league.playoffs if s.play_in for gid in s.game_ids}    # not playoff stats (NBA)
     games = sorted((g for g in league.games.values()
-                    if g.season == season and g.playoff == playoff and g.box_score),
+                    if g.season == season and g.playoff == playoff and g.box_score and g.id not in play_in),
                    key=lambda g: (g.day, g.id))
     for g in games:
         for box in (g.box_score.home, g.box_score.away):

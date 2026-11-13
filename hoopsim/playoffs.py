@@ -136,30 +136,78 @@ def division_leaders(league: League) -> set[int]:
     return _Tiebreak(league).leaders
 
 
+def has_play_in(league: League, conference_size: int) -> bool:
+    """The NBA's play-in: an eight-team bracket in a conference of ten or more teams
+    (``rules.play_in`` turns it off). Seeds 7-10 play for the last two places."""
+    k = teams_per_conference(conference_size)
+    return bool(getattr(league.rules, "play_in", True)) and k >= 8 and conference_size >= k + 2
+
+
+def seeding(league: League) -> dict[str, list[int]]:
+    """{conference: team ids in seed order} from the regular-season standings."""
+    out = {}
+    for conf in sorted({t.conference for t in league.teams.values()}):
+        out[conf] = ranked(league, [t.id for t in league.teams.values() if t.conference == conf])
+    return out
+
+
 def start_playoffs(league: League) -> None:
     if league.phase is not Phase.REGULAR_SEASON:
         raise ValueError(f"can't start playoffs during {league.phase.value}")
     if any(not g.played for g in league.games.values() if g.season == league.season and not g.playoff):
         raise ValueError("regular season isn't finished")
     league.playoffs = []
-    conferences = sorted({t.conference for t in league.teams.values()})
-    for conf in conferences:
-        members = [t.id for t in league.teams.values() if t.conference == conf]
-        k = teams_per_conference(len(members))
-        seeds = ranked(league, members)[:k]
-        order = _BRACKET[k]
-        for i in range(0, k, 2):
-            hi, lo = order[i], order[i + 1]
-            _add_series(league, 1, conf, seeds[hi - 1], seeds[lo - 1], hi, lo)
+    seeds = seeding(league)
+    play_in = [c for c, order in seeds.items() if has_play_in(league, len(order))]
+    for conf, order in seeds.items():
+        k = teams_per_conference(len(order))
+        if conf in play_in:
+            # Play-in: 7 v 8 (the winner is the 7 seed) and 9 v 10 (the loser is out);
+            # round one follows once the 8 seed is decided.
+            _add_series(league, 0, conf, order[k - 2], order[k - 1], k - 1, k, best_of=1, play_in="7v8")
+            _add_series(league, 0, conf, order[k], order[k + 1], k + 1, k + 2, best_of=1, play_in="9v10")
+        elif not play_in:
+            _add_first_round(league, conf, order[:k])
     league.phase = Phase.PLAYOFFS
 
 
+def _add_first_round(league: League, conf: str, seeds: list[int]) -> None:
+    order = _BRACKET[len(seeds)]
+    for i in range(0, len(seeds), 2):
+        hi, lo = order[i], order[i + 1]
+        _add_series(league, 1, conf, seeds[hi - 1], seeds[lo - 1], hi, lo)
+
+
 def _add_series(league: League, rnd: int, conf: Optional[str], a: int, b: int,
-                seed_a: int, seed_b: int) -> None:
+                seed_a: int, seed_b: int, best_of: Optional[int] = None, play_in: str = "") -> None:
     if (seed_a, a) > (seed_b, b):    # keep the better seed as "high"
         a, b, seed_a, seed_b = b, a, seed_b, seed_a
     league.playoffs.append(Series(len(league.playoffs) + 1, rnd, conf, a, b, seed_a, seed_b,
-                                  best_of=league.rules.playoff_series_length))
+                                  best_of=best_of or league.rules.playoff_series_length, play_in=play_in))
+
+
+def _seed_of(s: Series, team_id: int) -> int:
+    return s.high_seed if team_id == s.high_id else s.low_seed
+
+
+def _advance_play_in(league: League, done: list[Series]) -> None:
+    """After the play-in's first night: the deciders. After those: round one."""
+    by_conf: dict[str, dict[str, Series]] = {}
+    for s in done:
+        by_conf.setdefault(s.conference, {})[s.play_in] = s
+    if any("decider" not in v for v in by_conf.values()):
+        for conf, v in sorted(by_conf.items()):
+            a, b = v["7v8"], v["9v10"]
+            _add_series(league, 0, conf, a.loser_id, b.winner_id, _seed_of(a, a.loser_id),
+                        _seed_of(b, b.winner_id), best_of=1, play_in="decider")
+        return
+    for conf, order in seeding(league).items():
+        k = teams_per_conference(len(order))
+        v = by_conf.get(conf)
+        seeds = order[:k]
+        if v:
+            seeds[k - 2], seeds[k - 1] = v["7v8"].winner_id, v["decider"].winner_id
+        _add_first_round(league, conf, seeds)
 
 
 def current_round(league: League) -> int:
@@ -171,6 +219,9 @@ def _advance_bracket(league: League) -> bool:
     rnd = current_round(league)
     done = [s for s in league.playoffs if s.round == rnd]
     if not all(s.over for s in done):
+        return True
+    if rnd == 0:
+        _advance_play_in(league, done)
         return True
     if len(done) == 1 and done[0].conference is None:
         return False                                  # finals finished
@@ -197,12 +248,15 @@ def _advance_bracket(league: League) -> bool:
 
 PLAYOFF_START_GAP = 6     # NBA: the play-in fills the week after the regular season
 PLAYOFF_GAME_GAP = 2      # then a game every other day
+PLAY_IN_GAP = 2           # play-in nights: two and four days after the season, round one on day six
 
 
 def next_playoff_day(league: League, day: int) -> int:
     """The day after ``day`` (the last scheduled game) for the next playoff games."""
     started = any(g.playoff for g in league.games.values() if g.season == league.season)
-    return day + (PLAYOFF_GAME_GAP if started else PLAYOFF_START_GAP)
+    if started:
+        return day + PLAYOFF_GAME_GAP
+    return day + (PLAY_IN_GAP if any(s.play_in for s in league.playoffs) else PLAYOFF_START_GAP)
 
 
 def play_playoffs(league: League, rng: Optional[random.Random] = None) -> int:
@@ -233,6 +287,31 @@ def play_playoffs(league: League, rng: Optional[random.Random] = None) -> int:
     return champion(league)
 
 
+def waiting_for_play_in(league: League) -> set[int]:
+    """Teams already in round one (seeds 1-6) while the play-in is still going on."""
+    if not league.playoffs or current_round(league) != 0:
+        return set()
+    out = set()
+    for conf, order in seeding(league).items():
+        if has_play_in(league, len(order)):
+            out.update(order[:teams_per_conference(len(order)) - 2])
+    return out
+
+
+def eliminated(league: League, team_id: int) -> bool:
+    """Is ``team_id`` out of this postseason (or never in it)? A team between series
+    (waiting for the next round, or the play-in decider) is still alive."""
+    mine = [s for s in league.playoffs if team_id in (s.high_id, s.low_id)]
+    if not mine:
+        return team_id not in waiting_for_play_in(league)
+    last = max(mine, key=lambda s: s.id)
+    if not last.over:
+        return False
+    if last.winner_id == team_id:
+        return last.conference is None and last.play_in == ""      # won the title: nothing left
+    return last.play_in != "7v8"                                     # a 7v8 loser gets the decider
+
+
 def champion(league: League) -> Optional[int]:
     finals = [s for s in league.playoffs if s.round == current_round(league)]
-    return finals[0].winner_id if len(finals) == 1 else None
+    return finals[0].winner_id if len(finals) == 1 and finals[0].round > 0 else None

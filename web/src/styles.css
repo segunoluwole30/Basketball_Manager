@@ -347,13 +347,39 @@ ul.plain li { padding: 3px 0; }
 .score-card > div { display: flex; justify-content: space-between; }
 .winner { font-weight: 700; }
 .loser { opacity: 0.6; }
-.bracket-rounds { display: flex; gap: 16px; overflow-x: auto; }
-.bracket-round { display: flex; flex-direction: column; gap: 8px; justify-content: space-around; min-width: 160px; }
-.series { border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; background: var(--panel-2); }
-.series-me { border-color: var(--accent); }
-.series-team { display: grid; grid-template-columns: 18px 1fr 18px; gap: 4px; }
-.series-team b { text-align: right; }
-.series-games { display: flex; gap: 6px; flex-wrap: wrap; }
+/* playoff bracket: East | Finals | West on wide screens, round by round on narrow ones */
+.bk-scroll { overflow-x: auto; max-width: 100%; padding-bottom: 4px; }
+.bk-tree { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(150px, 1fr); gap: 10px; min-width: 1060px; }
+.bk-col { display: flex; flex-direction: column; min-height: 420px; }
+.bk-col-head { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bk-col-body { flex: 1; display: flex; flex-direction: column; justify-content: space-around; gap: 8px; }
+.bk-col-conf { display: block; font-weight: 700; }
+.bk-col-finals .bk-col-head { color: var(--accent); font-weight: 700; text-align: center; }
+.bk-col-finals .bk-box { border-width: 2px; }
+.bk-box { display: block; width: 100%; text-align: left; font: inherit; color: inherit; border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; background: var(--panel-2); }
+button.bk-box { cursor: pointer; }
+button.bk-box:hover { border-color: var(--accent); }
+.bk-mine { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.bk-tbd { opacity: 0.75; }
+.bk-projected { border-style: dashed; }
+.bk-team { display: grid; grid-template-columns: 18px auto minmax(0, 1fr) 16px; gap: 6px; align-items: baseline; line-height: 1.5; }
+.bk-seed { color: var(--muted); font-size: 11px; text-align: right; font-variant-numeric: tabular-nums; }
+.bk-abbr { font-weight: 600; }
+.bk-name { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bk-wins { text-align: right; font-variant-numeric: tabular-nums; }
+.bk-win .bk-abbr, .bk-win .bk-wins { font-weight: 800; color: var(--good, inherit); }
+.bk-win { background: var(--accent-soft); border-radius: 3px; }
+.bk-lose { opacity: 0.55; }
+.bk-me .bk-abbr { color: var(--accent); }
+.bk-status { font-size: 11px; color: var(--muted); border-top: 1px solid var(--border); margin-top: 2px; padding-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bk-playin-grid, .bk-stage-confs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.bk-stage-conf { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.bk-playin-item { display: flex; flex-direction: column; gap: 2px; }
+@media (min-width: 761px) { .bk-playin-grid .bk-stage-conf { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; } .bk-playin-grid .bk-col-head { grid-column: 1 / -1; } }
+.bk-stack { display: flex; flex-direction: column; gap: 14px; }
+.bk-stage h3 { margin: 0 0 6px; font-size: 14px; }
+.bk-finals-one { max-width: 260px; }
+@media (max-width: 760px) { .bk-team { grid-template-columns: 16px auto minmax(0, 1fr) 14px; gap: 4px; } }
 .awards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-bottom: 8px; }
 .linescore { width: auto; margin-bottom: 10px; }
 .totals-line { margin: 4px 0 8px; }

@@ -221,7 +221,7 @@ def start_offseason(league: League, rng: random.Random, user_controlled: bool = 
     if league.offseason is not None:
         raise ValueError("the offseason is already under way")
     old = league.season
-    playoff_teams = {t for s in league.playoffs for t in (s.high_id, s.low_id)}
+    playoff_teams = {t for s in league.playoffs if not s.play_in for t in (s.high_id, s.low_id)}   # play-in losers draw lottery balls
     order = draft_order(league, rng, playoff_teams)       # uses this season's records
     mpg = {}
     for p in league.players.values():

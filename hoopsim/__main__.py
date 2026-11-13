@@ -148,7 +148,7 @@ def print_standings(league: League) -> None:
 
 
 def print_playoffs(league: League) -> None:
-    names = {1: "First round", 2: "Second round", 3: "Third round", 4: "Fourth round"}
+    names = {0: "Play-in", 1: "First round", 2: "Second round", 3: "Third round", 4: "Fourth round"}
     for s in sorted(league.playoffs, key=lambda s: (s.round, s.id)):
         stage = "Finals" if s.conference is None else f"{s.conference} {names.get(s.round, 'round ' + str(s.round))}"
         hi, lo = league.teams[s.high_id].abbreviation, league.teams[s.low_id].abbreviation
