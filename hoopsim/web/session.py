@@ -23,6 +23,7 @@ from ..engine import clear_healed, play_day, store_result, tick_injuries
 from ..generate import generate_league
 from .. import allstar, editor
 from .. import awards as season_awards
+from ..clinch import marker_legend, race as race_markers, race_changes, race_details
 from ..news import post as post_news
 from ..systems import describe as describe_systems, fit_for_team
 from ..models import MATCH_ENGINES
@@ -696,12 +697,13 @@ class GameSession:
         rec = team_records(lg)
         conf_ids = ranked(lg, [t.id for t in lg.teams.values() if t.conference == me.conference])
         leader_w, leader_l, _ = rec[conf_ids[0]]
+        marks = self._race()
         standings = []
         for i, tid in enumerate(conf_ids):
             w, l, diff = rec[tid]
             standings.append({"rank": i + 1, "team_id": tid, "abbr": lg.teams[tid].abbreviation,
                               "name": lg.teams[tid].full_name, "w": w, "l": l,
-                              "gb": ((leader_w - w) + (l - leader_l)) / 2})
+                              "gb": ((leader_w - w) + (l - leader_l)) / 2, "marker": marks[tid]["marker"]})
         my_games = sorted((g for g in lg.games.values() if g.season == lg.season
                            and me.id in (g.home_team_id, g.away_team_id)), key=lambda g: (g.day, g.id))
         upcoming = [self._game_view(g) for g in my_games if not g.played][:5]
@@ -795,6 +797,7 @@ class GameSession:
         target = range(today + 1, (final if last is None else min(last, final)) + 1)
         self._expire_offers()
         me = lg.user_team_id
+        race_before = self._race()
         before = {g.id for g in lg.games.values() if g.played}
         hurt_before = {p.id: p.injury.description for p in lg.roster(me) if p.injury}
         events: list[str] = []
@@ -833,6 +836,8 @@ class GameSession:
             self._news("offer", f"Trade offer from the {team.full_name}",
                        [f"They want {give} for {get}. The offer stands until you sim again."],
                        offer=offer, status="open")
+        if days_done:
+            self._race_news(race_before)
         if regular_season_over(lg):
             self._season_over_news()
         self.dirty = True
@@ -945,6 +950,21 @@ class GameSession:
             named["seen"] = True
             self.dirty = True
         return self.state()
+
+    def _race_news(self, before: dict[int, dict]) -> None:
+        """Inbox items for new clinch / elimination markers: yours, then the league's."""
+        lg = self._lg()
+        changes = race_changes(lg, before, self._race())
+        me = lg.user_team_id
+        mine = [c for c in changes if c["team_id"] == me]
+        if mine:
+            titles = {"w": "Best record in the league clinched", "z": "#1 seed clinched",
+                      "y": "Division title clinched", "x": "Playoff spot clinched",
+                      "pi": "Play-in spot clinched", "o": "Eliminated from the playoff race"}
+            self._news("race", titles[mine[0]["marker"]], [c["text"] + "." for c in mine])
+        others = [c for c in changes if c["team_id"] != me]
+        if others:
+            self._news("race", "Playoff race", [f"{c['marker']}: {c['text']}" for c in others])
 
     # -- playoffs ------------------------------------------------------------------
     def start_playoffs(self) -> dict:
@@ -1110,6 +1130,7 @@ class GameSession:
             streaks[tid] = streak
         from ..playoffs import _Tiebreak
         tb = _Tiebreak(lg)
+        marks = self._race()
         out = []
         for conf in sorted({t.conference for t in lg.teams.values()}):
             ids = tb.order([t.id for t in lg.teams.values() if t.conference == conf])
@@ -1124,6 +1145,7 @@ class GameSession:
                              "streak": streaks[tid], "last10": last10[tid],
                              "strength": round(team_strength(lg, tid), 1),
                              "div_leader": tid in tb.leaders,
+                             "marker": marks[tid]["marker"], "markers": marks[tid]["markers"],
                              "div_record": "{}-{}".format(*tb.div[tid]), "conf_record": "{}-{}".format(*tb.conf[tid])})
             out.append({"conference": conf, "teams": rows})
         rows_by_id = {r["team_id"]: r for c in out for r in c["teams"]}
@@ -1139,7 +1161,23 @@ class GameSession:
                     w, l, _ = rec[tid]
                     rows.append(dict(rows_by_id[tid], div_rank=i + 1, div_gb=((lw - w) + (l - ll)) / 2))
                 divisions.append({"division": name, "conference": conf, "teams": rows})
-        return {"conferences": out, "divisions": divisions, "season": lg.season, "user_team_id": lg.user_team_id}
+        return {"conferences": out, "divisions": divisions, "season": lg.season, "user_team_id": lg.user_team_id,
+                "legend": marker_legend(lg)}
+
+    def _race(self) -> dict[int, dict]:
+        """Clinch / elimination markers (``clinch.race``), cached until a game is played."""
+        lg = self._lg()
+        return self._stats_memo("race", lg.season, False, lambda: race_markers(lg))
+
+    def race(self, team_id: int) -> dict:
+        """One team's races: clinched, eliminated, or the wins / losses that settle them."""
+        lg = self._lg()
+        if team_id not in lg.teams:
+            raise UserError(f"no team {team_id}", 404)
+        t = lg.teams[team_id]
+        rows = self._stats_memo(f"race-{team_id}", lg.season, False, lambda: race_details(lg, team_id))
+        return {"team_id": team_id, "abbr": t.abbreviation, "name": t.full_name,
+                "marker": self._race()[team_id]["marker"], "races": rows}
 
     def leaders(self) -> dict:
         lg = self._lg()

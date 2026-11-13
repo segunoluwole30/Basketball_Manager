@@ -488,6 +488,24 @@ button.bk-box:hover { border-color: var(--accent); }
 /* Standings */
 .standings-bar { margin-bottom: 10px; align-items: center; }
 .div-lead { color: var(--accent); font-size: 12px; }
+.team-cell { white-space: nowrap; }
+.clinch { display: inline-block; min-width: 1.6em; margin-right: 4px; font-size: 11px; font-weight: 700; text-align: center;
+  border-radius: 3px; line-height: 1.5; color: var(--muted); }
+.clinch-w, .clinch-z, .clinch-y, .clinch-x { color: #fff; background: #2f7d4f; }
+.clinch-pi { color: #fff; background: #6c7a3a; }
+.clinch-o { color: var(--muted); background: var(--panel-2); border: 1px solid var(--border); }
+.clinch-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; list-style: none; margin: 0 0 12px; padding: 0; }
+.clinch-legend li { display: flex; align-items: center; }
+.name-abbr { display: none; }
+.race-table td { white-space: normal; }
+@media (min-width: 861px) and (max-width: 1500px) { .two-col .col-net { display: none; } }
+.race-in { color: #2f9d5f; }
+.race-out { color: var(--muted); }
+@media (max-width: 600px) {
+  .col-wide { display: none; }
+  .name-full { display: none; }
+  .name-abbr { display: inline; }
+}
 .stack { display: grid; gap: 16px; align-content: start; }
 
 /* ---- In-game editor ---- */

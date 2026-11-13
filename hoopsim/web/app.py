@@ -239,6 +239,10 @@ def create_app(session: Optional[GameSession] = None) -> FastAPI:
     def standings():
         return run(game.standings)
 
+    @app.get("/api/standings/race/{team_id}")
+    def standings_race(team_id: int):
+        return run(game.race, team_id)
+
     @app.get("/api/leaders")
     def leaders():
         return run(game.leaders)

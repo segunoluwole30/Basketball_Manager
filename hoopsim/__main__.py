@@ -139,14 +139,9 @@ def cmd_game(args) -> None:
 
 
 def print_standings(league: League) -> None:
-    rec = team_records(league)
-    for conf in sorted({t.conference for t in league.teams.values()}):
-        print(f"{conf:<26}{'W':>4}{'L':>4}{'PCT':>7}{'NET':>7}")
-        for tid in ranked(league, [t.id for t in league.teams.values() if t.conference == conf]):
-            w, l, diff = rec[tid]
-            print(f"{league.teams[tid].full_name:<26}{w:>4}{l:>4}{w / max(1, w + l):>7.3f}"
-                  f"{diff / max(1, w + l):>+7.1f}")
-        print()
+    from .clinch import standings_lines
+    for line in standings_lines(league):
+        print(line)
 
 
 def print_playoffs(league: League) -> None:

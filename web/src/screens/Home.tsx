@@ -139,7 +139,7 @@ export function Home({ go }: { go: (r: string) => void }) {
                   <Table dense rows={d.standings} rowKey={(r: any) => r.team_id} rowClass={(r: any) => (r.team_id === s.team.id ? "row-me" : "")}
                     columns={[
                       { key: "rank", label: "#", num: true, desc: false },
-                      { key: "abbr", label: "Team", desc: false },
+                      { key: "abbr", label: "Team", desc: false, render: (r: any) => <span className="team-cell"><span className={`clinch ${r.marker ? `clinch-${r.marker}` : ""}`}>{r.marker}</span>{r.abbr}</span> },
                       { key: "w", label: "W", num: true },
                       { key: "l", label: "L", num: true },
                       { key: "gb", label: "GB", num: true, desc: false, render: (r: any) => (r.gb ? r.gb.toFixed(1) : "–") },
