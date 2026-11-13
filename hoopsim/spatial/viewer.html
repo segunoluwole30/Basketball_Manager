@@ -206,6 +206,7 @@ aside { min-width: 0; display: flex; flex-direction: column; background: var(--p
 @media (pointer: coarse), (max-width: 700px) { .view3d .hint { display: none; } }
 .seg input:disabled + label { opacity: 0.45; cursor: not-allowed; }
 .seg .seglabel { align-self: center; color: var(--muted); font-size: 13px; margin-right: 8px; }
+.seg label[hidden] { display: none; }
 .seg[hidden], .toggle[hidden], .hl[hidden] { display: none; }
 .viewmsg { color: var(--muted); font-size: 12px; }
 .viewmsg:empty { display: none; }
@@ -258,7 +259,8 @@ aside { min-width: 0; display: flex; flex-direction: column; background: var(--p
       <div class="seg" id="bodySeg" role="radiogroup" aria-label="Players" hidden>
         <span class="seglabel">Players</span>
         <input type="radio" name="bodies" id="bodyAnim" value="animated" checked><label for="bodyAnim" title="Animated players: motion-capture clips driven by the play (B switches)">Animated</label>
-        <input type="radio" name="bodies" id="bodySimple" value="simple"><label for="bodySimple" title="Simple bodies: lighter on slow devices (B switches)">Simple</label>
+        <input type="radio" name="bodies" id="bodyLight" value="light"><label for="bodyLight" title="The same animated players with far fewer triangles: for phones and slower devices (B switches)">Light</label>
+        <input type="radio" name="bodies" id="bodySimple" value="simple"><label for="bodySimple" title="Simple bodies: the lightest (B switches)">Simple</label>
       </div>
       <div class="seg" id="arenaSeg" role="radiogroup" aria-label="Arena" hidden>
         <span class="seglabel">Arena</span>
@@ -861,6 +863,7 @@ window.GAME = /*GAME_DATA*/null;
   const hash = (s) => { let h = 7; for (const ch of String(s)) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h; };
   const wrapAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
   const RIM_X = L - 5.25;                                        // world X of the right rim
+  const BALL_R = 0.39;                                           // feet: a size 7 ball, 29.5 inches round
 
   // ---- animated players (3D only). One rigged model with motion-capture clips
   // (spatial/assets/player.glb, built by tools/build_player_assets.py), cloned per player.
@@ -871,7 +874,9 @@ window.GAME = /*GAME_DATA*/null;
   let BODY_CFG = null;
   try { BODY_CFG = JSON.parse(($("player-assets").textContent || "").trim() || "null"); } catch (e) {}
   if (BODY_CFG && !BODY_CFG.url && !BODY_CFG.embed) BODY_CFG = null;
-  async function loadPlayerRig(threeUrl) {
+  const HAS_LIGHT = !!BODY_CFG && (!!BODY_CFG.url || typeof BODY_CFG.embed["player_light.glb"] === "string");
+  let rigModules = null;                               // the loader and SkeletonUtils, brought up once
+  async function loadPlayerRig(threeUrl, file) {
     const get = async (name, binary) => {
       if (BODY_CFG.embed) {
         const s = BODY_CFG.embed[name];
@@ -885,17 +890,22 @@ window.GAME = /*GAME_DATA*/null;
       if (!r.ok) throw new Error(name + ": HTTP " + r.status);
       return binary ? r.arrayBuffer() : r.text();
     };
-    const [utils, loader, skel, glb] = await Promise.all([get("BufferGeometryUtils.js"), get("GLTFLoader.js"),
-                                                          get("SkeletonUtils.js"), get("player.glb", true)]);
-    const mod = (src) => URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
-    const three = (src) => src.replace(/from\s+'three'/g, "from " + JSON.stringify(threeUrl));
-    const utilsUrl = mod(three(utils));
-    const L = await import(mod(three(loader).replace(/from\s+'\.\.\/utils\/BufferGeometryUtils\.js'/, "from " + JSON.stringify(utilsUrl))));
-    const S = await import(mod(three(skel)));
-    const gltf = await new Promise((ok, bad) => new L.GLTFLoader().parse(glb, "", ok, bad));
+    if (!rigModules) rigModules = (async () => {
+      const [utils, loader, skel] = await Promise.all([get("BufferGeometryUtils.js"), get("GLTFLoader.js"), get("SkeletonUtils.js")]);
+      const mod = (src) => URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
+      const three = (src) => src.replace(/from\s+'three'/g, "from " + JSON.stringify(threeUrl));
+      const utilsUrl = mod(three(utils));
+      const L = await import(mod(three(loader).replace(/from\s+'\.\.\/utils\/BufferGeometryUtils\.js'/, "from " + JSON.stringify(utilsUrl))));
+      const S = await import(mod(three(skel)));
+      return { GLTFLoader: L.GLTFLoader, clone: S.clone };
+    })();
+    let M;
+    try { M = await rigModules; } catch (e) { rigModules = null; throw e; }
+    const glb = await get(file, true);
+    const gltf = await new Promise((ok, bad) => new M.GLTFLoader().parse(glb, "", ok, bad));
     const meta = gltf.parser.json.extras && gltf.parser.json.extras.hoopsim;
-    if (!meta || !meta.clips || !gltf.animations.length) throw new Error("player.glb has no clips");
-    return { gltf, meta, clone: S.clone };
+    if (!meta || !meta.clips || !gltf.animations.length) throw new Error(file + " has no clips");
+    return { gltf, meta, clone: M.clone };
   }
 
   // Each player's look in 3D: hair (style and colour), beard, headband, arm and leg sleeves,
@@ -926,6 +936,14 @@ window.GAME = /*GAME_DATA*/null;
       leg: has("leg") ? L.leg : roll("leg") < 0.18 ? (roll("lb") < 0.35 ? "both" : side("ls")) : null,
       wrist: has("wrist") ? L.wrist : roll("wrist") < 0.3 ? (roll("wb") < 0.3 ? "both" : side("ws")) : null,
       gear: has("gear") ? L.gear : ["black", "white", "team"][mix(hash(pl.name + "gc")) % 3],
+      // face: how far toward each of the model's three face shapes (the model itself is their even mix)
+      face: has("face") ? L.face : (() => {
+        const lean = tone === 0 || tone === 3 || tone === 5 ? [70, 15, 15] : light ? [10, 35, 55] : [35, 30, 35];
+        const first = +weighted([[0, lean[0]], [1, lean[1]], [2, lean[2]]], roll("face")), f = [0, 0, 0];
+        f[first] = 0.45 + 0.55 * roll("fa");
+        f[(first + 1 + (mix(hash(pl.name + "fo")) % 2)) % 3] = 0.3 * roll("fb");
+        return f;
+      })(),
       shoes: has("shoes") ? L.shoes : weighted([["black", 34], ["white", 34], ["team", 20], ["#b0b4bb", 6], ["#c8372d", 6]], roll("shoes")),
     };
   }
@@ -947,7 +965,7 @@ window.GAME = /*GAME_DATA*/null;
     layup: ["layup", "release", 0, { face: "rim", reach: 9.2 }],
     floater: ["floater", "release", 0, { face: "rim" }],
     hook: ["layup", "release", 0, { face: "rim", yaw: 1.25, reach: 8.8 }],
-    dunk: ["rebound", "release", 0.2, { face: "rim", reach: 10.6, ball: "both" }],
+    dunk: ["dunk", "release", 0.2, { face: "rim", reach: 10.6 }],
     alley_oop: ["rebound", "release", 0.2, { face: "rim", reach: 10.6 }],
     contest: ["contest", "release", 0.2, { face: "other" }],
     block: ["block", "release", 0.1, { face: "other", reach: "ball" }],
@@ -971,6 +989,7 @@ window.GAME = /*GAME_DATA*/null;
     const slideTo = { 1: CL.slide.side > 0 ? "slide" : "slide_m", [-1]: CL.slide.side > 0 ? "slide_m" : "slide" };
     const kit = new THREE.MeshLambertMaterial({ vertexColors: true });
     const v1 = new THREE.Vector3(), v2 = new THREE.Vector3(), v3 = new THREE.Vector3(), v4 = new THREE.Vector3();
+    const q1 = new THREE.Quaternion(), AXIS_Z = new THREE.Vector3(0, 0, 1);
 
     function attach(fg, pl, H, skin) {
       const model = rig.clone(rig.gltf.scene), body = rig.meta.body, ph = fg.build;
@@ -991,12 +1010,16 @@ window.GAME = /*GAME_DATA*/null;
         else if (nm === "beard") { o.visible = lk.beard; o.material = env.tint(lk.hairColor, pl.side); }
         else if (nm === "headband") { o.visible = !!lk.band; o.material = env.tint(lk.band || "white", pl.side); }
         else if (nm === "shoes") o.material = env.tint(lk.shoes, pl.side);
+        else if (nm === "socks") o.material = env.tint("white", pl.side);
         else if (part[0] === "sleeve" || part[0] === "leg" || part[0] === "wrist") {
           o.visible = on(lk[part[0]], part[1]); o.material = env.tint(lk.gear, pl.side);
         } else o.visible = false;
         o.castShadow = env.shadows; o.frustumCulled = false;
         // his weight: the model's "bulk" shape, more of it (or less than none) for his frame
-        if (body && ph && o.morphTargetInfluences && o.morphTargetInfluences.length) o.morphTargetInfluences[0] = Math.max(-0.8, Math.min(1, (ph.girth - 1) / (body.bulk_girth - 1)));
+        const shapes = o.morphTargetDictionary, set = (name, v) => { if (shapes && shapes[name] !== undefined) o.morphTargetInfluences[shapes[name]] = v; };
+        if (body && ph) set("bulk", Math.max(-0.8, Math.min(1, (ph.girth - 1) / (body.bulk_girth - 1))));
+        // his face: toward one of the model's face shapes (the light model has none)
+        if (Array.isArray(lk.face)) ["face_a", "face_b", "face_c"].forEach((name, k) => set(name, Math.max(0, Math.min(1, +lk.face[k] || 0))));
       });
       // his wingspan: arms a little longer or shorter than the model's
       if (body && ph) {
@@ -1006,7 +1029,8 @@ window.GAME = /*GAME_DATA*/null;
       fg.body.add(model);
       fg.rig = { model, jersey, bones, mixer: new THREE.AnimationMixer(model), acts: {}, w: {}, k: H / H0,
                  phase: (hash(fg.key || pl.name) % 100) / 100, free: hash(pl.name) % 7, carry: [], active: [],
-                 ax: 0, az: 0, anchored: false, hand: new THREE.Vector3(), grip: 0 };
+                 ax: 0, az: 0, anchored: false, hand: new THREE.Vector3(), grip: 0, armRest: {} };
+      for (const sd of ["Left", "Right"]) if (bones[sd + "ForeArm"]) fg.rig.armRest[sd] = bones[sd + "ForeArm"].position.clone().normalize();
       return fg.rig;
     }
     function action(r, name) {
@@ -1071,13 +1095,13 @@ window.GAME = /*GAME_DATA*/null;
         const cx = 6 + 2 * pl, vel = (i) => [(fr[i + 2][cx] - fr[i - 2][cx]) / (40 * dt), (fr[i + 2][cx + 1] - fr[i - 2][cx + 1]) / (40 * dt)];
         for (let i = 5; i < n - 6; i++) {
           const a = vel(i - 3), b = vel(i + 3), sa = Math.hypot(a[0], a[1]), sb = Math.hypot(b[0], b[1]);
-          if (sa < 11) continue;
+          if (sa < 13) continue;                                    // (a sprint, not a jog)
           const turn = Math.acos(Math.max(-1, Math.min(1, (a[0] * b[0] + a[1] * b[1]) / (sa * sb || 1))));
-          if (!(sb < 0.45 * sa || (turn > 1.7 && sb > 5))) continue;
+          if (!(sb < 0.35 * sa || (turn > 1.9 && sb > 6))) continue;
           const t = i * dt;
           if (!by[pl].some((c) => !c.pose && t > c.t0 - 0.5 && t < c.t0 + c.dur + 0.3))
-            by[pl].push({ clip: a[0] * b[1] - a[1] * b[0] > 0 ? "plant" : "plant_m", t0: t - 0.3, ofs: P - 0.3, dur: 0.7, w: 0.8, yaw: 0, reach: 0, plant: true });
-          i += 14;
+            by[pl].push({ clip: a[0] * b[1] - a[1] * b[0] > 0 ? "plant" : "plant_m", t0: t - 0.3, ofs: P - 0.3, dur: 0.7, w: 0.65, yaw: 0, reach: 0, plant: true });
+          i += 30;                                                  // (then not again for three seconds)
         }
         by[pl].sort((a, b) => a.t0 - b.t0);
       }
@@ -1185,6 +1209,17 @@ window.GAME = /*GAME_DATA*/null;
       }
       for (const name in W) { const a = action(r, name); a.enabled = true; a.weight = W[name]; a.time = T[name]; }
       r.mixer.update(0);
+      // The mocap has no collarbone movement, so a raised arm pinched the shoulder. Lift the
+      // collarbone with the arm (up to about 30 degrees) and turn the arm back by as much,
+      // so the arm itself points exactly where the clip put it.
+      for (const [sd, sign] of [["Left", 1], ["Right", -1]]) {
+        const sh = r.bones[sd + "Shoulder"], arm = r.bones[sd + "Arm"], rest = r.armRest[sd];
+        if (!sh || !arm || !rest) continue;
+        const up = v1.copy(rest).applyQuaternion(arm.quaternion).y;       // how far above level the arm points
+        const angle = sign * Math.min(0.55, 0.5 * Math.max(0, Math.asin(Math.max(-1, Math.min(1, up)))));
+        sh.quaternion.setFromAxisAngle(AXIS_Z, angle);
+        arm.quaternion.premultiply(q1.copy(sh.quaternion).invert());
+      }
       r.model.position.y = lift;
       r.ballCue = ballCue; r.dribbling = dribbling && !ballCue;
       // a dunk in progress: the ball stays in his hands to the rim, then drops through the net
@@ -1207,23 +1242,23 @@ window.GAME = /*GAME_DATA*/null;
         for (const nm of ["dribble_idle", "dribble_walk", "dribble_run"]) if ((r.w[nm] || 0) > bw) { bw = r.w[nm] || 0; best = nm; }
         const m = CL[best].dribble, d = CL[best].duration, t = r.acts[best] ? r.acts[best].time : 0;
         palm(m.hand === "L" ? "Left" : "Right", out);
-        out.y -= 0.5;
+        out.y -= BALL_R + 0.04;                                   // under the palm
         for (const [rel, back] of m.bounces) {
           const span = ((back - rel) % d + d) % d, u = (((t - rel) % d + d) % d) / span;
-          if (u >= 0 && u < 1) { out.y = 0.6 + Math.max(0, out.y - 0.6) * Math.pow(Math.abs(1 - 2 * u), 0.75); break; }
+          if (u >= 0 && u < 1) { out.y = BALL_R + Math.max(0, out.y - BALL_R) * Math.pow(Math.abs(1 - 2 * u), 0.75); break; }
         }
-        out.y = Math.max(0.6, out.y);
+        out.y = Math.max(BALL_R, out.y);
         return out;
       }
       const mode = r.ballCue ? r.ballCue.ball : "both";
       palm("Right", out);
-      if (mode === "both") { palm("Left", v3); out.add(v3).multiplyScalar(0.5); out.y += 0.2; }
-      else out.y += 0.35;
+      if (mode === "both") { palm("Left", v3); out.add(v3).multiplyScalar(0.5); out.y += 0.1; }
+      else out.y += BALL_R * 0.8;                                 // on the one hand
       return out;
     }
     // is the shot released at this frame a dunk (so: no arc to trail)?
     const dunkAt = (p, f) => cues(p).some((l) => l.some((c) => c.slam && Math.abs(c.slam - 0.32 - f * env.dt) < 0.3));
-    return { attach, update, ballInHand, cues, reset, carryOver, dunkAt, clips: CL, names: Object.keys(clips) };
+    return { attach, update, ballInHand, cues, reset, carryOver, dunkAt, detail: rig.meta.detail || "full", clips: CL, names: Object.keys(clips) };
   }
 
   // ---- the arena round the 3D court: stands, crowd, benches, boards, roof. Built the first
@@ -1866,9 +1901,9 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     ring.position.y = 0.03; ring.renderOrder = 1;
     scene.add(ring);
 
-    // the ball (a touch over size so it reads from the sideline) and its shadow
+    // the ball (true size) and its shadow
     const ballMat = new THREE.MeshLambertMaterial();
-    const ball = new THREE.Mesh(new THREE.SphereGeometry(0.6, 16, 12), ballMat);
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(BALL_R, 20, 14), ballMat);
     ball.castShadow = true;
     scene.add(ball);
     const blob = document.createElement("canvas"); blob.width = blob.height = 64;
@@ -2129,7 +2164,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
         const u = rel + (to - rel) * k / (n - 1);
         const [x, y] = toCourt(p, spline(fr, u, 2)[0], spline(fr, u, 3)[0]);
         const [wx, wz] = toWorld(x, y);
-        c[k * 3] = wx; c[k * 3 + 1] = Math.max(0.6, spline(fr, u, 4)[0]); c[k * 3 + 2] = wz;
+        c[k * 3] = wx; c[k * 3 + 1] = Math.max(BALL_R, spline(fr, u, 4)[0]); c[k * 3 + 2] = wz;
       }
       // a camera-facing ribbon: each sample pushed out sideways, thin at the tail; the
       // unused samples sit on the last one
@@ -2138,7 +2173,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
         tt.set(c[b * 3] - c[a * 3], c[b * 3 + 1] - c[a * 3 + 1], c[b * 3 + 2] - c[a * 3 + 2]);
         tv.set(camPos.x - c[m * 3], camPos.y - c[m * 3 + 1], camPos.z - c[m * 3 + 2]);
         ts.crossVectors(tt, tv);
-        const len = ts.length() || 1, w = 0.08 + 0.26 * (m / (n - 1));
+        const len = ts.length() || 1, w = (0.08 + 0.26 * (m / (n - 1))) * BALL_R / 0.6;
         ts.multiplyScalar(w / len);
         const x0 = c[m * 3], y0 = c[m * 3 + 1], z0 = c[m * 3 + 2];
         trailPos[k * 6] = x0 - ts.x; trailPos[k * 6 + 1] = y0 - ts.y; trailPos[k * 6 + 2] = z0 - ts.z;
@@ -2164,8 +2199,12 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     let animP = null, over = 0, grip = 0, slowT = 0, slowN = 0;
     const gripPos = new THREE.Vector3();
     function setRig(rig) {
+      for (const key in figures) {                    // (players already on the floor are rebuilt from the new model)
+        const fg = figures[key];
+        if (fg.rig) { fg.body.remove(fg.rig.model); fg.rig.jersey.map.dispose(); fg.rig.jersey.dispose(); fg.rig = null; }
+      }
       anim = createAnimator(THREE, rig, { dt, jerseyTexture, teamMat, tint, shadows: !small, flights });
-      dirty = 3;
+      animP = null; dirty = 3;
     }
     // "animated" needs the rig; auto: drop to simple bodies if this device can't keep up
     function setBodies(mode, auto, slow) {
@@ -2196,7 +2235,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       if (useRig && live) {
         dirty = 3;
         slowT += dtReal; slowN++;
-        if (bodyAuto && slowN >= 120) {                // two seconds or so: under ~18 frames a second is too slow
+        if (bodyAuto && slowT >= 3) {                  // every three seconds: under ~18 frames a second is too slow
           if (slowT / slowN > 0.055 && onSlow) { const f = onSlow; onSlow = null; setTimeout(f, 0); }
           slowT = slowN = 0;
         }
@@ -2287,7 +2326,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
         const [hx, hz] = toWorld(st.holder.x, st.holder.y);
         bX += holderFig.x - hx; bZ += holderFig.z - hz;
         if (!useRig && Math.hypot(st.holder.vx, st.holder.vy) > 4 && bY <= 3.6)
-          bY = 0.6 + (bY - 0.6) * Math.abs(Math.cos(st.time * Math.PI / 0.55));
+          bY = BALL_R + (bY - BALL_R) * Math.abs(Math.cos(st.time * Math.PI / 0.55));
         ring.visible = true; ring.position.x = holderFig.x; ring.position.z = holderFig.z;
       } else ring.visible = false;
       // animated: the ball sits in his hands (and bounces under one on the dribble); once it
@@ -2297,7 +2336,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       if (slamFig) {
         const c = slamFig.rig.slam, after = st.at - c.slam;
         if (after < 0) anim.ballInHand(slamFig, gripPos);
-        else gripPos.set(rimX, Math.max(0.6, 9.7 - 16 * after * after), 0);      // through the net and down
+        else gripPos.set(rimX, Math.max(BALL_R, 9.7 - 16 * after * after), 0);   // through the net and down
         grip = 1; ring.visible = false;
       } else if (useRig && holderFig) { anim.ballInHand(holderFig, gripPos); grip = snap ? 1 : grip + (1 - grip) * (1 - Math.exp(-dtg / 0.05)); }
       else grip = snap || !useRig ? 0 : Math.max(0, grip - dtg / 0.16);
@@ -2306,10 +2345,10 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
         bX = lerp(bX, gripPos.x, g); bY = lerp(bY, gripPos.y, g); bZ = lerp(bZ, gripPos.z, g);
         if (grip < 1 && !holderFig) dirty = Math.max(dirty, 1);
       }
-      bY = Math.max(0.6, bY);
+      bY = Math.max(BALL_R, bY);
       ball.position.set(bX, bY, bZ);
       ball.rotation.x += dtg * 6; ball.rotation.z += dtg * 2;
-      const sh = 1.1 + bY * 0.06;
+      const sh = (1.1 + bY * 0.06) * BALL_R / 0.6;
       shadow.position.x = bX; shadow.position.z = bZ;
       shadow.scale.set(sh, 1, sh);
       shadow.material.opacity = Math.max(0.25, 1 - bY / 22);
@@ -2337,7 +2376,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     function setPreset(name) { preset = name; baseSide = 0; resetUser(); }
     function setLabels(mode) { labelMode = mode; dirty = 3; }
     return { setFrame, render, resize, setPreset, setLabels, setArena, setRig, setBodies, renderer, camera, scene,
-             bodies: () => ({ mode: bodyMode, rig: !!anim, auto: bodyAuto, clips: anim ? anim.names : [],
+             bodies: () => ({ mode: bodyMode, rig: !!anim, detail: anim ? anim.detail : null, auto: bodyAuto, clips: anim ? anim.names : [],
                               players: st ? st.players.map((q) => { const fg = figures[q.key], r = fg && fg.rig;
                                 return { key: q.key, n: q.n, off: q.off, sp: +(q.sp || 0).toFixed(1), animated: !!(r && r.model.visible),
                                          name: q.pl.name, look: fg.look, feet: +fg.H.toFixed(2), girth: +fg.build.girth.toFixed(2), reach: +fg.build.reach.toFixed(3),
@@ -2384,13 +2423,12 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     view3d.setPreset(camPreset);
     view3d.setArena(arenaQ);
     view3d.setLabels(labelMode);
-    if (bodyPref === "auto") autoSimple = readAutoSimple();     // the renderer is known now
-    if (rigData) view3d.setRig(rigData);
-    applyBodies();
+    if (bodyPref === "auto") restoreAuto();          // the renderer is known now
+    rigShown = null; applyBodies();                 // (a model already loaded comes straight back)
     if (DEBUG) {
       window.hoopsim3D = view3d;
-      view3d.bodyPref = () => ({ pref: bodyPref, autoSimple, device: deviceSig() });
-      view3d.fallBack = fallBackToSimple;        // as if the device had been too slow
+      view3d.bodyPref = () => ({ pref: bodyPref, autoSimple, autoLevel, device: deviceSig() });
+      view3d.fallBack = stepDown;                // as if the device had been too slow
       view3d.seek = (n, time, play = false) => { goTo(n); t = Math.min(time, duration(P[poss])); setPlaying(play); drawFrame(); };
       view3d.time = () => ({ poss, t });
     }
@@ -2399,16 +2437,23 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     });
   }
   // Players in 3D: Animated (the rigged model and its clips, fetched the first time 3D is
-  // shown) or Simple (the low-poly bodies: also what you get if the files don't load, on
-  // a device that can't keep up, and in pages exported without them). A choice made by
-  // hand (the switch or B) is remembered for good. Falling back on a slow device by itself
-  // is remembered for a week, and only while the device looks the same (its graphics
-  // renderer and screen); after that, animated players are tried again.
+  // shown), Light (the same player with far fewer triangles) or Simple (the low-poly bodies:
+  // also what you get if the files don't load and in pages exported without them). Left to
+  // itself the viewer starts phones on Light and steps down a level when the device can't
+  // keep up. A choice made by hand (the switch or B) is remembered for good. A step down
+  // made by itself is remembered for a week, and only while the device looks the same (its
+  // graphics renderer and screen); after that, the fuller players are tried again.
   const AUTO_SIMPLE_KEY = "hoopsim-bodies-auto", AUTO_SIMPLE_DAYS = 7;
-  let bodyPref = "auto", autoSimple = false, rigData = null, rigState = BODY_CFG ? "idle" : "none";
+  const PHONE = window.matchMedia("(max-width: 700px), (pointer: coarse)").matches;
+  const RIG_FILES = { full: "player.glb", light: "player_light.glb" };
+  const rigs = { full: { state: BODY_CFG ? "idle" : "none", data: null }, light: { state: HAS_LIGHT ? "idle" : "none", data: null } };
+  const START_LEVEL = PHONE && HAS_LIGHT ? "light" : "full";
+  let bodyPref = "auto", autoLevel = START_LEVEL, autoSimple = false, rigShown = null;
   try { bodyPref = localStorage.getItem("hoopsim-bodies") || "auto"; } catch (e) {}
-  if (!["auto", "animated", "simple"].includes(bodyPref)) bodyPref = "auto";
+  if (!["auto", "animated", "light", "simple"].includes(bodyPref)) bodyPref = "auto";
   const wantsSimple = () => bodyPref === "simple" || (bodyPref === "auto" && autoSimple);
+  const wantLevel = () => (wantsSimple() ? "simple" : bodyPref === "animated" ? "full" :
+                           bodyPref === "light" ? (HAS_LIGHT ? "light" : "full") : autoLevel);
   function deviceSig() {
     // what makes the device "the same one": its WebGL renderer and its screen (either way up)
     let gl = "";
@@ -2424,47 +2469,70 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     } catch (e) {}
     return { gl, screen: scr };
   }
-  function readAutoSimple() {
-    // true while a recent automatic fallback was made on this same device
+  function readAutoFallback() {
+    // the level a recent automatic step down on this same device reached: "light", "simple" or null
     let rec = null;
     try { rec = JSON.parse(localStorage.getItem(AUTO_SIMPLE_KEY) || "null"); } catch (e) { rec = null; }
-    if (!rec || typeof rec !== "object") return false;
+    if (!rec || typeof rec !== "object") return null;
     const age = Date.now() - rec.at, sig = deviceSig();
     const ok = Number.isFinite(age) && age >= 0 && age < AUTO_SIMPLE_DAYS * 864e5 && rec.gl === sig.gl && rec.screen === sig.screen;
     if (!ok) { try { localStorage.removeItem(AUTO_SIMPLE_KEY); } catch (e) {} }
-    return ok;
+    return !ok ? null : rec.level === "light" ? "light" : "simple";       // (a record from before Light: simple)
+  }
+  function restoreAuto() {
+    const lv = readAutoFallback();
+    autoSimple = lv === "simple";
+    if (lv === "light" && HAS_LIGHT) autoLevel = "light";
+  }
+  function rememberFallback(level) {
+    try { localStorage.setItem(AUTO_SIMPLE_KEY, JSON.stringify({ at: Date.now(), level, ...deviceSig() })); } catch (e) {}
   }
   function fallBackToSimple() {
     autoSimple = true;
-    try { localStorage.setItem(AUTO_SIMPLE_KEY, JSON.stringify({ at: Date.now(), ...deviceSig() })); } catch (e) {}
+    rememberFallback("simple");
     applyBodies();
     setText("viewMsg", "Animated players were slow here: switched to simple bodies.");
   }
+  // The device couldn't keep up: a level down, Animated to Light to Simple.
+  function stepDown() {
+    if (wantLevel() !== "full" || !HAS_LIGHT) return fallBackToSimple();
+    autoLevel = "light";
+    rememberFallback("light");
+    loadBodies().then(() => setText("viewMsg", "Animated players were slow here: switched to the light model."));
+  }
   function applyBodies() {
-    const on = !wantsSimple() && rigState === "ready";
-    $("bodyAnim").checked = !wantsSimple() && rigState !== "failed"; $("bodySimple").checked = !$("bodyAnim").checked;
-    if (view3d) view3d.setBodies(on ? "animated" : "simple", bodyPref === "auto" && !autoSimple, fallBackToSimple);
+    let lv = wantLevel();
+    if (lv !== "simple" && rigs[lv].state !== "ready") lv = "simple";       // not here (yet): simple bodies meanwhile
+    const failed = rigs.full.state === "failed";
+    $("bodyAnim").checked = lv === "full" || (!failed && wantLevel() === "full");
+    $("bodyLight").checked = !$("bodyAnim").checked && (lv === "light" || (rigs.light.state !== "failed" && wantLevel() === "light"));
+    $("bodySimple").checked = !$("bodyAnim").checked && !$("bodyLight").checked;
+    $("bodyLight").hidden = $("bodyLight").nextElementSibling.hidden = !HAS_LIGHT;
+    if (!view3d) return;
+    if (lv !== "simple" && rigShown !== lv) { view3d.setRig(rigs[lv].data); rigShown = lv; }
+    view3d.setBodies(lv === "simple" ? "simple" : "animated", bodyPref === "auto" && !autoSimple, stepDown);
   }
   function setBodyPref(v) {
-    // a choice by hand: kept for good, and it replaces any automatic fallback
-    bodyPref = v; autoSimple = false;
+    // a choice by hand: kept for good, and it replaces any automatic step down
+    bodyPref = v; autoSimple = false; autoLevel = START_LEVEL;
     try { localStorage.setItem("hoopsim-bodies", v); localStorage.removeItem(AUTO_SIMPLE_KEY); } catch (e) {}
-    if (!wantsSimple() && rigState === "idle") loadBodies(); else applyBodies();
+    loadBodies();
   }
+  // Bring up the model the current choice needs (if it isn't here yet), then show it.
   async function loadBodies() {
-    if (rigState !== "idle" || !view3d) return;
-    rigState = "loading";
+    const lv = wantLevel(), r = lv === "simple" ? null : rigs[lv];
+    if (!r || r.state !== "idle" || !view3d) return applyBodies();
+    r.state = "loading";
     setText("viewMsg", "Loading players…");
     try {
-      rigData = await loadPlayerRig(threeUrl);
-      rigState = "ready";
-      if (view3d) view3d.setRig(rigData);
+      r.data = await loadPlayerRig(threeUrl, RIG_FILES[lv]);
+      r.state = "ready";
       setText("viewMsg", "");
     } catch (e) {
       console.warn("Animated players:", e);
-      rigState = "failed";
-      $("bodyAnim").disabled = true;
-      $("bodyAnim").nextElementSibling.title = "Animated players could not be loaded";
+      r.state = "failed";
+      $(lv === "light" ? "bodyLight" : "bodyAnim").disabled = true;
+      $(lv === "light" ? "bodyLight" : "bodyAnim").nextElementSibling.title = "These players could not be loaded";
       setText("viewMsg", "Animated players unavailable: using simple bodies.");
     }
     applyBodies();
@@ -2484,7 +2552,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       catch (e) { console.warn("3D view:", e); no3D(NO_GL); mode = "2d"; }
       viewBusy = false;
     }
-    if (mode === "3d" && !wantsSimple() && rigState === "idle") loadBodies();
+    if (mode === "3d" && BODY_CFG && !wantsSimple()) loadBodies();
     viewMode = mode;
     $("v2d").checked = mode === "2d"; $("v3d").checked = mode === "3d";
     canvas.hidden = mode === "3d";
@@ -2530,7 +2598,11 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       if (k >= "1" && k <= "4") setCam(CAMS[+k - 1]);
       else if (k === "c") setCam(CAMS[(CAMS.indexOf(camPreset) + 1) % CAMS.length]);
       else if (k === "l") setLabels(LABELS[(LABELS.indexOf(labelMode) + 1) % LABELS.length]);
-      else if (k === "b" && BODY_CFG && rigState !== "failed") setBodyPref($("bodyAnim").checked ? "simple" : "animated");
+      else if (k === "b" && BODY_CFG) {                 // Animated -> Light -> Simple -> Animated
+        const order = ["animated"].concat(HAS_LIGHT ? ["light"] : [], ["simple"]).filter((v) => !$(v === "animated" ? "bodyAnim" : v === "light" ? "bodyLight" : "bodySimple").disabled);
+        const now = $("bodyAnim").checked ? "animated" : $("bodyLight").checked ? "light" : "simple";
+        setBodyPref(order[(order.indexOf(now) + 1) % order.length]);
+      }
     });
     document.querySelectorAll('input[name="bodies"]').forEach((el) =>
       el.addEventListener("change", () => { if (el.checked) setBodyPref(el.value); }));

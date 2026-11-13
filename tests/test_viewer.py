@@ -140,15 +140,17 @@ class AnimatedPlayersTests(unittest.TestCase):
 
     def test_control_remembered_and_shortcut(self):
         page = build_html(self.data)
-        for needle in ('id="bodySeg"', 'id="bodyAnim" value="animated" checked', 'id="bodySimple" value="simple"'):
+        for needle in ('id="bodySeg"', 'id="bodyAnim" value="animated" checked', 'id="bodyLight" value="light"',
+                       'id="bodySimple" value="simple"'):
             self.assertEqual(page.count(needle), 1, needle)
-        self.assertEqual(page.count('type="radio" name="bodies"'), 2)
+        self.assertEqual(page.count('type="radio" name="bodies"'), 3)   # Animated | Light | Simple
         self.assertIn('<div class="seg" id="bodySeg" role="radiogroup" aria-label="Players" hidden>', page)
         lines = [ln for ln in page.splitlines() if "localStorage" in ln and "hoopsim-bodies" in ln]
-        self.assertEqual(len(lines), 2)                            # read once, written once
+        self.assertEqual(len(lines), 2)                            # read once, written once (by hand)
         for ln in lines:
             self.assertIn("try", ln)                               # storage can throw
-        self.assertIn('else if (k === "b" && BODY_CFG', page)      # B switches, only when there is a choice
+        self.assertIn('else if (k === "b" && BODY_CFG) {', page)    # B steps through them, only when there is a choice
+        self.assertIn('rememberFallback("light");', page)          # a step down made by itself is remembered too
         # the control only shows in 3D, and only when the page was given the files
         self.assertIn('$("bodySeg").hidden = mode !== "3d" || !BODY_CFG;', page)
 
@@ -170,15 +172,20 @@ class AnimatedPlayersTests(unittest.TestCase):
         self.assertNotIn("class GLTFLoader", page)
         self.assertEqual(json.loads(player_block(build_html(self.data, animation="/x")))["url"], "/x/")
         # fetched from the 3D switch only: no load at start-up, none from the 2D path
-        self.assertEqual(page.count("loadPlayerRig(threeUrl)"), 2)   # definition + the one call, in loadBodies
-        self.assertEqual(page.count("loadBodies();"), 2)           # on first showing 3D, and on picking Animated
-        self.assertIn('if (mode === "3d" && !wantsSimple() && rigState === "idle") loadBodies();', page)
+        self.assertEqual(page.count("loadPlayerRig(threeUrl"), 2)    # definition + the one call, in loadBodies
+        self.assertEqual(page.count("loadBodies();"), 2)           # on first showing 3D, and on picking a level
+        self.assertIn('if (mode === "3d" && BODY_CFG && !wantsSimple()) loadBodies();', page)
+        # only the model the level needs is fetched, and the loader modules once
+        self.assertIn('const RIG_FILES = { full: "player.glb", light: "player_light.glb" };', page)
+        self.assertIn("r.data = await loadPlayerRig(threeUrl, RIG_FILES[lv]);", page)
+        self.assertEqual(page.count("if (!rigModules) rigModules = (async () => {"), 1)
 
     def test_embed_option_carries_the_files(self):
         plain = build_html(self.data)
         page = build_html(self.data, animation="embed")
         files = json.loads(player_block(page))["embed"]
-        self.assertEqual(sorted(files), sorted(PLAYER_ASSETS))
+        self.assertEqual(sorted(files), sorted(n for n in PLAYER_ASSETS if n != "player_light.glb"))   # the full model only
+        self.assertIn('typeof BODY_CFG.embed["player_light.glb"] === "string"', page)                   # so no Light there
         self.assertEqual(base64.b64decode(files["player.glb"]), PLAYER_ASSETS["player.glb"].read_bytes())
         self.assertEqual(files["GLTFLoader.js"], PLAYER_ASSETS["GLTFLoader.js"].read_text(encoding="utf-8"))
         self.assertNotIn("</script", player_block(page))
@@ -203,7 +210,7 @@ class AnimatedPlayersTests(unittest.TestCase):
         self.assertEqual(sorted(a["name"] for a in doc["animations"]), sorted(clips))
         for name in ("idle", "stance", "walk", "jog", "sprint", "backpedal", "slide", "slide_m", "dribble_idle",
                      "dribble_walk", "dribble_run", "jumper", "free_throw", "layup", "floater", "pass", "lob_pass",
-                     "catch", "contest", "block", "rebound", "steal", "plant", "plant_m", "fall", "screen"):
+                     "catch", "contest", "block", "rebound", "dunk", "steal", "plant", "plant_m", "fall", "screen"):
             self.assertIn(name, clips)
             self.assertGreater(clips[name]["duration"], 0.3, name)
             self.assertTrue(clips[name]["src"], name)              # every clip names its mocap source
@@ -212,7 +219,7 @@ class AnimatedPlayersTests(unittest.TestCase):
         self.assertLess(clips["walk"]["speed"], clips["jog"]["speed"])
         self.assertLess(clips["jog"]["speed"], clips["sprint"]["speed"])
         self.assertEqual(clips["slide"]["side"], -clips["slide_m"]["side"])
-        for name in ("jumper", "free_throw", "layup", "floater", "rebound", "block"):
+        for name in ("jumper", "free_throw", "layup", "floater", "rebound", "block", "dunk"):
             m = clips[name]["marks"]
             self.assertLess(m["gather"], m["release"], name)
             self.assertLess(m["release"], m["land"], name)
@@ -223,8 +230,14 @@ class AnimatedPlayersTests(unittest.TestCase):
         """Height, weight and wingspan shape each player: one mesh, a "bulk" shape and arm length."""
         doc = read_glb(PLAYER_ASSETS["player.glb"])[4]
         mesh = doc["meshes"][0]
-        self.assertEqual(mesh["extras"]["targetNames"], ["bulk"])
-        self.assertEqual(mesh["weights"], [0.0])                   # as designed until the viewer sets it
+        self.assertEqual(mesh["extras"]["targetNames"], ["bulk", "face_a", "face_b", "face_c"])
+        self.assertEqual(mesh["weights"], [0.0] * 4)               # as designed until the viewer sets them
+        for prim in mesh["primitives"]:
+            for k, target in enumerate(prim["targets"]):
+                acc = doc["accessors"][target["POSITION"]]
+                self.assertEqual("sparse" in acc, k > 0)           # faces move the head only: stored sparsely
+                if k > 0:
+                    self.assertLess(acc["sparse"]["count"], acc["count"] // 2)
         for prim in mesh["primitives"]:
             self.assertEqual(list(prim["targets"][0]), ["POSITION"])
         body = doc["extras"]["hoopsim"]["body"]
@@ -236,7 +249,8 @@ class AnimatedPlayersTests(unittest.TestCase):
         self.assertIn("const ht = pl.ht > 0 ? pl.ht : b[0]", src)
         self.assertIn("const wt = pl.wt > 0 ? pl.wt : b[1]", src)
         self.assertIn("const ws = pl.ws > 0 ? pl.ws : ht", src)
-        self.assertIn("o.morphTargetInfluences[0] = Math.max(-0.8, Math.min(1, (ph.girth - 1) / (body.bulk_girth - 1)));", src)
+        self.assertIn('if (body && ph) set("bulk", Math.max(-0.8, Math.min(1, (ph.girth - 1) / (body.bulk_girth - 1))));', src)
+        self.assertIn('["face_a", "face_b", "face_c"].forEach((name, k) => set(name,', src)
         self.assertIn('bones[sd + "Arm"].scale.setScalar(arm);', src)
         self.assertIn("function skinOf(pl)", src)                  # a stored skin tone wins over the name's
         # exported pages carry no builds: nothing to look players up in
@@ -255,6 +269,12 @@ class AnimatedPlayersTests(unittest.TestCase):
             return struct.unpack(f"<{acc['count'] * width}{fmt}", blob[start:start + acc["count"] * width * struct.calcsize(fmt)])
         idx = sorted(set(read(prim["indices"], "H", 1)))
         self.assertGreater(len(idx), 600)                          # the body's own detail, not a tube of rings
+        # its outline is cut along a smooth curve: points on it lie between the body's vertices,
+        # so they carry blended skin weights that no body vertex has
+        builder = (TEMPLATE.parent.parent.parent / "tools" / "build_player_assets.py").read_text(encoding="utf-8")
+        self.assertIn("self.shirt_patch = self.cut(f)", builder)
+        self.assertIn("self.shorts_patch = self.cut(self.shorts_f)", builder)   # the shorts are cut the same way
+        self.assertIn("if (f[a] > 0) != (f[b] > 0): poly.append(pv(a, b))", builder)
         uv = read(prim["attributes"]["TEXCOORD_0"], "f", 2)
         us = [uv[2 * i] for i in idx]; vs = [uv[2 * i + 1] for i in idx]
         self.assertLess(min(us), 0.05)
@@ -262,6 +282,31 @@ class AnimatedPlayersTests(unittest.TestCase):
         self.assertGreaterEqual(min(vs), -0.05)
         self.assertLessEqual(max(vs), 1.0001)
         self.assertIn("tx.wrapS = THREE.RepeatWrapping;", self.template)
+
+    def test_ball_is_true_size(self):
+        src = self.template
+        radius = float(src.split("const BALL_R = ", 1)[1].split(";", 1)[0])
+        self.assertAlmostEqual(radius * 2 * 12, 9.4, delta=0.2)     # inches across: a size 7 ball
+        self.assertIn("new THREE.SphereGeometry(BALL_R, 20, 14)", src)
+        view = src.split("function createView3D(", 1)[1]
+        self.assertNotIn("Math.max(0.6, ", view.split("// ---- camera", 1)[0].split("// the ball (true size)", 1)[1])
+        self.assertIn("bY = Math.max(BALL_R, bY);", view)          # it rests on the floor at its own radius
+
+    def test_light_model(self):
+        """The same player with far fewer triangles: same skeleton, clips and parts."""
+        full, light = (read_glb(PLAYER_ASSETS[n])[4] for n in ("player.glb", "player_light.glb"))
+        count = lambda d: sum(d["accessors"][p["indices"]]["count"] // 3 for p in d["meshes"][0]["primitives"])
+        self.assertLess(count(light), count(full) * 0.5)
+        self.assertEqual(light["extras"]["hoopsim"]["detail"], "light")
+        self.assertEqual(full["extras"]["hoopsim"]["detail"], "full")
+        self.assertEqual([n["name"] for n in light["nodes"]], [n["name"] for n in full["nodes"]])
+        self.assertEqual(sorted(a["name"] for a in light["animations"]), sorted(a["name"] for a in full["animations"]))
+        self.assertEqual({m["name"] for m in light["materials"]}, {m["name"] for m in full["materials"]})
+        self.assertEqual(light["meshes"][0]["extras"]["targetNames"], ["bulk"])
+        self.assertLess(PLAYER_ASSETS["player_light.glb"].stat().st_size, PLAYER_ASSETS["player.glb"].stat().st_size)
+        src = self.template
+        self.assertIn('const START_LEVEL = PHONE && HAS_LIGHT ? "light" : "full";', src)   # phones start on it
+        self.assertIn("fg.body.remove(fg.rig.model);", src)        # players on the floor are rebuilt when the model changes
 
     def test_looks_per_player(self):
         """Hair, beard and gear are parts of the one model, switched on per player."""
@@ -411,10 +456,11 @@ class AnimatedPlayersTests(unittest.TestCase):
         self.assertIn('bodyMode = mode === "animated" && anim ? "animated" : "simple";', view)
         # a failed load: say so, keep simple bodies, disable the choice
         self.assertIn('setText("viewMsg", "Animated players unavailable: using simple bodies.");', src)
-        self.assertIn('$("bodyAnim").disabled = true;', src)
+        self.assertIn('$(lv === "light" ? "bodyLight" : "bodyAnim").disabled = true;', src)
         # a device that can't keep up drops to simple bodies (unless Animated was picked by hand)
         self.assertIn("Animated players were slow here: switched to simple bodies.", src)
-        self.assertIn("if (bodyAuto && slowN >= 120)", view)
+        self.assertIn("if (bodyAuto && slowT >= 3) {", view)        # judged over three seconds, not a count of frames
+        self.assertIn("Animated players were slow here: switched to the light model.", src)   # a level at a time
         # replays recorded before the action cues: read shots, passes and rebounds off the frames
         self.assertIn("Array.isArray(p.actions) ? p.actions : inferActions(p)", src)
         # nothing new on window without ?debug

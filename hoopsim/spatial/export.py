@@ -16,14 +16,16 @@ THREE_PLACEHOLDER = "/*THREE_JS*/"
 # The animated players of the 3D view: three.js r160's glTF loader and SkeletonUtils (MIT,
 # unmodified) and one model with its motion-capture clips (see assets/LICENSES.md). The web
 # app serves them as files under PLAYER_ASSETS_URL, fetched the first time 3D is shown; an
-# exported page only carries them if asked to (animation="embed", about 1.6 MB more).
+# exported page only carries them if asked to (animation="embed", about 1.7 MB more).
 _VENDOR = Path(__file__).with_name("vendor")
 PLAYER_ASSETS = {
     "BufferGeometryUtils.js": _VENDOR / "BufferGeometryUtils.js",
     "GLTFLoader.js": _VENDOR / "GLTFLoader.js",
     "SkeletonUtils.js": _VENDOR / "SkeletonUtils.js",
     "player.glb": Path(__file__).with_name("assets") / "player.glb",
+    "player_light.glb": Path(__file__).with_name("assets") / "player_light.glb",     # the same player, far fewer triangles
 }
+PLAYER_ASSETS_EMBEDDED = tuple(n for n in PLAYER_ASSETS if n != "player_light.glb")   # a page carries the full model only
 PLAYER_ASSETS_URL = "/viewer-assets/"
 PLAYER_ASSETS_PLACEHOLDER = "/*PLAYER_ASSETS*/"
 
@@ -56,8 +58,8 @@ def _three_source() -> str:
 @functools.lru_cache(maxsize=1)
 def _embedded_players() -> str:
     files = {}
-    for name, path in PLAYER_ASSETS.items():
-        raw = path.read_bytes()
+    for name in PLAYER_ASSETS_EMBEDDED:
+        raw = PLAYER_ASSETS[name].read_bytes()
         files[name] = base64.b64encode(raw).decode("ascii") if name.endswith(".glb") else raw.decode("utf-8")
     return json.dumps({"embed": files}, separators=(",", ":")).replace("</", "<\\/").replace("<!--", "<\\!--")
 
