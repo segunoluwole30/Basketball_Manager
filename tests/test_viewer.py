@@ -417,10 +417,10 @@ console.log(JSON.stringify({ out, same: JSON.stringify(a) === JSON.stringify(b),
         # left-handed dribbles are made in the viewer by mirroring: no extra clips in the file
         clips = read_glb(PLAYER_ASSETS["player.glb"])[4]["extras"]["hoopsim"]["clips"]
         self.assertFalse([n for n in clips if n.startswith("dribble") and n.endswith("_m")])
-        self.assertIn('for (const name of ["dribble_idle", "dribble_walk", "dribble_run"]) {', src)
-        self.assertIn('dribble: { ...CL[name].dribble, hand: CL[name].dribble.hand === "L" ? "R" : "L" } };', src)
+        self.assertIn('for (const name of ["dribble_idle", "dribble_walk", "dribble_run", ...HANDED]) {', src)
+        self.assertIn('CL[c.name].dribble = { ...CL[name].dribble, hand: CL[name].dribble.hand === "L" ? "R" : "L" };', src)
         # the hand away from the nearest defender, not changed more often than HAND_HOLD
-        self.assertIn("const wantLeft = side < -0.8 ? true : side > 0.8 ? false : r.left;", src)
+        self.assertIn("const wantLeft = side < -0.8 ? true : side > 0.8 ? false : near >= 7 ? r.lefty : r.left;", src)
         self.assertIn("if (wantLeft !== r.left && (r.handT > HAND_HOLD || fresh))", src)
         self.assertIn("if (r.ballHand && r.ballHand !== m.hand) r.cross = HAND_CROSS;", src)   # the ball crosses over
         # a shot on the move is eased in up to its gather
@@ -464,9 +464,39 @@ console.log(JSON.stringify({ out, same: JSON.stringify(a) === JSON.stringify(b),
         self.assertEqual(src.count("function hookArm(fg, rimX) {"), 1)
         # the shooting arm: from his side away from the rim, over the top by the release, then on
         self.assertIn("const phi = t < 0 ? -0.35 + 2.1 * Math.pow(u, 1.5) : Math.min(2.6, 1.75 + 3.5 * t);", src)
-        self.assertIn('armTo(fg, "Left", v4, w * 0.8);', src)             # the guard arm
+        self.assertIn("armTo(fg, guard, v4, w * 0.8);", src)               # the guard arm
         # before the ball is placed in his hand
         self.assertLess(view.index("anim.hookArm(f, rimX);"), view.index("anim.ballInHand(holderFig, gripPos, dta)"))
+
+    def test_handedness(self):
+        """Left- and right-handed players: from the name (about one in ten left), or set in the editor."""
+        import subprocess
+        src = self.template
+        self.assertIn('const HANDED = ["jumper", "free_throw", "layup", "floater", "dunk"];', src)
+        # a left-hander plays the mirrored clip, holds the ball in his left, dunks and hooks with it
+        self.assertIn('const clip = r.lefty && HANDED.includes(c.clip) ? c.clip + "_m" : c.clip;', src)
+        self.assertIn('const strong = r.lefty && (slam || (r.ballCue && HANDED.includes(r.ballCue.clip))) ? "Left" : "Right";', src)
+        self.assertIn('const sd = r.lefty ? "Left" : "Right";', src)
+        self.assertIn('const shoot = r.lefty ? "Left" : "Right", guard = r.lefty ? "Right" : "Left";', src)
+        self.assertIn("yaw: r.lefty && c.sweep ? -c.yaw : c.yaw", src)
+        # the mirrored shots are made in the viewer: none in the file
+        clips = read_glb(PLAYER_ASSETS["player.glb"])[4]["extras"]["hoopsim"]["clips"]
+        self.assertFalse([n for n in clips if n[:-2] in ("jumper", "free_throw", "layup", "floater", "dunk") and n.endswith("_m")])
+        js = self._look_of()
+        if js is None:
+            self.skipTest("node not installed")
+        js += """
+let left = 0; const n = 4000;
+for (let i = 0; i < n; i++) if (lookOf({ name: "Hand Test " + i * 7 }, i % 7).hand === "L") left++;
+const set = ["L", "R", "x", null].map((v) => lookOf({ name: "Hand Test 3", look: { hand: v } }, 2).hand);
+console.log(JSON.stringify({ share: left / n, set, same: lookOf({ name: "A B" }, 1).hand === lookOf({ name: "A B" }, 1).hand }));
+"""
+        res = json.loads(subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True, timeout=60).stdout)
+        self.assertGreater(res["share"], 0.06)
+        self.assertLess(res["share"], 0.14)
+        self.assertEqual(res["set"][:2], ["L", "R"])                # the editor's choice wins
+        self.assertIn(res["set"][2], ("L", "R"))                   # junk falls back to his name
+        self.assertTrue(res["same"])
 
     def test_light_model(self):
         """The same player with far fewer triangles: same skeleton, clips and parts."""

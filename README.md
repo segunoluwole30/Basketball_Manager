@@ -254,7 +254,17 @@ toward one shape), and how much of a second and third shape is mixed in varies b
 so faces don't fall into three types. The editor's **Face** control sets it instead (one
 shape and how strongly; `look.face`, checked by `editor.clean_look`); "From name" or "Use
 default" clears it. The light model has no face shapes, so a stored face has no effect
-there. The mocap has no collarbone movement, so the
+there.
+
+Players are left- or right-handed. About one in ten is left-handed, picked from his name;
+the editor's **Strong hand** control sets it instead (`look.hand`, `"L"` or `"R"`). The
+clips were all captured right-handed, so a left-hander plays the jump shot, free throw,
+lay-up, floater and dunk mirrored (made in the viewer, like the left-handed dribbles: no
+extra clips in the file), holds the ball in his left hand for them, dunks and hooks with
+it (right shoulder to the rim), and dribbles with it when no defender is near. The replay
+and the engine know nothing of handedness: it changes how a player is drawn, not what he does.
+
+The mocap has no collarbone movement, so the
 viewer lifts the collarbone with a raised arm, which keeps the shoulder from pinching.
 
 The files (`spatial/assets/player.glb`, 1.26 MB, or `player_light.glb`, 0.77 MB, plus three.js r160's `GLTFLoader`,
@@ -1966,8 +1976,8 @@ can change any player's:
 * name, birth date, nationality, position(s), height, wingspan, weight and jersey;
 * morale, an injury (heal it), contract (salary, end season, option) and team;
 * his look in the 3D viewer: hair style and colour, beard, headband, arm sleeve, leg
-  sleeves, wristbands, the colour of sleeves and bands, shoes, and face (one of the
-  model's three face shapes and how strongly). Each part is either
+  sleeves, wristbands, the colour of sleeves and bands, shoes, face (one of the
+  model's three face shapes and how strongly) and strong hand (left or right). Each part is either
   "From name" (picked from his name, as for everyone else) or set; colours are white,
   black, team colour or any `#rrggbb`. **Use default** clears the stored look. It is an
   optional field on the player (`Player.look`; old saves load without one), checked

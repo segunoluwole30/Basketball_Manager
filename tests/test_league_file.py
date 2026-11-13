@@ -201,7 +201,7 @@ class EditorTests(unittest.TestCase):
         self.assertIsNone(self.p.look)
         self.assertIsNone(player_sheet(self.lg, self.p)["look"])
         look = {"hair": "locs", "hairColor": "#1C130D", "beard": False, "band": "team", "sleeve": "L",
-                "leg": "both", "wrist": None, "gear": "white", "shoes": "#c8372d"}
+                "leg": "both", "wrist": None, "gear": "white", "shoes": "#c8372d", "hand": "L"}
         self.assertEqual(edit_player(self.lg, self.p.id, {"look": look}), ["look"])
         self.assertEqual(self.p.look, {**look, "hairColor": "#1c130d"})
         self.assertEqual(edit_player(self.lg, self.p.id, {"look": dict(self.p.look)}), [])   # no change
@@ -210,7 +210,7 @@ class EditorTests(unittest.TestCase):
             back = load_league(Path(d) / "x.db")
         self.assertEqual(back.players[self.p.id].look, self.p.look)
         for bad in ({"hair": "mohawk"}, {"hairColor": "red"}, {"shoes": "#12345"}, {"beard": "yes"},
-                    {"sleeve": "left"}, {"gear": None}, {"cape": True}, ["hair"], {"band": "#zzzzzz"}):
+                    {"sleeve": "left"}, {"gear": None}, {"hand": "left"}, {"hand": None}, {"cape": True}, ["hair"], {"band": "#zzzzzz"}):
             with self.subTest(bad=bad), self.assertRaises(EditError):
                 edit_player(self.lg, self.p.id, {"look": bad, "first_name": "X"})
         self.assertNotEqual(self.p.first_name, "X")                 # an invalid look changes nothing

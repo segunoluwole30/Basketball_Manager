@@ -51,7 +51,8 @@ def _block(current, cls, changes: dict, label: str):
 LOOK_HAIR = ("short", "fade", "bald", "afro", "locs", "flattop", "bun")
 LOOK_SIDES = ("L", "R", "both")                  # arm sleeve, leg sleeves, wristbands (or None)
 LOOK_COLOURS = ("white", "black", "team")        # or "#rrggbb"
-LOOK_KEYS = ("hair", "hairColor", "beard", "band", "sleeve", "leg", "wrist", "gear", "shoes", "face")
+LOOK_KEYS = ("hair", "hairColor", "beard", "band", "sleeve", "leg", "wrist", "gear", "shoes", "face", "hand")
+LOOK_HANDS = ("L", "R")                          # hand: his strong hand in the 3D view (shots, dunk, hook, dribble)
 LOOK_FACES = 3                                   # face: this many weights, 0-1 each: how far toward each of the
                                                  # model's face shapes (the viewer's face_a, face_b, face_c)
 _HEX = re.compile(r"#[0-9a-fA-F]{6}")
@@ -93,6 +94,9 @@ def clean_look(look: Any) -> Optional[dict]:
                 raise EditError(f"{k} must be L, R, both or none")
         elif k == "band":
             v = None if v is None else _colour(v, "headband")
+        elif k == "hand":
+            if v not in LOOK_HANDS:
+                raise EditError("hand must be L or R")
         elif k == "face":
             if (not isinstance(v, (list, tuple)) or len(v) != LOOK_FACES
                     or any(isinstance(x, bool) or not isinstance(x, (int, float)) or not 0 <= x <= 1 for x in v)):
@@ -149,7 +153,7 @@ def player_sheet(league: League, player: Player) -> dict:
                    "salary": [0, int(league.rules.salary_cap * league.rules.max_salary_cap_fraction)],
                    "expires_season": [league.season, league.season + 6],
                    "look": {"hair": list(LOOK_HAIR), "sides": list(LOOK_SIDES), "colours": list(LOOK_COLOURS),
-                            "faces": LOOK_FACES}},
+                            "faces": LOOK_FACES, "hands": list(LOOK_HANDS)}},
     }
 
 

@@ -952,6 +952,8 @@ window.GAME = /*GAME_DATA*/null;
         const total = f[0] + f[1] + f[2];                         // (no further than a face the shapes span)
         return total > 1 ? f.map((v) => v / total) : f;
       })(),
+      // his strong hand: he shoots, dunks and (left alone) dribbles with it. About one in ten is left-handed.
+      hand: L.hand === "L" || L.hand === "R" ? L.hand : roll("hand") < 0.1 ? "L" : "R",
       shoes: has("shoes") ? L.shoes : weighted([["black", 34], ["white", 34], ["team", 20], ["#b0b4bb", 6], ["#c8372d", 6]], roll("shoes")),
     };
   }
@@ -999,6 +1001,7 @@ window.GAME = /*GAME_DATA*/null;
   // ball (the man with it: the rim) by up to LOOK_MAX radians, whichever way his legs point.
   const LEAN = 0.0085, LEAN_MAX = 0.2, LOOK_MAX = 1.15, LOOK_CHEST = 0.28, LOOK_HEAD = 0.5;
   const SLAM_IN = 0.35, SLAM_HANG = 0.12, SLAM_NEAR = 1.5;    // a dunk: the hand takes the ball to the rim over this long (s), hangs on it this long, from within this far (ft)
+  const HANDED = ["jumper", "free_throw", "layup", "floater", "dunk"];   // one-hand clips, captured right-handed: mirrored for a left-hander
   const HOOK_IN = 0.42;                       // a hook shot's arm sweeps over his head in this long (s), up to the release
   const REACH_IN = 0.3, REACH_OUT = 0.3;      // a blocking hand goes to the ball from this long before the top of the jump to this long after (s)
   const HAND_HOLD = 0.8, HAND_CROSS = 0.2;    // a dribbler keeps a hand at least this long (s); the ball takes this long to cross
@@ -1017,9 +1020,11 @@ window.GAME = /*GAME_DATA*/null;
     for (const c of rig.gltf.animations) clips[c.name] = c;
     clips.hold = clips.catch.clone(); clips.hold.name = "hold";   // the ball held in front: the end of the catch
     CL.hold = { duration: CL.catch.duration, still: true };
-    // Left-handed dribbles: the same clips mirrored (the skeleton is symmetric: left and right
-    // bones swap, rotations and the root's sideways travel flip).
-    for (const name of ["dribble_idle", "dribble_walk", "dribble_run"]) {
+    // Left-handed dribbles, and a left-hander's shots and dunk: the same clips mirrored (the
+    // skeleton is symmetric: left and right bones swap, rotations and the root's sideways
+    // travel flip).
+    for (const name of ["dribble_idle", "dribble_walk", "dribble_run", ...HANDED]) {
+      if (!clips[name]) continue;
       const c = clips[name].clone(); c.name = name + "_m";
       for (const tr of c.tracks) {
         tr.name = tr.name.startsWith("Left") ? "Right" + tr.name.slice(4) : tr.name.startsWith("Right") ? "Left" + tr.name.slice(5) : tr.name;
@@ -1028,7 +1033,8 @@ window.GAME = /*GAME_DATA*/null;
         else if (tr.name.endsWith(".position")) for (let i = 0; i < v.length; i += 3) v[i] = -v[i];
       }
       clips[c.name] = c;
-      CL[c.name] = { ...CL[name], mirrored: true, dribble: { ...CL[name].dribble, hand: CL[name].dribble.hand === "L" ? "R" : "L" } };
+      CL[c.name] = { ...CL[name], mirrored: true };
+      if (CL[name].dribble) CL[c.name].dribble = { ...CL[name].dribble, hand: CL[name].dribble.hand === "L" ? "R" : "L" };
     }
     const DRIBBLES = ["dribble_idle", "dribble_walk", "dribble_run", "dribble_idle_m", "dribble_walk_m", "dribble_run_m"];
     const MOVING = ["walk", "jog", "sprint", "backpedal", "slide", "slide_m", "dribble_walk", "dribble_run"];
@@ -1076,7 +1082,7 @@ window.GAME = /*GAME_DATA*/null;
       fg.body.add(model);
       fg.rig = { model, jersey, bones, mixer: new THREE.AnimationMixer(model), acts: {}, w: {}, k: H / H0,
                  phase: (hash(fg.key || pl.name) % 100) / 100, free: hash(pl.name) % 7, carry: [], active: [],
-                 ax: 0, az: 0, anchored: false, hand: new THREE.Vector3(), grip: 0, armRest: {}, feet: {}, busy: 0, pitch: 0, roll: 0, look: 0, left: false, handT: 9, cross: 0, ballHand: null,
+                 ax: 0, az: 0, anchored: false, hand: new THREE.Vector3(), grip: 0, armRest: {}, feet: {}, busy: 0, pitch: 0, roll: 0, look: 0, lefty: !!(fg.look && fg.look.hand === "L"), left: !!(fg.look && fg.look.hand === "L"), handT: 9, cross: 0, ballHand: null,
                  adjusted: ["Spine1", "Head", "LeftArm", "RightArm", "LeftForeArm", "RightForeArm", "LeftUpLeg", "RightUpLeg", "LeftLeg", "RightLeg", "LeftFoot", "RightFoot"].map((n) => bones[n]).filter(Boolean) };
       for (const sd of ["Left", "Right"]) if (bones[sd + "ForeArm"]) fg.rig.armRest[sd] = bones[sd + "ForeArm"].position.clone().normalize();
       return fg.rig;
@@ -1206,14 +1212,15 @@ window.GAME = /*GAME_DATA*/null;
         const d = Math.hypot(dx, dz) || 1;
         f(len, dx / d, dz / d);
       };
-      side("Right", (len, dx, dz) => {
+      const shoot = r.lefty ? "Left" : "Right", guard = r.lefty ? "Right" : "Left";
+      side(shoot, (len, dx, dz) => {
         const phi = t < 0 ? -0.35 + 2.1 * Math.pow(u, 1.5) : Math.min(2.6, 1.75 + 3.5 * t);   // from his side, over the top, on towards the rim
         v4.set(vH.x - dx * Math.cos(phi) * len * 0.97, vH.y + Math.sin(phi) * len * 0.97, vH.z - dz * Math.cos(phi) * len * 0.97);
-        armTo(fg, "Right", v4, w);
+        armTo(fg, shoot, v4, w);
       });
-      side("Left", (len, dx, dz) => {
+      side(guard, (len, dx, dz) => {
         v4.set(vH.x + dx * 0.6 * len, vH.y + 0.12 * len, vH.z + dz * 0.6 * len);
-        armTo(fg, "Left", v4, w * 0.8);
+        armTo(fg, guard, v4, w * 0.8);
       });
       r.hookW = w;
     }
@@ -1224,12 +1231,13 @@ window.GAME = /*GAME_DATA*/null;
     function slamHand(fg, rimX, at) {
       const r = fg.rig, c = r.slam, b = r.bones, k = r.k;
       r.slamGap = null; r.slamBall = BALL_R * 0.8;
-      if (!c || !env.reach() || !b.RightHand) return;
+      if (!c || !env.reach() || !b.RightHand || !b.LeftHand) return;
+      const sd = r.lefty ? "Left" : "Right";                      // his strong hand
       const t = at - c.slam, u = clamp01(1 + t / SLAM_IN);
       const w = t < 0 ? smooth01(u / 0.45) : 1 - smooth01((t - SLAM_HANG) / 0.25);
       if (w <= 0.01) return;
       fg.root.updateMatrixWorld(true);
-      vH.setFromMatrixPosition(b.RightArm.matrixWorld);
+      vH.setFromMatrixPosition(b[sd + "Arm"].matrixWorld);
       let dx = vH.x - rimX, dz = vH.z;                            // from the rim towards him, level
       const d = Math.hypot(dx, dz) || 1; dx /= d; dz /= d;
       if (t < 0) {
@@ -1238,7 +1246,7 @@ window.GAME = /*GAME_DATA*/null;
         v4.set(rimX + dx * near, 9.7 + 1.4 * (1 - smooth01((u - 0.55) / 0.45)) - r.slamBall, dz * near);
       } else v4.set(rimX + dx * 0.72, 10.02, dz * 0.72);          // the palm on the rim
       v3.subVectors(v4, vH).normalize().multiplyScalar(0.38 * k);
-      r.slamW = w; r.slamGap = armTo(fg, "Right", v4.sub(v3), w);
+      r.slamW = w; r.slamGap = armTo(fg, sd, v4.sub(v3), w);
     }
     // A hand that goes to the ball: blocking or contesting a shot, the clip only raises the
     // arms; where the ball actually is differs every time. The arm on the ball's side is
@@ -1398,8 +1406,9 @@ window.GAME = /*GAME_DATA*/null;
       const W = {}, T = {};
       for (let i = top.length - 1; i >= 0; i--) {
         const { c, tl } = top[i], e = envelope(c, tl) * (1 - used);
-        if (e <= 0 || W[c.clip] !== undefined) continue;
-        W[c.clip] = e; T[c.clip] = Math.min(c.ofs + tl, CL[c.clip].duration - 0.001);
+        const clip = r.lefty && HANDED.includes(c.clip) ? c.clip + "_m" : c.clip;      // (a left-hander's shot: the mirrored clip)
+        if (e <= 0 || W[clip] !== undefined) continue;
+        W[clip] = e; T[clip] = Math.min(c.ofs + tl, CL[c.clip].duration - 0.001);
         used += e;
         if (c.hand && env.reach() && !r.reachW) {                 // a hand goes to the ball around the top of the clip
           const t = c.ofs + tl - CL[c.clip].marks.release;
@@ -1408,7 +1417,7 @@ window.GAME = /*GAME_DATA*/null;
         }
         if (i === top.length - 1) {
           if (c.sweep && env.reach()) r.hook = c.ofs + tl - CL[c.clip].marks.release;     // (a hook shot: seconds from its release)
-          if (c.face) face = { to: c.face, other: c.other, yaw: c.yaw };
+          if (c.face) face = { to: c.face, other: c.other, yaw: r.lefty && c.sweep ? -c.yaw : c.yaw };   // (a left-handed hook: right shoulder to the rim)
           if (c.ball && isHolder) ballCue = c;
           const m = CL[c.clip].marks;
           if (c.reach && m && m.land) {
@@ -1446,7 +1455,8 @@ window.GAME = /*GAME_DATA*/null;
           const dX = o.y - q.y, dZ = o.x - q.x, dist = Math.hypot(dX, dZ);          // (court x, y -> world Z, X)
           if (dist < near) { near = dist; side = dX * Math.cos(h) - dZ * Math.sin(h); }   // + : he is to the dribbler's left
         }
-        const wantLeft = side < -0.8 ? true : side > 0.8 ? false : r.left;      // defender on his right: left hand
+        // (defender on his right: left hand; nobody near: his strong hand)
+        const wantLeft = side < -0.8 ? true : side > 0.8 ? false : near >= 7 ? r.lefty : r.left;
         if (wantLeft !== r.left && (r.handT > HAND_HOLD || fresh)) { r.left = wantLeft; r.handT = 0; }
         const m = r.left ? "_m" : "";
         const a = CL.dribble_walk.speed, b = CL.dribble_run.speed * 0.8;
@@ -1562,7 +1572,8 @@ window.GAME = /*GAME_DATA*/null;
       }
       r.ballHand = null; r.cross = 0;
       const slam = r.slam && r.slamGap != null, mode = slam ? "R" : r.ballCue ? r.ballCue.ball : "both";
-      palm("Right", out);
+      const strong = r.lefty && (slam || (r.ballCue && HANDED.includes(r.ballCue.clip))) ? "Left" : "Right";
+      palm(mode === "both" ? "Right" : strong, out);
       if (mode === "both") { palm("Left", v3); out.add(v3).multiplyScalar(0.5); out.y += 0.1; }
       else out.y += slam ? r.slamBall : BALL_R * 0.8;             // on the one hand (a dunk: under it by the rim)
       return out;
@@ -2736,7 +2747,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
              bodies: () => ({ mode: bodyMode, rig: !!anim, detail: anim ? anim.detail : null, auto: bodyAuto, clips: anim ? anim.names : [],
                               players: st ? st.players.map((q) => { const fg = figures[q.key], r = fg && fg.rig;
                                 return { key: q.key, n: q.n, off: q.off, sp: +(q.sp || 0).toFixed(1), animated: !!(r && r.model.visible),
-                                         name: q.pl.name, hook: r && r.hook != null && r.hookW ? r.hook.toFixed(2) + ":" + r.hookW.toFixed(2) : "", slam: r && r.slam && r.slamGap != null ? r.slamW.toFixed(2) + ":" + r.slamGap.toFixed(2) : "", at: [+fg.x.toFixed(1), +fg.z.toFixed(1)], hand: r && r.reachFor && r.reachGap != null ? r.reachSide + ":" + r.reachW.toFixed(2) + ":" + r.reachGap.toFixed(2) + ":" + r.reachFrom.toFixed(2) : "", lag: +(fg.lag || 0).toFixed(2), look: fg.look, feet: +fg.H.toFixed(2), girth: +fg.build.girth.toFixed(2), reach: +fg.build.reach.toFixed(3),
+                                         name: q.pl.name, lefty: !!(r && r.lefty), hook: r && r.hook != null && r.hookW ? r.hook.toFixed(2) + ":" + r.hookW.toFixed(2) : "", slam: r && r.slam && r.slamGap != null ? r.slamW.toFixed(2) + ":" + r.slamGap.toFixed(2) : "", at: [+fg.x.toFixed(1), +fg.z.toFixed(1)], hand: r && r.reachFor && r.reachGap != null ? r.reachSide + ":" + r.reachW.toFixed(2) + ":" + r.reachGap.toFixed(2) + ":" + r.reachFrom.toFixed(2) : "", lag: +(fg.lag || 0).toFixed(2), look: fg.look, feet: +fg.H.toFixed(2), girth: +fg.build.girth.toFixed(2), reach: +fg.build.reach.toFixed(3),
                                          clips: r ? Object.keys(r.acts).filter((k) => r.acts[k].enabled).map((k) => k + ":" + r.acts[k].weight.toFixed(2)) : [] }; }) : [] }),
              cues: (p) => (anim ? anim.cues(p) : null),
              plantFeet: (on) => { footLock = !!on; dirty = 3; },      // (for comparing with and without, under ?debug)

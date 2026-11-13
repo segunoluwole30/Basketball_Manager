@@ -76,7 +76,8 @@ Not motion-captured as such (no free clip was found): the dunk, the hook shot, t
 and the block are the nearest captured motion adapted as noted above. The viewer also lifts
 the collarbone with a raised arm, which the mocap does not record, and re-poses a blocker's
 or contester's arm so the hand goes to the ball, a dunker's so it goes to the rim, and both arms of a
-hook shot (our own code, no further source).
+hook shot (our own code, no further source). A left-handed player's shots and dunk are the same
+clips mirrored by the viewer.
 
 ## Not included
 

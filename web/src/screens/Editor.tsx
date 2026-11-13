@@ -315,6 +315,7 @@ function LookEditor({ look, limits, changed, onChange }: {
       <label>Sleeves and bands {colour("gear")}</label>
       <label>Shoes {colour("shoes")}</label>
       <label>Face {face}</label>
+      <label>Strong hand {choice("hand", [["R", "Right"], ["L", "Left"]], (o) => o, (v) => v)}</label>
       <label>&nbsp;
         <button type="button" className="btn btn-small" disabled={!look} onClick={() => onChange(null)}
           title="Clear the stored look: every part is picked from his name again">Use default</button>
