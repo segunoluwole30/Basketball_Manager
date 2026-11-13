@@ -1,5 +1,5 @@
 """The season calendar for the web app: every day of the season, your games on it,
-the NBA's key dates, and "sim to this day"."""
+the NBA's key dates, and "sim to this day" (play every day before it, then stop)."""
 from __future__ import annotations
 
 from datetime import timedelta
@@ -64,8 +64,11 @@ def calendar(session, team_id: Optional[int] = None) -> dict:
     marks = _label_days(lg)
     first = min(by_day)
     last = max(max(by_day), *(marks or {0: 0}).keys())
-    played = [g.day for g in games if g.played]
-    today = max(played) if played else first - 1
+    if lg.phase in (Phase.REGULAR_SEASON, Phase.PLAYOFFS):
+        today = session._today()                    # the date: the last day that is done
+    else:
+        played = [g.day for g in games if g.played]
+        today = max(played) if played else first - 1
     days = []
     for d in range(first - 3, last + 1):
         g = mine.get(d)
@@ -76,6 +79,7 @@ def calendar(session, team_id: Optional[int] = None) -> dict:
             "playoff": any(x.playoff for x in tonight),
             "game": session._game_view(g) if g else None,
             "b2b": bool(g) and (d - 1) in mine,                   # the second night of a back-to-back
+            "next": d == today + 1 and lg.phase in (Phase.REGULAR_SEASON, Phase.PLAYOFFS),
             "marks": marks.get(d, []),
         })
     my_days = sorted(mine)
@@ -109,27 +113,33 @@ def calendar_day(session, day: int) -> dict:
 
 
 def sim_to(session, day: int) -> dict:
-    """Play every day up to and including ``day`` (regular season or playoffs)."""
+    """Go to the start of ``day`` ("continue to date"): play every day before it, then
+    stop with that day's games, yours included, still to play, so you can coach your
+    game live, watch it or sim it with Next day. Stops early for a trade offer, as
+    every sim does. Works in the regular season and the playoffs."""
     from .session import UserError
     lg = session._me()
     day = int(day)
+    today = session._today()
+    if lg.phase in (Phase.REGULAR_SEASON, Phase.PLAYOFFS) and day <= today:
+        raise UserError("that day has already been played")
     if lg.phase is Phase.REGULAR_SEASON and not regular_season_over(lg):
-        days = len({g.day for g in lg.games.values() if g.season == lg.season and not g.playoff
-                    and not g.played and g.day <= day})
-        if days <= 0:
-            raise UserError("that day has already been played")
-        return session.sim("days", min(days, 200))
+        final = max(g.day for g in lg.games.values() if g.season == lg.season and not g.playoff)
+        if day > final:
+            raise UserError("that day is after the regular season: use To end, then start the playoffs")
+        if day == today + 1:
+            r = {"ok": True, "days": 0, "games": [], "stopped_for": None, "events": [],
+                 "date": lg.current_date.isoformat(), "state": session.state()}
+        else:
+            r = session._sim_through(day - 1)
+        return dict(r, at_day=session._today() + 1)
     if lg.phase is Phase.PLAYOFFS:
-        r = None
-        for _ in range(120):
-            last = max((g.day for g in lg.games.values() if g.season == lg.season and g.played and g.playoff),
-                       default=-1)
-            if last >= day:
+        r = {"ok": True, "finished": False, "state": session.state()}
+        for _ in range(400):
+            if session._today() >= day - 1:
                 break
             r = session.sim_playoffs("day")
             if r.get("finished"):
                 break
-        if r is None:
-            raise UserError("that day has already been played")
-        return r
+        return dict(r, at_day=session._today() + 1, stopped_for=None)
     raise UserError("there are no games to play right now (start the playoffs first?)")

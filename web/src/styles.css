@@ -439,6 +439,7 @@ ul.plain li { padding: 3px 0; }
 .cal-past { background: color-mix(in srgb, var(--panel) 85%, var(--bg)); }
 .cal-off { background: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--muted) 12%, transparent) 6px 12px); }
 .cal-today { outline: 2px solid var(--accent); outline-offset: -1px; }
+.cal-next { outline: 2px dashed var(--accent); outline-offset: -1px; }
 .cal-sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
 .cal-num { font-weight: 700; font-variant-numeric: tabular-nums; }
 .cal-mark { font-size: 10.5px; color: var(--accent); line-height: 1.2; }

@@ -118,6 +118,12 @@ export interface GameState {
   save_path?: string;
   unsaved?: boolean;
   day?: number;
+  /** the date the league is at (the last day done) and the day Next day plays */
+  today_date?: string;
+  next_date?: string;
+  next_day_games?: number;
+  next_day_game?: GameView | null;
+  next_day_mine?: boolean;
   deadline_in?: number | null;
   season_over?: boolean;
   open_offers?: number;

@@ -65,28 +65,41 @@ def refresh_lineups(league: League) -> None:
 
 def play_regular_season(league: League, rng: random.Random,
                         days: Optional[int] = None, manager=None) -> list[str]:
-    """Play the remaining regular season (or just the next ``days`` days).
+    """Play the remaining regular season (or just the next ``days`` days that have games).
 
     Returns notable events (trades at the deadline). ``manager`` answers trade
-    offers made to the user's team."""
+    offers made to the user's team. Days without games are stepped over here;
+    ``play_regular_day`` plays one calendar day, games or not (the web app's
+    "Next day")."""
     if league.phase is not Phase.REGULAR_SEASON:
         raise ValueError(f"not in the regular season ({league.phase.value})")
-    all_days = sorted({g.day for g in league.games.values()
-                       if g.season == league.season and not g.playoff})
-    remaining = [d for d in all_days if any(not g.played for g in league.games.values()
-                                             if g.season == league.season and g.day == d)]
-    deadline = all_days[int(len(all_days) * 0.6)] if all_days else None
+    remaining = sorted({g.day for g in league.games.values()
+                        if g.season == league.season and not g.playoff and not g.played})
     events = []
     for day in remaining[:days] if days else remaining:
-        events += allstar.catch_up(league, day)          # All-Star voting and weekend, on their dates
+        events += play_regular_day(league, rng, day, manager)
+    return events
+
+
+def play_regular_day(league: League, rng: random.Random, day: int, manager=None) -> list[str]:
+    """One calendar day of the regular season: the All-Star events dated on it or
+    before, its unplayed games (if any), and the date moves to it. On a day with no
+    games nothing is played and no random numbers are drawn, so stepping through
+    off days one at a time plays exactly the same season."""
+    if league.phase is not Phase.REGULAR_SEASON:
+        raise ValueError(f"not in the regular season ({league.phase.value})")
+    events = allstar.catch_up(league, day)             # All-Star voting and weekend, on their dates
+    if any(not g.played for g in league.games.values()
+           if g.season == league.season and not g.playoff and g.day == day):
         refresh_lineups(league)
         play_day(league, day, rng)
         league.current_date = season_start(league.season) + timedelta(days=day)
         if day % 7 == 0:
             update_morale(league, season_totals(league))
-        if day == deadline:
+        if day == trade_deadline_day(league):
             events += [f"Deadline {line}" for line in ai_trades(league, rng, attempts=200, max_trades=3)]
             events += [f"Deadline {line}" for line in ai_offers_to_user(league, rng, manager)]
+    league.current_date = season_start(league.season) + timedelta(days=day)
     return events
 
 
