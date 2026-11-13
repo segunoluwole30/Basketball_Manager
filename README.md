@@ -178,22 +178,27 @@ the cues existed get shots, passes, catches and rebounds read off the frames ins
 
 Each player has his own build. In the browser interface the page carries his real height,
 weight and wingspan (looked up in the league when the page is served, so recordings are
-unchanged): height scales the whole figure, weight sets how much of the model's "bulk"
+unchanged). Replays list each player's league id (`export.viewer_data`, used wherever page
+data or a replay is made), so he is found exactly, even after a rename, a new number or a
+trade; replays saved before ids were recorded still load and are matched by name and
+number. Height scales the whole figure, weight sets how much of the model's "bulk"
 shape he gets (a morph target: the same body in a much heavier build, or run backwards for
 a slighter one), and
 wingspan lengthens or shortens his arms. The simple bodies get the height and the width
 too. Without those numbers (exported pages, or a player who has left the league) he gets
 the typical build for his position, varied a little by his name. Skin tone is still picked
-by name: players have no stored look yet, but a `skin` field on a player in the page data
-(an index into the viewer's tones, or `#rrggbb`) is used when present.
+by name; a `skin` field on a player in the page data (an index into the viewer's tones, or
+`#rrggbb`) is used when present.
 
 Each player also has his own look: one of seven hair styles (short, fade, afro, flat top,
 locs, bun, bald) in a hair colour that suits his skin tone, perhaps a beard, a headband, an
 arm sleeve, leg sleeves, wristbands, and shoes in black, white, team colour or something
-louder. They are parts of the one model, switched on per player. Until players have a
-stored look, it is picked from the player's name, so it is the same in every game; a `look`
-object on a player in the page data (`hair`, `hairColor`, `beard`, `band`, `sleeve`, `leg`,
-`wrist`, `gear`, `shoes`) overrides any of it.
+louder. They are parts of the one model, switched on per player. A look can be set per
+player in the editor (**Look in 3D**, see *In-game editor*); it is stored on the player in
+the save and sent with the page data as a `look` object (`hair`, `hairColor`, `beard`,
+`band`, `sleeve`, `leg`, `wrist`, `gear`, `shoes`). Any part not set, and every part of a
+player with no stored look, is picked from the player's name, so it is the same in every
+game.
 
 The body is MakeHuman's base mesh (CC0): a real human figure with a face, hands and
 muscle definition, shaped into a tall athlete, bound to the mocap skeleton and simplified.
@@ -218,8 +223,11 @@ served by the web app at `/viewer-assets/` and fetched only the first time 3D is
 and only the model the chosen level needs; nothing is added to the page itself. If they
 fail to load, the view says so and keeps the simple bodies. Left to itself the viewer
 starts phones on Light, and if the device can't hold about 18 frames a second (judged
-over three seconds) it steps down a level, Animated to Light to Simple; a level you pick
-by hand stays. Exported pages
+over three seconds) it steps down a level, Animated to Light to Simple. That automatic
+step is remembered for 7 days, and only while the device looks the same (the same WebGL
+renderer and screen size); after that, or on another GPU or screen, the fuller players are
+tried again. A choice made by hand (the switch or **B**) is kept until you change it.
+Exported pages
 (`python -m hoopsim watch`) keep the simple bodies and stay self-contained; add
 `--animated` (or `export.build_html(..., animation="embed")`) to carry the players inside
 the page, about 1.7 MB more (the full model only: no Light there). The motion is from the CMU Graphics Lab Motion Capture
@@ -1362,6 +1370,137 @@ Still off or worth watching:
   the penalty. The set-play clock check uses a clock below `MIN_CLOCK`. The transition
   lane test allows both wings at the 45.
 
+### Steadier leagues
+The full-game calibration held on the mean of the measure seeds, but single leagues
+drifted out. After "Star scoring", `measure --games 64` on seeds 0-4 gave 10 / 12 / 12 /
+13 / 11 of 13 within tolerance. Seed 0 was out on points, points per 100 and three
+share; seed 1 on ORB% (.300); seed 2 on transition share (.178); seed 4 on points per
+100 and ORB% (.229).
+
+**Why.** A measure league has 12 teams, so its means follow whichever coaching systems
+and rosters it happens to have. That alone would be fine if teams differed as much as NBA
+teams do. They differed two to three times as much. Over the five leagues (60 teams,
+about 11 games each):
+
+| per team | NBA range | before | after |
+|---|---|---|---|
+| pace | ~95-104 | 89.3-112.1 (sd 5.3) | 93.3-107.1 (sd 3.4) |
+| turnovers per 100 | ~11.5-16.5 | 7.3-25.7 (sd 4.2) | 8.5-20.1 (sd 3.0) |
+| ORB% | ~.21-.33 | .115-.494 (sd .087) | .140-.402 (sd .060) |
+| three share | ~.33-.53 | .242-.607 (sd .089) | .281-.587 (sd .075) |
+| transition share | ~.12-.20 | .084-.283 (sd .044) | .109-.265 (sd .030) |
+
+Seven Seconds or Less teams averaged pace 109, 25% transition and 10.5 turnovers per 100;
+Grit and Grind teams pace 93, 22 turnovers and an ORB% of .376. Measured mechanism by
+mechanism (the same leagues and games with one thing changed):
+* **Tempo was counted twice.** A system sets the pace slider (Seven Seconds: 14, Grit and
+  Grind: 6), and the slider moves seven things in the spatial engine: the push chances,
+  early offence, the number of entry actions, patience, holding, and how soon the offence
+  gets going. The system's own style then pushed the same way again: running after
+  rebounds and makes, an entry action more or less, a standing nudge to hold or shoot
+  early. With every team on neutral tactics the pace range was 96.5-103.
+* **The coach's nudges stacked.** For Grit and Grind the three-point slider, the inside
+  focus and the system together made a three worth -0.074 points in every choice, against
+  a choice temperature of 0.03-0.12. That moved the shot mix far more than any NBA team's
+  identity does.
+* **Post-heavy teams turned it over twice as often.** An inside focus put both bigs on
+  the blocks every possession, and every catch on a block is a post-up. Those teams posted
+  50-100 times per 100 possessions (NBA: under 15). A post-up ended in a turnover about as
+  often as in a shot: the on-ball man is on him the whole time, and strips came at the
+  perimeter dribbler's rate. With the focus set to balanced, seed 0 came out 13/13.
+* **Rebounding ratings were steep.** A rebounder's chance from a spot went as
+  `exp(0.25 × rating)`, so a 20-rated rebounder had 12 times a 10-rated one's. League ORB%
+  followed the league's average rebounding ratings, and teams with two strong offensive
+  rebounders on the blocks reached ORB% .35-.49.
+* **No feedback loop.** Transition didn't breed transition: transition share followed the
+  push decisions. Early offence fired as designed (30% of walk-ups at pace 10).
+* **What stays roster-driven:** points per 100. Leagues whose defenders are better than
+  their scorers (seed 0's perimeter defence and steals) score less, and per-team offensive
+  ratings still run from about 97 to 134. Points per 100 sits about 1.5 below the NBA's
+  115.8 on the seed mean. Part of that is how possessions are counted: the measure counts
+  them about 2% higher than Basketball-Reference's formula does.
+
+Changes (all in `SpatialParams`; `LEGACY_PARAMS` switches every one off and still
+reproduces the legacy pin):
+* **Pace bent, not shifted** (`tempo_span` 3): the pace slider's distance from 10 is read
+  as `3 × tanh(distance / 3)` wherever the spatial engine uses it. Pace 11 counts as 10.97,
+  pace 14 as 12.6, and nothing goes past 13.
+* **A system's tempo levers at half weight** (`system_tempo` 0.5): its push logits (after
+  rebounds and steals, and after makes), its extra or fewer entry actions, and its
+  hold-or-shoot-early nudges.
+* **The coach's nudges bent together** (`team_bias_span` 0.04): slider, offensive focus
+  and system nudges for one option are summed and read as `0.04 × tanh(sum / 0.04)`. The
+  players' own tendencies and the star's ball (heliocentric) are not bent, and nor are a
+  live coach's shouts.
+* **Strips in the post at half the rate** (`post_strip` 0.5).
+* **The second big on the block 40% of the time** (`inside_pair` 0.4) in an inside-focus
+  set; otherwise he spaces like any four.
+* **Rebounding ratings count less** (`rebound_rating` 0.25 → 0.08 per point). Height and
+  position count as before.
+* **Re-centred:** the dampers took some threes, turnovers, offensive rebounds and fouls
+  out of the league means. `defensive_rebound_edge` 3.2 → 2.4 (ORB% back to ~.26),
+  `patience_three` 1.0 → 0.9 (three share .405 → ~.42, about where it was before "Star
+  scoring"), `dribble_turnover_per_sec` 0.04 → 0.05 and `errant_pass` 0.0062 → 0.0072
+  (turnovers per 100 back to ~14.4), and `foul_scale` 1.0 → 1.05 (fouls per 100 had sat
+  at 18.3-18.5 in three leagues, 0.3-0.5 above the floor).
+* Decision values were **not** retrained.
+
+Full games, 64 per league (`measure --games 64 --jobs 2`, seeds 0 / 1 / 2 / 3 / 4):
+
+| | before | after | NBA 2025-26 |
+|---|---|---|---|
+| pace | 97.3 / 99.4 / 102.2 / 102.3 / 100.8 | 98.2 / 100.1 / 101.7 / 101.4 / 100.3 | 99.4 |
+| points | 109.3 / 115.5 / 117.4 / 116.9 / 113.8 | 111.6 / 116.7 / 115.2 / 115.8 / 115.3 | 115.6 |
+| points per 100 | 112.4 / 115.8 / 114.3 / 114.1 / 112.6 | 113.3 / 116.4 / 113.3 / 114.2 / 114.7 | 115.8 |
+| transition share | .160 / .160 / .178 / .168 / .160 | .155 / .158 / .165 / .163 / .155 | .150 |
+| transition points per play | 1.28 / 1.28 / 1.23 / 1.23 / 1.21 | 1.22 / 1.19 / 1.27 / 1.25 / 1.26 | 1.26 |
+| FTA per 100 | 23.1 / 23.8 / 22.4 / 23.4 / 23.1 | 25.4 / 24.6 / 23.0 / 23.5 / 24.2 | 23.6 |
+| fouls per 100 | 19.2 / 19.6 / 18.3 / 18.9 / 18.5 | 20.7 / 19.7 / 19.5 / 19.0 / 19.2 | 20.0 |
+| turnovers per 100 | 15.4 / 14.2 / 14.1 / 14.0 / 14.1 | 14.7 / 14.2 / 14.5 / 13.7 / 14.2 | 14.6 |
+| three share | .387 / .412 / .415 / .424 / .410 | .400 / .420 / .429 / .434 / .413 | .415 |
+| eFG | .553 / .544 / .558 / .555 / .552 | .549 / .558 / .561 / .554 / .555 | .546 |
+| ORB% | .257 / .300 / .240 / .250 / .229 | .255 / .279 / .226 / .245 / .258 | .260 |
+| within tolerance (of 13) | 10 / 12 / 12 / 13 / 11 | 13 / 12 / 12 / 13 / 13 | |
+
+Seed means stay 13/13: pace 100.3, points 114.9, points per 100 114.4, transition .159
+at 1.24, three share .419, eFG .555, ORB% .253, turnovers 14.3, fouls 19.6. The two
+misses are small: seed 1's transition points per play (1.19 against a floor of 1.20) and
+seed 2's ORB% (.226 against .235). One 64-game run is noisy: points per 100 moves by
+about ±1.2 and transition points per play by ±0.04 from one set of game seeds to the
+next. On a second set of game seeds (offset 10^6) the five leagues were 12 / 13 / 12 / 12 /
+12. The misses were seed 0's points and eFG .561-.566 in seeds 2-4. Before, seed 0
+alone was 10-12 over four sets. A team's top scorer per game is
+27.0-30.7 (28.4 before). A full game takes about the same time (1.21 s against 1.25 s on
+this machine; ~1.07 s on the one in "Shots with room").
+
+The realism audit (`audit --games 48 --seed 7`) goes from 23 ok / 2 watch / 1 off to
+24 / 1 / 1. Top speed seen is 21.41 mph (ok again). Distance per player is still a watch
+(3.73 mi) and teleports still off (0.10 per game). Every shot row stays ok: rim / short /
+mid / three 30.7 / 17.3 / 10.1 / 42.0%, corner threes 25.3%, early shots 14.0%. The
+statistical engine is untouched (`python -m hoopsim.calibrate` 17/17).
+
+Tests: `tests/test_steadier_leagues.py` checks the switches (all off in `LEGACY_PARAMS`)
+and the pace bend. It checks that the coach's three-point nudges are bent and the
+player's tendencies are not, that a running system's push after makes is damped, that
+strips in the post come at `post_strip` of the rate, and that an inside focus pairs the
+bigs about 40% of the time. Paired full games, 6 each on seed 11, play the same team as
+Seven Seconds and as Grit and Grind, with and without the dampers:
+
+| | undamped | damped |
+|---|---|---|
+| possessions | 105.7 / 90.0 | 100.2 / 92.8 |
+| turnovers per 100 | 12.8 / 24.3 | 12.6 / 20.6 |
+| ORB% | .213 / .301 | .204 / .237 |
+
+The tests check that each gap shrinks and keeps its direction.
+
+Still off or worth watching:
+* Teams still differ more than in the NBA (turnovers 8.5-20, ORB% .14-.40). The rest is
+  rosters: tendencies, five-out centres who never crash, ball handling.
+* eFG is the stat most often out now: .555 on the seed mean against .546 (.553 before),
+  and .56+ in the stronger-shooting leagues. Taking it down (`three_make_adj`) costs
+  points per 100, which is already short in seed 0.
+
 ### Where the defence picks up
 On a walk-up (after a make, or a team that doesn't push), the defence gets back and waits
 instead of picking up the ball full court:
@@ -1785,7 +1924,13 @@ can change any player's:
 * ratings, hidden ratings and tendencies (1-20 sliders);
 * potential (never below current ability);
 * name, birth date, nationality, position(s), height, wingspan, weight and jersey;
-* morale, an injury (heal it), contract (salary, end season, option) and team.
+* morale, an injury (heal it), contract (salary, end season, option) and team;
+* his look in the 3D viewer: hair style and colour, beard, headband, arm sleeve, leg
+  sleeves, wristbands, the colour of sleeves and bands, and shoes. Each part is either
+  "From name" (picked from his name, as for everyone else) or set; colours are white,
+  black, team colour or any `#rrggbb`. **Use default** clears the stored look. It is an
+  optional field on the player (`Player.look`; old saves load without one), checked
+  against the values the viewer understands (`editor.clean_look`).
 
 You can also change a team's city, name, abbreviation and reputation.
 

@@ -483,6 +483,10 @@ ul.plain li { padding: 3px 0; }
 .editor-attr input[type=range] { width: 100%; }
 .editor-attr b { text-align: right; }
 .editor-attr.changed .attr-name, .editor-attr.changed b { color: var(--accent, #4b8bff); }
+.editor-look select { min-width: 0; }
+.editor-look .btn { align-self: flex-start; }
+.editor-look input[type=color] { width: 2.4em; padding: 0; height: 1.9em; }
+.editor-look.changed select { color: var(--accent, #4b8bff); }
 .editor-team { margin: 6px 0 10px; }
 .editor-team input { max-width: 12em; }
 .drawer-edit { position: absolute; top: 12px; right: 52px; }

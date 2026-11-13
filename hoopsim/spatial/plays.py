@@ -54,9 +54,9 @@ def plan(g: "HalfCourtGame") -> Optional[dict]:
     if g.shot_clock < MIN_CLOCK:
         return None
     tactics = g.teams[g.side].tactics
-    pace = tactics.pace
+    pace = p.pace(tactics.pace)
     n = round(p.entry_actions * max(0.3, 1 - 0.06 * (pace - 10)) + g.rng.uniform(-0.75, 0.75)
-              + offense_style(tactics).entry)                 # motion and triangle run more sets
+              + p.system_tempo * offense_style(tactics).entry)                 # motion and triangle run more sets
     n = max(0, min(MAX_ACTIONS, n))
     if n == 0:
         return None

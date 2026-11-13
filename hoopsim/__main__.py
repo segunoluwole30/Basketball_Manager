@@ -255,7 +255,7 @@ def cmd_watch(args) -> None:
     from pathlib import Path
 
     from .spatial import HalfCourtGame
-    from .spatial.export import write_html
+    from .spatial.export import viewer_data, write_html
 
     anim = "embed" if getattr(args, "animated", False) else None      # 3D: carry the animated players in the page
     league = load_league(args.load) if args.load else generate_league(seed=args.seed)
@@ -285,7 +285,7 @@ def cmd_watch(args) -> None:
         quarter = getattr(args, "quarter", None)
         if quarter is not None and not 1 <= quarter <= full.period:
             raise SystemExit(f"the game had {full.period} periods")
-        path = write_html(full.to_dict(period=quarter), args.out, animation=anim)
+        path = write_html(viewer_data(full, period=quarter), args.out, animation=anim)
         r = sim.result
         ot = f" ({r.overtimes} OT)" if r.overtimes else ""
         part = f"Q{quarter}" if quarter and quarter <= 4 else f"OT{quarter - 4}" if quarter else "full game"
@@ -296,7 +296,7 @@ def cmd_watch(args) -> None:
         return
     game = HalfCourtGame(league, home, away, random.Random(args.seed))
     game.play(args.possessions)
-    path = write_html(game.to_dict(), args.out, animation=anim)
+    path = write_html(viewer_data(game), args.out, animation=anim)
     print(f"{a.abbreviation} {game.score['away']} @ {h.abbreviation} {game.score['home']} "
           f"after {args.possessions} half-court possessions -> {path.resolve()}")
     if not args.no_open:

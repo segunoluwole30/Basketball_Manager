@@ -30,6 +30,24 @@ PLAYER_ASSETS_URL = "/viewer-assets/"
 PLAYER_ASSETS_PLACEHOLDER = "/*PLAYER_ASSETS*/"
 
 
+def viewer_data(game, **kwargs) -> dict:
+    """``game.to_dict(**kwargs)`` (a FullGame or a HalfCourtGame) with each listed player's
+    league id added (``"id"``), so a page or a saved replay can be matched to the league's
+    players exactly (their build and look in 3D). Replays saved before this have no ids;
+    the web app falls back to name and number for them."""
+    data = game.to_dict(**kwargs)
+    for key in ("home", "away"):
+        if hasattr(game, "sides"):                       # FullGame: Side.roster, its export order
+            people = [s.p for s in game.sides[key].roster]
+        else:                                            # HalfCourtGame: the agents on the floor
+            people = [a.p for a in game.agents[key]]
+        rows = (data.get(key) or {}).get("players", [])
+        for row, p in zip(rows, people):
+            if row.get("name") == p.name:
+                row["id"] = p.id
+    return data
+
+
 @functools.lru_cache(maxsize=1)
 def _three_source() -> str:
     src = THREE_JS.read_text(encoding="utf-8")

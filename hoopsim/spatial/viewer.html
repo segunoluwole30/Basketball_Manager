@@ -910,8 +910,11 @@ window.GAME = /*GAME_DATA*/null;
 
   // Each player's look in 3D: hair (style and colour), beard, headband, arm and leg sleeves,
   // wristbands, shoes. The page may carry it (look: {hair, hairColor, beard, band, sleeve, leg,
-  // wrist, shoes}); otherwise it is picked from his name, the same every time, with hair
-  // colours that suit his skin tone. Colours: "white", "black", "team" or #rrggbb.
+  // wrist, gear, shoes}: the web app sends what the editor set); any part it leaves out is
+  // picked from his name, the same every time, with hair colours that suit his skin tone.
+  // hair: one of HAIR_STYLES; beard: true/false; sleeve, leg, wrist: "L", "R", "both" or
+  // null; band: a colour or null; gear (sleeves and bands): a colour. Colours: "white",
+  // "black", "team" or #rrggbb. (hoopsim/editor.py LOOK_* checks the same sets.)
   const HAIR_STYLES = [["short", 28], ["fade", 26], ["bald", 10], ["afro", 9], ["locs", 12], ["flattop", 6], ["bun", 9]];
   // the model's hair parts each style is made of (bald: none)
   const HAIR_PARTS = { short: ["cap"], fade: ["fade"], afro: ["afro"], flattop: ["cap", "flattop"], locs: ["cap", "locs"], bun: ["cap", "bun"] };
@@ -2420,9 +2423,12 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     view3d.setPreset(camPreset);
     view3d.setArena(arenaQ);
     view3d.setLabels(labelMode);
+    if (bodyPref === "auto") restoreAuto();          // the renderer is known now
     rigShown = null; applyBodies();                 // (a model already loaded comes straight back)
     if (DEBUG) {
       window.hoopsim3D = view3d;
+      view3d.bodyPref = () => ({ pref: bodyPref, autoSimple, autoLevel, device: deviceSig() });
+      view3d.fallBack = stepDown;                // as if the device had been too slow
       view3d.seek = (n, time, play = false) => { goTo(n); t = Math.min(time, duration(P[poss])); setPlaying(play); drawFrame(); };
       view3d.time = () => ({ poss, t });
     }
@@ -2434,16 +2440,66 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
   // shown), Light (the same player with far fewer triangles) or Simple (the low-poly bodies:
   // also what you get if the files don't load and in pages exported without them). Left to
   // itself the viewer starts phones on Light and steps down a level when the device can't
-  // keep up; a level picked by hand stays. Remembered.
+  // keep up. A choice made by hand (the switch or B) is remembered for good. A step down
+  // made by itself is remembered for a week, and only while the device looks the same (its
+  // graphics renderer and screen); after that, the fuller players are tried again.
+  const AUTO_SIMPLE_KEY = "hoopsim-bodies-auto", AUTO_SIMPLE_DAYS = 7;
   const PHONE = window.matchMedia("(max-width: 700px), (pointer: coarse)").matches;
   const RIG_FILES = { full: "player.glb", light: "player_light.glb" };
   const rigs = { full: { state: BODY_CFG ? "idle" : "none", data: null }, light: { state: HAS_LIGHT ? "idle" : "none", data: null } };
-  let bodyPref = "auto", autoLevel = PHONE && HAS_LIGHT ? "light" : "full", rigShown = null;
+  const START_LEVEL = PHONE && HAS_LIGHT ? "light" : "full";
+  let bodyPref = "auto", autoLevel = START_LEVEL, autoSimple = false, rigShown = null;
   try { bodyPref = localStorage.getItem("hoopsim-bodies") || "auto"; } catch (e) {}
-  if (bodyPref === "auto-light") { bodyPref = "auto"; if (HAS_LIGHT) autoLevel = "light"; }
   if (!["auto", "animated", "light", "simple"].includes(bodyPref)) bodyPref = "auto";
-  const wantLevel = () => (bodyPref === "simple" ? "simple" : bodyPref === "animated" ? "full" :
+  const wantsSimple = () => bodyPref === "simple" || (bodyPref === "auto" && autoSimple);
+  const wantLevel = () => (wantsSimple() ? "simple" : bodyPref === "animated" ? "full" :
                            bodyPref === "light" ? (HAS_LIGHT ? "light" : "full") : autoLevel);
+  function deviceSig() {
+    // what makes the device "the same one": its WebGL renderer and its screen (either way up)
+    let gl = "";
+    try {
+      const c = view3d && view3d.renderer.getContext();
+      const ext = c && c.getExtension("WEBGL_debug_renderer_info");
+      gl = String((c && (ext ? c.getParameter(ext.UNMASKED_RENDERER_WEBGL) : c.getParameter(c.RENDERER))) || "");
+    } catch (e) {}
+    let scr = "";
+    try {
+      const w = screen.width | 0, h = screen.height | 0;
+      scr = Math.min(w, h) + "x" + Math.max(w, h) + "@" + (+(window.devicePixelRatio || 1).toFixed(2));
+    } catch (e) {}
+    return { gl, screen: scr };
+  }
+  function readAutoFallback() {
+    // the level a recent automatic step down on this same device reached: "light", "simple" or null
+    let rec = null;
+    try { rec = JSON.parse(localStorage.getItem(AUTO_SIMPLE_KEY) || "null"); } catch (e) { rec = null; }
+    if (!rec || typeof rec !== "object") return null;
+    const age = Date.now() - rec.at, sig = deviceSig();
+    const ok = Number.isFinite(age) && age >= 0 && age < AUTO_SIMPLE_DAYS * 864e5 && rec.gl === sig.gl && rec.screen === sig.screen;
+    if (!ok) { try { localStorage.removeItem(AUTO_SIMPLE_KEY); } catch (e) {} }
+    return !ok ? null : rec.level === "light" ? "light" : "simple";       // (a record from before Light: simple)
+  }
+  function restoreAuto() {
+    const lv = readAutoFallback();
+    autoSimple = lv === "simple";
+    if (lv === "light" && HAS_LIGHT) autoLevel = "light";
+  }
+  function rememberFallback(level) {
+    try { localStorage.setItem(AUTO_SIMPLE_KEY, JSON.stringify({ at: Date.now(), level, ...deviceSig() })); } catch (e) {}
+  }
+  function fallBackToSimple() {
+    autoSimple = true;
+    rememberFallback("simple");
+    applyBodies();
+    setText("viewMsg", "Animated players were slow here: switched to simple bodies.");
+  }
+  // The device couldn't keep up: a level down, Animated to Light to Simple.
+  function stepDown() {
+    if (wantLevel() !== "full" || !HAS_LIGHT) return fallBackToSimple();
+    autoLevel = "light";
+    rememberFallback("light");
+    loadBodies().then(() => setText("viewMsg", "Animated players were slow here: switched to the light model."));
+  }
   function applyBodies() {
     let lv = wantLevel();
     if (lv !== "simple" && rigs[lv].state !== "ready") lv = "simple";       // not here (yet): simple bodies meanwhile
@@ -2454,16 +2510,12 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     $("bodyLight").hidden = $("bodyLight").nextElementSibling.hidden = !HAS_LIGHT;
     if (!view3d) return;
     if (lv !== "simple" && rigShown !== lv) { view3d.setRig(rigs[lv].data); rigShown = lv; }
-    view3d.setBodies(lv === "simple" ? "simple" : "animated", bodyPref === "auto", () => {
-      if (autoLevel === "full" && HAS_LIGHT) {                               // too slow: a level down
-        autoLevel = "light"; setBodyPref("auto");
-        setText("viewMsg", "Animated players were slow here: switched to the light model.");
-      } else { setBodyPref("simple"); setText("viewMsg", "Animated players were slow here: switched to simple bodies."); }
-    });
+    view3d.setBodies(lv === "simple" ? "simple" : "animated", bodyPref === "auto" && !autoSimple, stepDown);
   }
   function setBodyPref(v) {
-    bodyPref = v;
-    try { localStorage.setItem("hoopsim-bodies", v === "auto" && autoLevel === "light" ? "auto-light" : v); } catch (e) {}
+    // a choice by hand: kept for good, and it replaces any automatic step down
+    bodyPref = v; autoSimple = false; autoLevel = START_LEVEL;
+    try { localStorage.setItem("hoopsim-bodies", v); localStorage.removeItem(AUTO_SIMPLE_KEY); } catch (e) {}
     loadBodies();
   }
   // Bring up the model the current choice needs (if it isn't here yet), then show it.
@@ -2500,7 +2552,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       catch (e) { console.warn("3D view:", e); no3D(NO_GL); mode = "2d"; }
       viewBusy = false;
     }
-    if (mode === "3d" && BODY_CFG) loadBodies();
+    if (mode === "3d" && BODY_CFG && !wantsSimple()) loadBodies();
     viewMode = mode;
     $("v2d").checked = mode === "2d"; $("v3d").checked = mode === "3d";
     canvas.hidden = mode === "3d";

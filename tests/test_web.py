@@ -470,6 +470,57 @@ class WebMatchEngineTests(unittest.TestCase):
         if others:
             self.assertEqual(self.client.get(f"/api/replay/{others[0].id}").status_code, 404)
 
+    def test_replays_carry_ids_and_edited_looks(self):
+        """Saved replays name each player by id; the page gets his build and editor look by
+        id, and a replay saved before ids (none in it) still finds them by name and number."""
+        import json as _json
+        import zlib
+        from hoopsim.spatial.season_game import replay_data
+        choices = self.post("/api/new", {"seed": 7, "num_teams": 4, "match_engine": "spatial"})["teams"]
+        short_season(self.session, games=4)
+        me = choices[0]["id"]
+        self.post("/api/new/team", {"team_id": me})
+        lg = self.session.league
+        while not any(g.played for g in lg.games.values() if me in (g.home_team_id, g.away_team_id)):
+            self.post("/api/sim", {"mode": "day"})
+        gid = next(g.id for g in lg.games.values() if g.played and me in (g.home_team_id, g.away_team_id))
+        data = replay_data(lg, gid)
+        rows = data["home"]["players"] + data["away"]["players"]
+        self.assertTrue(all(lg.players[r["id"]].name == r["name"] for r in rows))
+        star = lg.players[rows[0]["id"]]
+        look = {"hair": "afro", "hairColor": "#AA3311", "beard": True, "band": None, "sleeve": "both",
+                "shoes": "team"}
+        r = self.post(f"/api/editor/player/{star.id}", {"look": look})
+        self.assertIn("look", r["changed"])
+        self.assertEqual(r["player"]["look"]["hairColor"], "#aa3311")
+        page = self.client.get(f"/api/replay/{gid}").text
+        game = _json.loads(page.split("window.GAME = ", 1)[1].split(";\n", 1)[0])
+        row = next(x for x in game["home"]["players"] + game["away"]["players"] if x.get("id") == star.id)
+        self.assertEqual(row["look"], {**look, "hairColor": "#aa3311"})
+        self.assertEqual(row["ht"], star.physique.height_cm)
+        # a renamed player (or a changed number) is still found by id
+        self.post(f"/api/editor/player/{star.id}", {"first_name": "Renamed"})
+        out = self.session._viewer_builds(replay_data(lg, gid))
+        row = next(x for x in out["home"]["players"] + out["away"]["players"] if x.get("id") == star.id)
+        self.assertEqual(row["look"]["hair"], "afro")
+        # an old replay: no ids, found by name and number; it still serves
+        old = replay_data(lg, gid)
+        for side in ("home", "away"):
+            for x in old[side]["players"]:
+                del x["id"]
+        lg.replays[gid] = zlib.compress(_json.dumps(old).encode())
+        out = self.session._viewer_builds(replay_data(lg, gid))
+        mate = lg.players[rows[1]["id"]]
+        found = next(x for x in out["home"]["players"] + out["away"]["players"] if x["name"] == mate.name)
+        self.assertEqual(found["ht"], mate.physique.height_cm)
+        self.assertNotIn("id", found)
+        page = self.client.get(f"/api/replay/{gid}")
+        self.assertEqual(page.status_code, 200)
+        # "use default" clears the look
+        r = self.post(f"/api/editor/player/{star.id}", {"look": None})
+        self.assertIsNone(r["player"]["look"])
+        self.assertIsNone(lg.players[star.id].look)
+
     def test_watch_next_game_live(self):
         choices = self.post("/api/new", {"seed": 7, "num_teams": 4, "match_engine": "spatial"})["teams"]
         short_season(self.session, games=4)
