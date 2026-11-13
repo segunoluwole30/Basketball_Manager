@@ -43,6 +43,9 @@ ACCEL_PER_POINT = 0.6       # ... per point of speed rating
 SCREEN_BRAKE = 1.4          # a screen stops a defender this much harder (body contact)
 TRACK_MODES = ("setup", "probe", "drive", "pass", "post", "pullup")   # off-ball defenders track their man
 SEPARATE_PASSES = 2         # body-separation passes per tick (was 1)
+# Nobody covers more than this in a tick (ft/s): a sprinter shoved by a body he ran
+# into was carried past 32 ft/s, a "teleport" (README "Last audit flags").
+MAX_STEP_SPEED = 30.0
 
 # Animation cues in recorded possessions ("actions": [frame, player, action, other]):
 # what a player starts doing at that frame, for the viewer; recording them changes
@@ -193,10 +196,11 @@ class Agent:
         self.vy += sy
 
     def move(self, dt: float, now: float, speed_boost: float = 1.0, accel_boost: float = 1.0,
-             brake: float = 0.0) -> None:
+             brake: float = 0.0, brake_range: float = 10.0) -> None:
         """``accel_boost``: acceleration multiplier (a closeout sprint); ``brake``: slow
         down in time to stop at the target, decelerating at this share of the
-        acceleration limit (0: ease in only)."""
+        acceleration limit (0: ease in only), from ``brake_range`` ft out (a full
+        sprint needs ~20)."""
         if now < self.stuck_until:             # caught on a screen: body contact stops him
             self.steer((0.0, 0.0), dt, SCREEN_BRAKE * self.accel)
         else:
@@ -204,7 +208,7 @@ class Agent:
             d = math.hypot(dx, dy)
             top = self.max_speed * speed_boost
             speed = min(top, d * self.ease)    # ease in to the target
-            if brake > 0 and d < 10.0:         # ... braking in time: a body can't stop dead
+            if brake > 0 and d < brake_range:  # ... braking in time: a body can't stop dead
                 speed = min(speed, math.sqrt(2.0 * brake * self.accel * accel_boost * d))
             want = (dx / d * speed, dy / d * speed) if d > 0.05 else (0.0, 0.0)
             self.steer(want, dt, self.accel * accel_boost)
@@ -385,11 +389,15 @@ class HalfCourtGame:
 
     def foul_chance(self, shooter: Agent, z: str, dd: float, share: Optional[float] = None) -> float:
         """The chance a shot is fouled, the nearest defender ``dd`` ft away (the go-to
-        scorer draws more: ``foul_draw``; ``share``: his shot share, default as of now)."""
+        scorer draws more: ``foul_draw``; ``share``: his shot share, default as of now; and
+        so does a good foul drawer: ``foul_drawing``)."""
         level = max(0.0, min(1.0, (6.0 - dd) / 5.0))
         if share is None and self.p.foul_draw:
             share = self.usage_share(shooter)
         draw = math.exp(self.p.foul_draw * (share - 0.22)) if self.p.foul_draw else 1.0
+        if self.p.foul_drawing:                # his foul-drawing rating, as in the statistical engine
+            draw *= math.exp(self.p.foul_drawing * (shooter.a("drawing_fouls") - self.p.foul_drawing_centre))
+            return min(0.6, self.t.shooting_foul[z] * self.p.foul_scale * (0.3 + 0.7 * level) * draw)
         return self.t.shooting_foul[z] * self.p.foul_scale * (0.3 + 0.7 * level) * draw
 
     def free_throw_pct(self, shooter: Agent) -> float:
@@ -586,8 +594,17 @@ class HalfCourtGame:
             moved |= pushed
             pairs = [(i, j) for i, j in pairs if i in pushed or j in pushed]
         half = C.WIDTH / 2
+        cap = MAX_STEP_SPEED * self.t.dt
         for i in moved:                       # nobody is shoved off the floor
-            people[i].x, people[i].y = max(-half, min(half, xs[i])), max(0.0, ys[i])
+            a = people[i]
+            x, y = max(-half, min(half, xs[i])), max(0.0, ys[i])
+            # ... nor faster than a body can go: the shove only takes what his own
+            # step this tick leaves (the overlap left over is settled next tick).
+            sx, sy = a.x - a.vx * self.t.dt, a.y - a.vy * self.t.dt
+            step = math.hypot(x - sx, y - sy)
+            if step > cap:
+                x, y = sx + (x - sx) * cap / step, sy + (y - sy) * cap / step
+            a.x, a.y = x, y
 
     def record_frame(self) -> None:
         if not self.record:
@@ -1065,9 +1082,12 @@ class HalfCourtGame:
     def closeout_gap(self, man: Agent) -> float:
         """Where a closeout stops: about 3 ft on shooters (hand up, still able to
         slide with a drive), more room for non-shooters so they can't drive past."""
-        if C.dist_to_rim(man.pos) < 20:
-            return 2.5
         p = self.p
+        d_rim = C.dist_to_rim(man.pos)
+        if d_rim < p.closeout_paint_range and p.closeout_paint > 0:
+            return p.closeout_paint      # a catch in the paint: wall up a step off him, rim-side
+        if d_rim < 20:
+            return 2.5
         return max(p.closeout_min, min(p.closeout_max, p.closeout_base - p.closeout_slope * (man.a("three_point") - 11)))
 
     def choose_stunter(self, exclude: Optional[Agent]) -> Optional[Agent]:
@@ -1873,6 +1893,11 @@ class HalfCourtGame:
                 and C.dist(spot, h.pos) > 0.25):
             self.begin_gather(h, moving, spot)
             return
+        if (self.record and released is None and not lob and self.catch_time == self.now
+                and self.frames and self.frames[-1][5] != self.index[id(h)]):
+            # Caught and shot in the same tick (a set play's read on the catch): show
+            # him with the ball first. Recording only: the play is the same either way.
+            self.record_frame()
         catch = released if released is not None else (None if lob else self.just_caught(moving))
         defender, dd = self.nearest_defender(spot)
         prob, z = self.make_prob(h, spot, dd, defender, moving, catch, post=post, lob=lob)
@@ -2293,6 +2318,10 @@ class HalfCourtGame:
             self.act(fouler, "foul", self.holder)
             if self.bonus:
                 self.say(f"Foul on {fouler.p.name}: in the penalty, two shots")
+                # This tick's movement is done: show it before the walk to the lane
+                # (otherwise the first walk frame carries two ticks of running).
+                self.record_frame()
+                self.now += self.t.dt
                 self.free_throws(self.holder, 2, fouler)
             else:
                 self.credit(fouler, "pf")

@@ -135,12 +135,18 @@ class TeamSpreadTests(unittest.TestCase):
     """Paired full games: the same team as Seven Seconds or Less and as Grit and Grind.
     Measured on 6 games each (seed 11), Seven Seconds / Grit and Grind: possessions
     105.7 / 90.0 undamped against 100.2 / 92.8, turnovers per 100 12.8 / 24.3 against
-    12.6 / 20.6, offensive rebound rate .213 / .301 against .204 / .237."""
+    12.6 / 20.6, offensive rebound rate .213 / .301 against .204 / .237.
+    Since the paint closeouts (README "Last audit flags") a defender recovering to a
+    catch inside walls up between his man and the rim, and an inside team's offensive
+    rebounding edge is smaller even undamped: on 12 games each, offensive rebound rate
+    .194 / .259 undamped against .208 / .246 (6 games were too few to see it: .216 /
+    .256 against .216 / .273). Possessions 105.3 / 88.9 against 100.9 / 93.1, turnovers
+    11.7 / 24.2 against 14.5 / 18.3."""
 
     @classmethod
     def setUpClass(cls):
-        cls.on = {s: team_numbers(DEFAULT_PARAMS, s) for s in ("seven_seconds", "grit_grind")}
-        cls.off = {s: team_numbers(UNDAMPED, s) for s in ("seven_seconds", "grit_grind")}
+        cls.on = {s: team_numbers(DEFAULT_PARAMS, s, games=12) for s in ("seven_seconds", "grit_grind")}
+        cls.off = {s: team_numbers(UNDAMPED, s, games=12) for s in ("seven_seconds", "grit_grind")}
 
     def gap(self, side, k):
         return side["seven_seconds"][k] - side["grit_grind"][k]
@@ -153,7 +159,7 @@ class TeamSpreadTests(unittest.TestCase):
         self.assertLess(-self.gap(self.on, "tov"), -self.gap(self.off, "tov") - 2)
 
     def test_crashing_the_glass_pays_less(self):
-        self.assertLess(-self.gap(self.on, "orb"), -self.gap(self.off, "orb") - 0.03)
+        self.assertLess(-self.gap(self.on, "orb"), -self.gap(self.off, "orb") - 0.015)
         self.assertGreater(self.on["grit_grind"]["orb"], self.on["seven_seconds"]["orb"])
 
 
