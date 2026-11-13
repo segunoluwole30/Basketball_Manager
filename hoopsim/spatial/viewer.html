@@ -960,8 +960,8 @@ window.GAME = /*GAME_DATA*/null;
   // after it, options]. face: who he turns to; reach: how high his hands must get (feet, or
   // "ball": where the ball is then), which lifts the jump; ball: he carries it in the clip.
   const CUE_CLIPS = {
-    drive: ["drive", "", 0, { w: 0.75 }],                         // the first steps of a drive; then the dribble clips
-    cut: ["burst", "", 0, { w: 0.6 }],                            // the first strides of a cut
+    drive: ["drive", "", 0, { w: 0.75, under: true }],                         // the first steps of a drive; then the dribble clips
+    cut: ["burst", "", 0, { w: 0.6, under: true }],                            // the first strides of a cut
     pass: ["pass", "release", 0, { face: "other" }],
     lob_pass: ["lob_pass", "release", 0, { face: "other" }],
     inbound: ["lob_pass", "release", 0, { face: "other" }],
@@ -998,6 +998,7 @@ window.GAME = /*GAME_DATA*/null;
   // turn), LEAN radians per ft/s2 up to LEAN_MAX. Look: his chest and head turn toward the
   // ball (the man with it: the rim) by up to LOOK_MAX radians, whichever way his legs point.
   const LEAN = 0.0085, LEAN_MAX = 0.2, LOOK_MAX = 1.15, LOOK_CHEST = 0.28, LOOK_HEAD = 0.5;
+  const SLAM_IN = 0.35, SLAM_HANG = 0.12, SLAM_NEAR = 1.5;    // a dunk: the hand takes the ball to the rim over this long (s), hangs on it this long, from within this far (ft)
   const REACH_IN = 0.3, REACH_OUT = 0.3;      // a blocking hand goes to the ball from this long before the top of the jump to this long after (s)
   const HAND_HOLD = 0.8, HAND_CROSS = 0.2;    // a dribbler keeps a hand at least this long (s); the ball takes this long to cross
   const READY = 0.4;                          // how much of the defensive crouch is in an off-ball attacker's stance
@@ -1163,6 +1164,51 @@ window.GAME = /*GAME_DATA*/null;
         adjustedPose(hip); adjustedPose(knee); adjustedPose(foot);
       }
     }
+    // Re-pose an arm (shoulder and elbow, two-bone IK) so its wrist goes w of the way from where
+    // the clip has it to T (world), as far as the arm reaches. Returns how far short it stays.
+    function armTo(fg, sd, T, w) {
+      const r = fg.rig, b = r.bones, h = fg.heading;
+      const arm = b[sd + "Arm"], fore = b[sd + "ForeArm"];
+      vH.setFromMatrixPosition(arm.matrixWorld); vK.setFromMatrixPosition(fore.matrixWorld); vA.setFromMatrixPosition(b[sd + "Hand"].matrixWorld);
+      vT.lerpVectors(vA, T, w);
+      r.reachFrom = vA.distanceTo(T);                           // (how far off the clip's own arm is: see ?debug)
+      const l1 = vK.distanceTo(vH), l2 = vA.distanceTo(vK);
+      const d = Math.max(Math.abs(l1 - l2) * 1.02 + 0.01, Math.min((l1 + l2) * 0.999, vT.distanceTo(vH)));
+      v1.subVectors(vH, vK); v2.subVectors(vA, vK);
+      const bend = v1.angleTo(v2) - Math.acos(Math.max(-1, Math.min(1, (l1 * l1 + l2 * l2 - d * d) / (2 * l1 * l2))));
+      v3.crossVectors(v2, v1);
+      if (v3.lengthSq() < 1e-6) v3.set(Math.cos(h), 0, -Math.sin(h)); else v3.normalize();
+      q1.setFromAxisAngle(v3, bend);
+      turnWorld(fore, q1);
+      v2.applyQuaternion(q1).add(vK).sub(vH).normalize();     // shoulder to the wrist, after the bend
+      v1.subVectors(vT, vH).normalize();
+      turnWorld(arm, q3.setFromUnitVectors(v2, v1));
+      adjustedPose(arm); adjustedPose(fore);
+      return v1.multiplyScalar(d).add(vH).distanceTo(T);       // how far short of the target the wrist stays
+    }
+    // A dunk: the captured jump only puts an arm up. From SLAM_IN before the ball goes through,
+    // the right hand takes it over the rim and down through it (the ball rides under the palm
+    // by then), then holds the near edge of the rim for SLAM_HANG before letting go. Called
+    // before the ball is placed in his hand.
+    function slamHand(fg, rimX, at) {
+      const r = fg.rig, c = r.slam, b = r.bones, k = r.k;
+      r.slamGap = null; r.slamBall = BALL_R * 0.8;
+      if (!c || !env.reach() || !b.RightHand) return;
+      const t = at - c.slam, u = clamp01(1 + t / SLAM_IN);
+      const w = t < 0 ? smooth01(u / 0.45) : 1 - smooth01((t - SLAM_HANG) / 0.25);
+      if (w <= 0.01) return;
+      fg.root.updateMatrixWorld(true);
+      vH.setFromMatrixPosition(b.RightArm.matrixWorld);
+      let dx = vH.x - rimX, dz = vH.z;                            // from the rim towards him, level
+      const d = Math.hypot(dx, dz) || 1; dx /= d; dz /= d;
+      if (t < 0) {
+        const near = 0.9 * (1 - smooth01(u / 0.55));              // the ball's centre: up on his side of the rim, over it, down
+        r.slamBall = BALL_R * (0.8 - 1.3 * smooth01((u - 0.2) / 0.5));
+        v4.set(rimX + dx * near, 9.7 + 1.4 * (1 - smooth01((u - 0.55) / 0.45)) - r.slamBall, dz * near);
+      } else v4.set(rimX + dx * 0.72, 10.02, dz * 0.72);          // the palm on the rim
+      v3.subVectors(v4, vH).normalize().multiplyScalar(0.38 * k);
+      r.slamW = w; r.slamGap = armTo(fg, "Right", v4.sub(v3), w);
+    }
     // A hand that goes to the ball: blocking or contesting a shot, the clip only raises the
     // arms; where the ball actually is differs every time. The arm on the ball's side is
     // re-posed (shoulder and elbow, two-bone IK) so the palm meets the ball, as far as the arm
@@ -1177,25 +1223,7 @@ window.GAME = /*GAME_DATA*/null;
         if (c.offArm) r.reachSide = (bx - fg.x) * Math.cos(h) - (bz - fg.z) * Math.sin(h) > 0 ? "Left" : "Right";
         else r.reachSide = vA.setFromMatrixPosition(b.LeftHand.matrixWorld).y > vK.setFromMatrixPosition(b.RightHand.matrixWorld).y ? "Left" : "Right";
       }
-      const solve = (sd, T, w) => {
-        const arm = b[sd + "Arm"], fore = b[sd + "ForeArm"];
-        vH.setFromMatrixPosition(arm.matrixWorld); vK.setFromMatrixPosition(fore.matrixWorld); vA.setFromMatrixPosition(b[sd + "Hand"].matrixWorld);
-        vT.lerpVectors(vA, T, w);
-        r.reachFrom = vA.distanceTo(T);                           // (how far off the clip's own arm is: see ?debug)
-        const l1 = vK.distanceTo(vH), l2 = vA.distanceTo(vK);
-        const d = Math.max(Math.abs(l1 - l2) * 1.02 + 0.01, Math.min((l1 + l2) * 0.999, vT.distanceTo(vH)));
-        v1.subVectors(vH, vK); v2.subVectors(vA, vK);
-        const bend = v1.angleTo(v2) - Math.acos(Math.max(-1, Math.min(1, (l1 * l1 + l2 * l2 - d * d) / (2 * l1 * l2))));
-        v3.crossVectors(v2, v1);
-        if (v3.lengthSq() < 1e-6) v3.set(Math.cos(h), 0, -Math.sin(h)); else v3.normalize();
-        q1.setFromAxisAngle(v3, bend);
-        turnWorld(fore, q1);
-        v2.applyQuaternion(q1).add(vK).sub(vH).normalize();     // shoulder to the wrist, after the bend
-        v1.subVectors(vT, vH).normalize();
-        turnWorld(arm, q3.setFromUnitVectors(v2, v1));
-        adjustedPose(arm); adjustedPose(fore);
-        return v1.multiplyScalar(d).add(vH).distanceTo(T);       // how far short of the target the wrist stays
-      };
+      const solve = (sd, T, w) => armTo(fg, sd, T, w);
       // the wrist stops a palm and half a ball short of the ball's centre
       vH.setFromMatrixPosition(b[r.reachSide + "Arm"].matrixWorld);
       v4.set(bx, by, bz).sub(vH);
@@ -1267,7 +1295,7 @@ window.GAME = /*GAME_DATA*/null;
         if (name === "rebound") for (let j = fi; j < Math.min(n, fi + 25); j++) if (fr[j][5] === pl) { fi = j; break; }
         const cue = { clip: m[0], t0: fi * dt + m[2] - ((c.marks && c.marks[m[1]]) || 0), ofs: 0, dur: c.duration,
                       face: o.face, other, yaw: o.yaw || 0, w: o.w || 1, hold: !!c.hold, reach: 0,
-                      ball: o.noBall ? null : o.ball || c.ball || null, name, hand: o.hand || 0, offArm: !!o.offArm };
+                      ball: o.noBall ? null : o.ball || c.ball || null, name, hand: o.hand || 0, offArm: !!o.offArm, under: !!o.under };
         // A shot taken on the move comes out of the run: the clip is eased in up to its gather
         // (the running legs carry on under it) instead of cutting to the clip's own first pose.
         if (c.marks && c.marks.gather && fi > 3) {
@@ -1329,6 +1357,10 @@ window.GAME = /*GAME_DATA*/null;
         if (c.pose) pose = c; else act.push({ c, tl });
       }
       r.active = act;
+      // (the first steps of a drive or cut give way to whatever he does next: a shot started a
+      // frame after the drive is the one that plays), and a dunk outranks the catch before it
+      const rank = (c) => (c.under ? 0 : c.slam ? 2 : 1);
+      act.sort((a, b) => rank(a.c) - rank(b.c));
       const top = act.slice(-2);
       let used = 0, face = null, lift = 0, ballCue = null;
       r.reachW = 0;
@@ -1350,7 +1382,8 @@ window.GAME = /*GAME_DATA*/null;
           if (c.reach && m && m.land) {
             const need = Math.max(0, Math.min(3.6, c.reach - CL[c.clip].reach * r.k)), t = c.ofs + tl;
             const g = m.gather !== undefined ? m.gather : 0;
-            lift = need * (t < m.release ? smooth01((t - g) / Math.max(0.05, m.release - g)) : smooth01((m.land - t) / Math.max(0.05, m.land - m.release)));
+            const hang = c.slam && env.reach() ? Math.min(SLAM_HANG, Math.max(0, t - m.release)) : 0;   // (a dunker hangs at the top)
+            lift = need * (t < m.release ? smooth01((t - g) / Math.max(0.05, m.release - g)) : smooth01((m.land - t + hang) / Math.max(0.05, m.land - m.release)));
           }
         }
       }
@@ -1451,6 +1484,14 @@ window.GAME = /*GAME_DATA*/null;
       // a dunk in progress: the ball stays in his hands to the rim, then drops through the net
       r.slam = null;
       for (const c of list) if (c.slam && s.at > c.t0 + CL[c.clip].marks.gather && s.at < c.slam + 1.2 && (isHolder || s.at >= c.slam - 0.3)) r.slam = c;
+      // in the air he drifts towards the rim until it is within his reach, and back as he comes down
+      let px = 0, pz = 0;
+      if (r.slam && env.reach() && s.rimX !== undefined) {
+        const t = s.at - r.slam.slam, w = t < 0 ? smooth01((t + 0.45) / 0.4) : 1 - smooth01((t - SLAM_HANG) / 0.35);
+        const dx = s.rimX - fg.x, dz = -fg.z, d = Math.hypot(dx, dz) || 1, m = Math.min(3, Math.max(0, d - SLAM_NEAR * r.k)) * w / d;
+        px = (dx * Math.cos(h) - dz * Math.sin(h)) * m; pz = (dx * Math.sin(h) + dz * Math.cos(h)) * m;
+      }
+      r.model.position.x = px; r.model.position.z = pz;
       return face;
     }
 
@@ -1488,15 +1529,15 @@ window.GAME = /*GAME_DATA*/null;
         return out;
       }
       r.ballHand = null; r.cross = 0;
-      const mode = r.ballCue ? r.ballCue.ball : "both";
+      const slam = r.slam && r.slamGap != null, mode = slam ? "R" : r.ballCue ? r.ballCue.ball : "both";
       palm("Right", out);
       if (mode === "both") { palm("Left", v3); out.add(v3).multiplyScalar(0.5); out.y += 0.1; }
-      else out.y += BALL_R * 0.8;                                 // on the one hand
+      else out.y += slam ? r.slamBall : BALL_R * 0.8;             // on the one hand (a dunk: under it by the rim)
       return out;
     }
     // is the shot released at this frame a dunk (so: no arc to trail)?
     const dunkAt = (p, f) => cues(p).some((l) => l.some((c) => c.slam && Math.abs(c.slam - 0.32 - f * env.dt) < 0.3));
-    return { attach, update, carry, plantFeet, reachBall, ballInHand, cues, reset, carryOver, dunkAt, detail: rig.meta.detail || "full", clips: CL, names: Object.keys(clips) };
+    return { attach, update, carry, plantFeet, reachBall, slamHand, ballInHand, cues, reset, carryOver, dunkAt, detail: rig.meta.detail || "full", clips: CL, names: Object.keys(clips) };
   }
 
   // ---- the arena round the 3D court: stands, crowd, benches, boards, roof. Built the first
@@ -2469,7 +2510,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       }
       over = atEnd ? (playing && !trans ? Math.min(1.5, over + dtg) : over) : 0;
       st.at = st.time + over; st.ballLow = st.ball.y <= 3.6;
-      const rimX = attacksLeft(st.p) ? -RIM_X : RIM_X;
+      const rimX = st.rimX = attacksLeft(st.p) ? -RIM_X : RIM_X;
       if (useRig && live) {
         dirty = 3;
         slowT += dtReal; slowN++;
@@ -2612,6 +2653,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       if (useRig) for (const q of st.players) { const f = figures[q.key]; if (f.rig && f.rig.slam) slamFig = f; }
       if (slamFig) {
         const c = slamFig.rig.slam, after = st.at - c.slam;
+        anim.slamHand(slamFig, rimX, st.at);
         if (after < 0) anim.ballInHand(slamFig, gripPos, dta);
         else gripPos.set(rimX, Math.max(BALL_R, 9.7 - 16 * after * after), 0);   // through the net and down
         grip = 1; ring.visible = false;
@@ -2658,7 +2700,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
              bodies: () => ({ mode: bodyMode, rig: !!anim, detail: anim ? anim.detail : null, auto: bodyAuto, clips: anim ? anim.names : [],
                               players: st ? st.players.map((q) => { const fg = figures[q.key], r = fg && fg.rig;
                                 return { key: q.key, n: q.n, off: q.off, sp: +(q.sp || 0).toFixed(1), animated: !!(r && r.model.visible),
-                                         name: q.pl.name, at: [+fg.x.toFixed(1), +fg.z.toFixed(1)], hand: r && r.reachFor && r.reachGap != null ? r.reachSide + ":" + r.reachW.toFixed(2) + ":" + r.reachGap.toFixed(2) + ":" + r.reachFrom.toFixed(2) : "", lag: +(fg.lag || 0).toFixed(2), look: fg.look, feet: +fg.H.toFixed(2), girth: +fg.build.girth.toFixed(2), reach: +fg.build.reach.toFixed(3),
+                                         name: q.pl.name, slam: r && r.slam && r.slamGap != null ? r.slamW.toFixed(2) + ":" + r.slamGap.toFixed(2) : "", at: [+fg.x.toFixed(1), +fg.z.toFixed(1)], hand: r && r.reachFor && r.reachGap != null ? r.reachSide + ":" + r.reachW.toFixed(2) + ":" + r.reachGap.toFixed(2) + ":" + r.reachFrom.toFixed(2) : "", lag: +(fg.lag || 0).toFixed(2), look: fg.look, feet: +fg.H.toFixed(2), girth: +fg.build.girth.toFixed(2), reach: +fg.build.reach.toFixed(3),
                                          clips: r ? Object.keys(r.acts).filter((k) => r.acts[k].enabled).map((k) => k + ":" + r.acts[k].weight.toFixed(2)) : [] }; }) : [] }),
              cues: (p) => (anim ? anim.cues(p) : null),
              plantFeet: (on) => { footLock = !!on; dirty = 3; },      // (for comparing with and without, under ?debug)

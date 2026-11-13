@@ -64,7 +64,7 @@ below into `.mocap-cache/` (gitignored).
 | `contest` | 13_10 | jump up to grab, reach for, tiptoe | one hand up |
 | `block` | 14_07 | jump up to grab, reach for, tiptoe | a jump with both hands up; the viewer takes one hand to the ball and lowers the other |
 | `rebound` | 14_07 | jump up to grab, reach for, tiptoe | a jump with both hands up; also plays, lifted to the rim, for alley-oops |
-| `dunk` | 14_07 | jump up to grab, reach for, tiptoe | the same jump; the left arm is brought down by hand for a one-hand finish |
+| `dunk` | 14_07 | jump up to grab, reach for, tiptoe | the same jump; the left arm is brought down by hand for a one-hand finish, and the viewer takes the right hand to the rim |
 | `steal` | 15_06 | lean forward, reach for | also plays for fouls |
 | `plant`, `plant_m` | 127_05 | run to quick stop | hard stops and cuts; `_m` is its mirror image |
 | `triple` | 102_30 | basketball: straight drive from a stop | the stance before the drive, ball in both hands, held: the triple threat |
@@ -75,7 +75,8 @@ below into `.mocap-cache/` (gitignored).
 Not motion-captured as such (no free clip was found): the dunk, the hook shot, the screen
 and the block are the nearest captured motion adapted as noted above. The viewer also lifts
 the collarbone with a raised arm, which the mocap does not record, and re-poses a blocker's
-or contester's arm so the hand goes to the ball (our own code, no further source).
+or contester's arm so the hand goes to the ball, and a dunker's so it goes to the rim (our
+own code, no further source).
 
 ## Not included
 

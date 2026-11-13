@@ -177,7 +177,12 @@ clip is eased in up to the gather, with the running legs carrying on under it. A
 blocker's hand goes to the ball: the captured jump only raises both arms, so around the top
 of the jump the viewer re-poses the arm on the ball's side (shoulder and elbow) until the
 palm meets the ball where it actually is, as far as the arm reaches, and brings the other
-arm down. A defender contesting a shot points his raised hand at the ball the same way. Clips cross-fade; a shooter turns to
+arm down. A defender contesting a shot points his raised hand at the ball the same way
+(a foot short of it, and not at a ball still held low). A dunker's hand is taken to the rim
+in the same manner: over the last third of a second it carries the ball up over the rim and
+down through it, holds the near edge of the rim for a moment, then lets go; in the air he
+drifts towards the rim until it is within his reach, and hangs briefly at the top. The
+first steps of a drive or cut give way to a shot that starts right after them. Clips cross-fade; a shooter turns to
 the rim, a passer to his receiver, a defender to his man. Movement is smoothed for the animated players. The replay moves players at ten positions
 a second and lets them reach full speed in a fifth of a second; drawn exactly, starts,
 stops and cuts look robotic. The drawn player follows his recorded position as a body

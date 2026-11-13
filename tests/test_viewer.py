@@ -409,8 +409,9 @@ console.log(JSON.stringify({ out, same: JSON.stringify(a) === JSON.stringify(b),
     def test_offence(self):
         """Offensive stances and clips, dribbling with either hand, shots out of the run."""
         src = self.template
-        self.assertIn('drive: ["drive", "", 0, { w: 0.75 }],', src)
-        self.assertIn('cut: ["burst", "", 0, { w: 0.6 }],', src)
+        self.assertIn('drive: ["drive", "", 0, { w: 0.75, under: true }],', src)
+        self.assertIn('cut: ["burst", "", 0, { w: 0.6, under: true }],', src)
+        self.assertIn("const rank = (c) => (c.under ? 0 : c.slam ? 2 : 1);", src)   # a shot right after the drive wins
         self.assertIn("tgt.triple = 1 - go;", src)                     # standing with the ball: triple threat
         self.assertIn("tgt.idle = (1 - go) * (1 - READY); tgt.stance = (1 - go) * READY;", src)
         # left-handed dribbles are made in the viewer by mirroring: no extra clips in the file
@@ -440,6 +441,20 @@ console.log(JSON.stringify({ out, same: JSON.stringify(a) === JSON.stringify(b),
         self.assertLess(view.index("ball.position.set(bX, bY, bZ);"), view.index("anim.reachBall(f, bX, bY, bZ);"))
         self.assertIn('"LeftForeArm", "RightForeArm",', src)           # brought back to the clip's pose each frame
         self.assertIn("reach: (on) => { handReach = !!on; dirty = 3; },", src)
+
+    def test_dunk_to_the_rim(self):
+        """A dunker's hand takes the ball to the rim, holds it, and he drifts within reach."""
+        src = self.template
+        view = src[src.index("function createView3D"):]
+        self.assertEqual(src.count("function slamHand(fg, rimX, at) {"), 1)
+        self.assertEqual(src.count("function armTo(fg, sd, T, w) {"), 1)     # the one arm solver, shared with the block
+        self.assertIn("const SLAM_IN = 0.35, SLAM_HANG = 0.12, SLAM_NEAR = 1.5;", src)
+        # before the ball is placed in his hand; the ball then rides under the palm
+        self.assertLess(view.index("anim.slamHand(slamFig, rimX, st.at);"), view.index("if (after < 0) anim.ballInHand(slamFig, gripPos, dta);"))
+        self.assertIn("else out.y += slam ? r.slamBall : BALL_R * 0.8;", src)
+        self.assertIn("} else v4.set(rimX + dx * 0.72, 10.02, dz * 0.72);", src)   # the palm on the rim
+        self.assertIn("m = Math.min(3, Math.max(0, d - SLAM_NEAR * r.k)) * w / d;", src)   # the drift, at most 3 ft
+        self.assertIn("r.model.position.x = px; r.model.position.z = pz;", src)
 
     def test_light_model(self):
         """The same player with far fewer triangles: same skeleton, clips and parts."""
