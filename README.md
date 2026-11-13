@@ -1073,7 +1073,8 @@ times a game:
 * **Offensive rebounds:** the rebounder snapped up to 9 ft onto the ball.
 
 Now everyone walks or jogs to the lane in dead-ball time, and the rebounder runs to the
-loose ball. Teleports fell to about 0.1 a game, with box-score calibration unchanged.
+loose ball. Teleports fell to about 0.1 a game, with box-score calibration unchanged
+(and to none in 200 games after "Last audit flags").
 
 ### Patient offence, human movement and spacing
 The next audit flagged hurried offences (1.6 passes per half-court possession, 7.6% of
@@ -1704,6 +1705,167 @@ Still off or worth watching:
   less (offensive rebounds of short misses).
 * Points per 100 still sit 1-2 below the NBA's 115.8 with eFG at or above it: the measure
   counts about 2% more possessions than Basketball-Reference's formula.
+
+### Last audit flags
+After "Values that match the engine" the audit (`audit --games 48`) read 24 ok / 2 watch /
+0 off on seed 7 and 23 / 2 / 1 on seed 8: very tight shots 11.8 / 11.7% (NBA 5-11%),
+distance per player 3.73 / 3.74 miles per 48 minutes (NBA 3.1-3.6) and teleports 0.00 /
+0.10 a game (NBA 0). The spatial engine also ignored the foul-drawing rating (see "Foul
+drawing and the top scorers"). Each was traced to its cause.
+
+**Foul drawing** (`SpatialParams.foul_drawing` 0.10, `foul_drawing_centre` 11.8; off in
+`LEGACY_PARAMS`). As in the statistical engine, each point of the shooter's
+`drawing_fouls` rating multiplies his shooting-foul odds by exp(0.10), capped at 0.6 a
+shot. It's in `foul_chance`, which `take_shot` and the whole-shot values both use, so a
+good foul drawer's contested finish is worth more to him and he takes more of them. The
+foul-weighted average rating in spatial games is ~12.0; the centre is a little lower
+because the paint closeouts below take some contact out. Measure league 0, 180 games:
+
+| | before | after | NBA 2025-26 |
+|---|---|---|---|
+| team FTA per 100 | 23.6 | 24.7 | 23.6 |
+| top 10 scorers: points / FTA per game | 25.4 / 3.9 | 26.5 / 5.5 | 28.8 / 7.8 |
+| 11th-30th scorers: FTA per game | 3.5 | 3.7 | |
+
+The top scorers get to the line 40% more often, but still less than in the statistical
+engine (~7) or the NBA: spatial stars take fewer shots at the rim than their real
+counterparts. Team free throws sit about one per 100 above where they were (inside the
+tolerance); centring them back exactly would take ~0.8 points a game from leagues
+already at the bottom of the points range.
+
+**Very tight shots.** Every attempt was logged with how it came about (its source,
+whether it was gathered, the closest defender 0.3 and 0.6 s earlier):
+* 37-42% of finishes off a catch at the dunker spot went up with the man touching the
+  shooter, and a third of cuts. The shooter's own man was the closest defender 93% of
+  the time, and he had been on him since before the catch.
+* The cause was the closeout on the catch: any catch inside 20 ft drew a closeout to
+  2.5 ft off the catch point, rim-side. At the dunker spot that's a defender in the
+  catcher's body, and the gather toward the rim went into him.
+* Not the cause (each tried on the same 48 games): the predicted contests (the shoot
+  decision predicts 2.6-3.0 ft for these finishes, the actual is 2.9-3.1), the angled
+  gathers (ruling out release points within 2.2 ft instead of 1.6: 11.5 → 11.1%), an
+  earlier pick-up on drives (`gather_contact` 1.2: no change), fewer fouls at the rim
+  (rim 0.42 → 0.32 with more in the short paint: 11.6 → 11.1%), off-ball defenders
+  playing further off big men (3-4 ft: 11.3 / 11.0%).
+
+The fix: a defender recovering to a catch in the paint (within 10 ft of the rim,
+`closeout_paint_range`) walls up between the man and the rim 3.5 ft off the catch, a
+step away with his arms up (`closeout_paint` 3.5; 2.5 as before from 10 to 20 ft; 0:
+off). The finisher goes up into a contest instead of a collision. Dunker-spot finishes
+very tight: 42 / 37% (rim / short paint) → 24 / 14%. At 4 ft the short-paint share rose
+to 20.3% (floaters over the wall); 3.5 ft keeps it at 17.9%.
+
+**Distance run.** Every frame split by phase and role (24 games, seed 7; miles per 48
+minutes, with mph):
+
+| | before | after |
+|---|---|---|
+| half court: offence / defence | 3.09 / 3.29 | 3.09 / 3.26 |
+| open court: offence / defence | 4.59 / 5.37 (6.7 mph) | 4.61 / 4.38 (5.5 mph) |
+| dead ball: offence / defence | 2.42 / 2.97 | 2.44 / 2.86 |
+| all | 3.69 | 3.51 |
+
+Jitter wasn't it: 0.2% of the distance was back-and-forth between frames, and body
+separation 2%. Substitutions take the man's spot and don't move anyone. The extra
+running was the defence getting back on walk-ups: each defender ran 67 ft to cover 53
+(attackers 51 for 46). Three reasons, fixed in `OpenCourtTuning`:
+* **No brakes** (`brake` 0.8, from `brake_range` 30 ft): open-court movement only eased
+  in, so a sprinting defender ran 3-6 ft past his spot and came back. On walk-ups (and
+  dead-ball throw-ins) defenders now brake in time, as in the half court (where braking starts 10 ft out,
+  too late to stop a full sprint). On a push they sprint at the ball as before.
+* **A rim run on every walk-up** (`walkup_rim` False): the deepest defender sprinted to
+  7 ft from the rim, often under it, then came 15-20 ft back out to his man. Now only a
+  push sends one to the rim; on a walk-up he picks up a man like the others.
+* **Jobs re-picked every 0.3 s** (`role_stick` 4 ft): the nearest defender to each
+  attacker changed as they ran, and every swap was a cut across the floor. On a walk-up
+  a defender keeps his man unless another is 4 ft better placed, and the half court
+  starts with those matchups (after a push, scrambled matchups as before).
+
+Walk-up defenders now run 53 ft for 47.
+
+**Teleports** (moves over 32 ft/s between frames). Each one was printed with the frames
+around it: 6 in 48 games of seed 8, then 200 games on other leagues.
+* **Fouls in the penalty** (5 of 6): the clock hook called the free throws after the
+  tick's movement but before its frame, so the first frame of the walk to the lane
+  carried two ticks of running. The tick's frame is now recorded first.
+* **The inbounder after a make** (1 of 6): he was put back on the floor at the catch, so
+  if he had already stepped in during the throw he jumped 4-6 ft back to the baseline.
+  He now walks out and back in (`OpenCourt.walk`, as dead-ball throw-ins already did).
+* **A shove on a sprinter** (1 in 200 games once those were fixed): body separation
+  pushed a defender sprinting back at 26 ft/s another 0.6 ft. A shove now only takes
+  what his own step leaves under 30 ft/s (`MAX_STEP_SPEED`); any overlap left is settled
+  next tick. Legacy pin unchanged.
+
+Substitutions, quarter changes, offensive-rebound resets and free-throw lineups were
+clean. 200 games (100 each from seeds 11 and 23, 34 leagues): no teleports.
+
+**Re-centred and retrained.** `three_make_adj` -0.026 → -0.0275 (eFG had come out at .563
+on the seed means, over the .561 limit: the paint closeouts give finishers room). The
+values were retrained (`train --resume`, 12 rounds of 120 games), then continued twice
+(`--start ... --rounds 6`, new game seeds); the committed values are the second
+continuation. `check_values`: every option within ±0.06 of what it scored (post-ups
+-0.00 on 480 decisions). The first retrain alone gave the converged test (20 games) a
+hold gap of 0.14; the 36-game check had it at 0.03: holding is noisy in small samples.
+
+Audit, 48 games (seeds 7 / 8):
+
+| | before | after | NBA |
+|---|---|---|---|
+| distance per player per 48 min | 3.73 / 3.74 mi | 3.52 / 3.54 | 3.1-3.6 |
+| average speed | 4.66 / 4.68 mph | 4.40 / 4.43 | 3.9-4.8 |
+| top speed seen | 21.24 / 21.41 mph | 19.96 / 20.64 | 15-21.5 |
+| teleports per game | 0.00 / 0.10 | 0.00 / 0.00 | 0 |
+| very tight (0-2 ft) | 11.8 / 11.7% | 9.9 / 9.4% | 5-11% |
+| closest defender 2-4 / 4-6 / 6+ ft (seed 7) | 32.3 / 29.4 / 26.5% | 33.6 / 31.0 / 25.6% | 28-38 / 28-36 / 22-32% |
+| rim / short / mid / threes (seed 7) | 30.6 / 18.1 / 9.9 / 41.4% | 31.0 / 17.9 / 9.3 / 41.8% | 28-36 / 12-20 / 9-16 / 38-44% |
+| corner threes | 24.8 / 25.8% | 26.2 / 27.5% | 20-28% |
+| defender between his man and the rim | 85.5 / 85.4% | 87.9 / 87.9% | 80-97% |
+| ok / watch / off | 24 / 2 / 0, 23 / 2 / 1 | 26 / 0 / 0, 26 / 0 / 0 | |
+
+Full games, 64 per league (`measure --games 64 --jobs 2`, seeds 0 / 1 / 2 / 3 / 4):
+
+| | before | after | NBA 2025-26 |
+|---|---|---|---|
+| pace | 97.4 / 98.5 / 100.4 / 100.6 / 100.0 | 96.9 / 98.2 / 99.6 / 99.3 / 99.1 | 99.4 |
+| points | 111.2 / 113.4 / 114.0 / 114.4 / 115.5 | 109.3 / 113.4 / 113.8 / 112.1 / 114.8 | 115.6 |
+| points per 100 | 113.0 / 115.2 / 113.4 / 113.5 / 114.7 | 112.3 / 115.2 / 114.1 / 112.9 / 115.3 | 115.8 |
+| transition share | .152 / .156 / .165 / .161 / .151 | .152 / .156 / .159 / .161 / .158 | .150 |
+| transition points per play | 1.23 / 1.23 / 1.20 / 1.17 / 1.17 | 1.21 / 1.25 / 1.24 / 1.20 / 1.23 | 1.26 |
+| FTA per 100 | 23.7 / 24.2 / 23.1 / 22.4 / 24.0 | 24.8 / 24.6 / 25.1 / 21.8 / 26.1 | 23.6 |
+| fouls per 100 | 19.3 / 19.3 / 18.9 / 18.4 / 19.1 | 20.3 / 20.2 / 19.7 / 17.9 / 20.4 | 20.0 |
+| turnovers per 100 | 14.4 / 14.2 / 14.7 / 14.1 / 14.4 | 15.5 / 14.8 / 15.0 / 14.2 / 14.9 | 14.6 |
+| three share | .403 / .419 / .426 / .436 / .420 | .397 / .413 / .435 / .426 / .422 | .415 |
+| eFG | .550 / .552 / .554 / .551 / .561 | .547 / .555 / .565 / .556 / .562 | .546 |
+| ORB% | .256 / .278 / .252 / .252 / .245 | .259 / .273 / .235 / .240 / .256 | .260 |
+| within tolerance (of 13) | 12 / 13 / 13 / 12 / 12 | 11 / 13 / 11 / 12 / 12 | |
+
+Seed means (0-2) stay 13/13: pace 98.2, points 112.2, points per 100 113.9, transition
+.156 at 1.23, three share .415, eFG .556, ORB% .256, turnovers 15.1, FTA 24.8. The misses:
+seed 0's points (109.3) and points per 100 (112.3), seed 2's eFG (.565) and ORB% (.235),
+seed 3's fouls (17.9), seed 4's eFG (.562). A 64-game run is a single draw: on a second
+set of game seeds the same engine moved points per 100 by up to 1.5 a league. A full
+game takes about as long as before (1.61-1.68 s against 1.56-1.70 s for the previous
+engine on the same machine). The statistical engine is untouched (`python -m
+hoopsim.calibrate` 17/17).
+
+Tests: `tests/test_last_flags.py` covers the foul-drawing slope, centre and cap, whole-shot
+values seeing it (off in `LEGACY_PARAMS`), and good foul drawers getting to the line in
+full games; the paint closeout and its switch, and very tight shots on 24 games of seed
+3 with and without it (9.5% against 11.1%); free-throw walks starting from the last
+frame shown, the inbounder never jumping and no teleports in six recorded games; no
+walk-up rim runs, braking into a spot, and distance per player in range. Re-measured:
+the steadier-leagues team-spread test plays 12 games a side (was 6): an inside team's
+offensive rebounding edge is smaller even undamped now that paint closeouts wall up
+rim-side (.194 / .259 for Seven Seconds / Grit and Grind undamped, .208 / .246 damped;
+the test asks the damper to take 0.015 off the gap, was 0.03). A set play's read that
+shoots on the catch now records a frame of him holding the ball first (recording only).
+
+Still worth watching:
+* The top scorers' free throws (5.5 a game against 7.8): more of their shots would have
+  to be at the rim, not a steeper rating.
+* Corner threes on seed 8 (27.5%) sit near the top of their range.
+* Seed 0, the league whose defenders are better than its scorers, is still the
+  low-scoring one, as before.
 
 ### Where the defence picks up
 On a walk-up (after a make, or a team that doesn't push), the defence gets back and waits
@@ -2702,9 +2864,9 @@ so the engine couldn't tell the league's best scorer from the 30th.
   drawn from its own random numbers, so generated leagues are otherwise unchanged.
 * **Builder**: free-throw attempts beyond the shot mix and usage (see "How ratings are
   derived"). The top 10 scorers of 2025-26 rate 11-18.
-* **Spatial engine: not yet.** Its shooting fouls still follow the shot share only. Using
-  the rating there (the same factor on `shooting_foul`) is a follow-up, once the
-  engine's retraining is done.
+* **Spatial engine:** the same factor on its shooting-foul chance (`SpatialParams.
+  foul_drawing`, re-centred for spatial games), in whole-shot values too; see "Last
+  audit flags".
 
 **The top of the scoring ratings (builder).** Scoring z-scores bend toward 3.6 instead of
 stopping at 2.8 (`soft_top`), so the elite rate a notch above the next tier (engine

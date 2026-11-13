@@ -52,7 +52,7 @@ class SpatialParams:
     contest_inside: float = 1.126         # multiplies the contest penalty at the rim and close
     contest_outside: float = 1.7          # ... and on mid-range and three-point jumpers (was 1.602; README "Defence that recovers")
     rim_make_adj: float = -0.015          # added to the open make chance at the rim (README "Patient offence": -0.03; "Defence that recovers": -0.025; "Values that match the engine": rim FG .660 against .666)
-    three_make_adj: float = -0.026        # added to the open make chance from three (was -0.0204; README "Shots with room": -0.023; "Values that match the engine")
+    three_make_adj: float = -0.0275       # added to the open make chance from three (was -0.0204; README "Shots with room": -0.023; "Values that match the engine": -0.026; "Last audit flags")
     short_make_adj: float = -0.02         # ... and in the short paint (README "Values that match the engine": .468 against .449)
     foul_scale: float = 1.0               # multiplies shooting-foul chances (search chose 1.28; held at 1, see README; 1.05 in README "Steadier leagues", 1.0 again in "Values that match the engine")
     # --- turnovers and rebounds ------------------------------------------------
@@ -186,6 +186,22 @@ class SpatialParams:
     # jumper off the dribble at this share of a closeout's effect. Contested ~3.8 ft off,
     # pull-ups went in at .38 from mid-range and .29 from three (NBA ~.41 and ~.33).
     dribble_contest: float = 0.6
+    # Foul drawing (README "Last audit flags"): as in the statistical engine, each point
+    # of the shooter's ``drawing_fouls`` rating multiplies his shooting-foul odds by
+    # exp(``foul_drawing``) from ``foul_drawing_centre``, the odds capped at 0.6 a shot.
+    # The foul-weighted average rating in spatial games is ~12.0; the centre is a bit
+    # lower because the paint closeouts below take some contact out. It's in
+    # ``foul_chance``, so whole-shot values see it too. 0: off.
+    foul_drawing: float = 0.10
+    foul_drawing_centre: float = 11.8
+    # Very tight shots (README "Last audit flags"). A defender recovering to a catch in
+    # the paint (within ``closeout_paint_range`` ft of the rim) walls up between the man
+    # and the rim ``closeout_paint`` ft off the catch, a step away with his arms up,
+    # instead of 2.5 ft (as on any catch inside 20 ft), which put him in the catcher's
+    # body when the finisher gathered: a third of dunker-spot finishes went up with the
+    # man touching him. 0: off.
+    closeout_paint: float = 3.5
+    closeout_paint_range: float = 10.0
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -291,6 +307,8 @@ LEGACY_PARAMS = SpatialParams(
     pullup_contest=0.0,
     dribble_contest=1.0,
     inside_pair=1.0,
+    foul_drawing=0.0,
+    closeout_paint=0.0,
 )
 
 # Searched fields: (low, high). Everything else stays at its default.
