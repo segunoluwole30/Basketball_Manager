@@ -197,12 +197,13 @@ object on a player in the page data (`hair`, `hairColor`, `beard`, `band`, `slee
 
 The body is MakeHuman's base mesh (CC0): a real human figure with a face, hands and
 muscle definition, shaped into a tall athlete, bound to the mocap skeleton and simplified.
-The jersey and the top of the shorts are layers of that body's own surface, lifted off it,
-ironed smooth and let out below the chest, so they fit him and move exactly as he does.
-The jersey's outline (armholes, neckline, hem) is cut across the body's triangles along a
-smooth curve, so its edges are clean whatever the mesh beneath looks like;
+The jersey and the shorts are layers of that body's own surface, lifted off it and ironed
+smooth, so they move exactly as he does. Both hang loose: the jersey from the chest down,
+the shorts more and more toward a hem just above the knee. Their outlines (armholes,
+neckline, hems) are cut across the body's triangles along smooth curves, so the edges are
+clean whatever the mesh beneath looks like;
 socks, sleeves, bands, the hair cap and beard are made the same way, and the skin beneath
-the kit is tucked in so it cannot show through. The shorts' legs, shoes and the larger
+the kit is tucked in so it cannot show through. The shoes and the larger
 hair styles are generated and fitted by `tools/build_player_assets.py`.
 No real player's likeness is used.
 
@@ -211,7 +212,7 @@ head only), and each player leans toward one of them by an amount picked from hi
 `face` entry in a stored `look` overrides it). The mocap has no collarbone movement, so the
 viewer lifts the collarbone with a raised arm, which keeps the shoulder from pinching.
 
-The files (`spatial/assets/player.glb`, 1.21 MB, or `player_light.glb`, 0.73 MB, plus three.js r160's `GLTFLoader`,
+The files (`spatial/assets/player.glb`, 1.23 MB, or `player_light.glb`, 0.74 MB, plus three.js r160's `GLTFLoader`,
 `BufferGeometryUtils` and `SkeletonUtils` in `spatial/vendor/`, 0.15 MB, unmodified) are
 served by the web app at `/viewer-assets/` and fetched only the first time 3D is shown,
 and only the model the chosen level needs; nothing is added to the page itself. If they
