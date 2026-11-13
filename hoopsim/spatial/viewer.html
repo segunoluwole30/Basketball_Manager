@@ -977,8 +977,8 @@ window.GAME = /*GAME_DATA*/null;
     hook: ["layup", "release", 0, { face: "rim", yaw: 1.25, reach: 8.8 }],
     dunk: ["dunk", "release", 0.2, { face: "rim", reach: 10.6 }],
     alley_oop: ["rebound", "release", 0.2, { face: "rim", reach: 10.6 }],
-    contest: ["contest", "release", 0.2, { face: "other" }],
-    block: ["block", "release", 0.1, { face: "other", reach: "ball" }],
+    contest: ["contest", "release", 0.2, { face: "other", hand: 0.7 }],
+    block: ["block", "release", 0.1, { face: "other", reach: "ball", hand: 1, offArm: true }],
     steal: ["steal", "release", 0, { face: "other" }],
     foul: ["steal", "release", 0, { face: "other", w: 0.7 }],
     take_charge: ["fall", "release", 0.3, { face: "other" }],
@@ -998,6 +998,7 @@ window.GAME = /*GAME_DATA*/null;
   // turn), LEAN radians per ft/s2 up to LEAN_MAX. Look: his chest and head turn toward the
   // ball (the man with it: the rim) by up to LOOK_MAX radians, whichever way his legs point.
   const LEAN = 0.0085, LEAN_MAX = 0.2, LOOK_MAX = 1.15, LOOK_CHEST = 0.28, LOOK_HEAD = 0.5;
+  const REACH_IN = 0.3, REACH_OUT = 0.3;      // a blocking hand goes to the ball from this long before the top of the jump to this long after (s)
   const HAND_HOLD = 0.8, HAND_CROSS = 0.2;    // a dribbler keeps a hand at least this long (s); the ball takes this long to cross
   const READY = 0.4;                          // how much of the defensive crouch is in an off-ball attacker's stance
   const STEP_RATE = 0.8, STEP_MAX = 1.7;      // a gait's easy cadence, and its fastest, as a share of the clip's own
@@ -1074,7 +1075,7 @@ window.GAME = /*GAME_DATA*/null;
       fg.rig = { model, jersey, bones, mixer: new THREE.AnimationMixer(model), acts: {}, w: {}, k: H / H0,
                  phase: (hash(fg.key || pl.name) % 100) / 100, free: hash(pl.name) % 7, carry: [], active: [],
                  ax: 0, az: 0, anchored: false, hand: new THREE.Vector3(), grip: 0, armRest: {}, feet: {}, busy: 0, pitch: 0, roll: 0, look: 0, left: false, handT: 9, cross: 0, ballHand: null,
-                 adjusted: ["Spine1", "Head", "LeftArm", "RightArm", "LeftUpLeg", "RightUpLeg", "LeftLeg", "RightLeg", "LeftFoot", "RightFoot"].map((n) => bones[n]).filter(Boolean) };
+                 adjusted: ["Spine1", "Head", "LeftArm", "RightArm", "LeftForeArm", "RightForeArm", "LeftUpLeg", "RightUpLeg", "LeftLeg", "RightLeg", "LeftFoot", "RightFoot"].map((n) => bones[n]).filter(Boolean) };
       for (const sd of ["Left", "Right"]) if (bones[sd + "ForeArm"]) fg.rig.armRest[sd] = bones[sd + "ForeArm"].position.clone().normalize();
       return fg.rig;
     }
@@ -1162,6 +1163,58 @@ window.GAME = /*GAME_DATA*/null;
         adjustedPose(hip); adjustedPose(knee); adjustedPose(foot);
       }
     }
+    // A hand that goes to the ball: blocking or contesting a shot, the clip only raises the
+    // arms; where the ball actually is differs every time. The arm on the ball's side is
+    // re-posed (shoulder and elbow, two-bone IK) so the palm meets the ball, as far as the arm
+    // reaches; blocking, the other arm comes down for balance. Called once the ball is placed.
+    function reachBall(fg, bx, by, bz) {
+      const r = fg.rig, b = r.bones, k = r.k, h = fg.heading, c = r.reachCue;
+      if (!(r.reachW > 0.01) || !c || !b.LeftHand || !b.RightHand) { r.reachFor = null; r.reachGap = null; return; }
+      fg.root.updateMatrixWorld(true);
+      if (r.reachFor !== c || (!c.offArm && r.reachW < 0.35)) {
+        r.reachFor = c;
+        // blocking: the hand on the ball's side; contesting: the hand the clip already has up
+        if (c.offArm) r.reachSide = (bx - fg.x) * Math.cos(h) - (bz - fg.z) * Math.sin(h) > 0 ? "Left" : "Right";
+        else r.reachSide = vA.setFromMatrixPosition(b.LeftHand.matrixWorld).y > vK.setFromMatrixPosition(b.RightHand.matrixWorld).y ? "Left" : "Right";
+      }
+      const solve = (sd, T, w) => {
+        const arm = b[sd + "Arm"], fore = b[sd + "ForeArm"];
+        vH.setFromMatrixPosition(arm.matrixWorld); vK.setFromMatrixPosition(fore.matrixWorld); vA.setFromMatrixPosition(b[sd + "Hand"].matrixWorld);
+        vT.lerpVectors(vA, T, w);
+        r.reachFrom = vA.distanceTo(T);                           // (how far off the clip's own arm is: see ?debug)
+        const l1 = vK.distanceTo(vH), l2 = vA.distanceTo(vK);
+        const d = Math.max(Math.abs(l1 - l2) * 1.02 + 0.01, Math.min((l1 + l2) * 0.999, vT.distanceTo(vH)));
+        v1.subVectors(vH, vK); v2.subVectors(vA, vK);
+        const bend = v1.angleTo(v2) - Math.acos(Math.max(-1, Math.min(1, (l1 * l1 + l2 * l2 - d * d) / (2 * l1 * l2))));
+        v3.crossVectors(v2, v1);
+        if (v3.lengthSq() < 1e-6) v3.set(Math.cos(h), 0, -Math.sin(h)); else v3.normalize();
+        q1.setFromAxisAngle(v3, bend);
+        turnWorld(fore, q1);
+        v2.applyQuaternion(q1).add(vK).sub(vH).normalize();     // shoulder to the wrist, after the bend
+        v1.subVectors(vT, vH).normalize();
+        turnWorld(arm, q3.setFromUnitVectors(v2, v1));
+        adjustedPose(arm); adjustedPose(fore);
+        return v1.multiplyScalar(d).add(vH).distanceTo(T);       // how far short of the target the wrist stays
+      };
+      // the wrist stops a palm and half a ball short of the ball's centre
+      vH.setFromMatrixPosition(b[r.reachSide + "Arm"].matrixWorld);
+      v4.set(bx, by, bz).sub(vH);
+      const dist = v4.length(), len = vK.setFromMatrixPosition(b[r.reachSide + "ForeArm"].matrixWorld).distanceTo(vH) * 2;
+      const ahead = (v4.x * Math.sin(h) + v4.z * Math.cos(h)) / (Math.hypot(v4.x, v4.z) || 1);
+      // not for a ball behind him, or one far out of reach (then the clip's own arms do)
+      const w = r.reachW * smooth01((ahead + 0.6) / 0.5) * (1 - smooth01((dist - 1.5 * len) / len));
+      if (w <= 0.01) { r.reachGap = null; return; }
+      v4.multiplyScalar(Math.max(0, dist - 0.38 * k - BALL_R * 0.6) / (dist || 1)).add(vH);
+      r.reachGap = solve(r.reachSide, v4, w);
+      const from = r.reachFrom;
+      if (c.offArm) {                                             // the other arm: down and out to the side, nearly straight
+        const off = r.reachSide === "Left" ? "Right" : "Left", out = off === "Left" ? 1 : -1;
+        vH.setFromMatrixPosition(b[off + "Arm"].matrixWorld);
+        v4.set(vH.x + (out * 0.6 * Math.cos(h) + 0.5 * Math.sin(h)) * len, vH.y - 0.45 * len, vH.z + (-out * 0.6 * Math.sin(h) + 0.5 * Math.cos(h)) * len);
+        solve(off, v4, w * 0.85);
+      }
+      r.reachFrom = from;
+    }
     function action(r, name) {
       let a = r.acts[name];
       if (!a) { a = r.acts[name] = r.mixer.clipAction(clips[name]); a.enabled = false; a.weight = 0; a.play(); }
@@ -1212,7 +1265,7 @@ window.GAME = /*GAME_DATA*/null;
         if (name === "rebound") for (let j = fi; j < Math.min(n, fi + 25); j++) if (fr[j][5] === pl) { fi = j; break; }
         const cue = { clip: m[0], t0: fi * dt + m[2] - ((c.marks && c.marks[m[1]]) || 0), ofs: 0, dur: c.duration,
                       face: o.face, other, yaw: o.yaw || 0, w: o.w || 1, hold: !!c.hold, reach: 0,
-                      ball: o.noBall ? null : o.ball || c.ball || null, name };
+                      ball: o.noBall ? null : o.ball || c.ball || null, name, hand: o.hand || 0, offArm: !!o.offArm };
         // A shot taken on the move comes out of the run: the clip is eased in up to its gather
         // (the running legs carry on under it) instead of cutting to the clip's own first pose.
         if (c.marks && c.marks.gather && fi > 3) {
@@ -1276,12 +1329,18 @@ window.GAME = /*GAME_DATA*/null;
       r.active = act;
       const top = act.slice(-2);
       let used = 0, face = null, lift = 0, ballCue = null;
+      r.reachW = 0;
       const W = {}, T = {};
       for (let i = top.length - 1; i >= 0; i--) {
         const { c, tl } = top[i], e = envelope(c, tl) * (1 - used);
         if (e <= 0 || W[c.clip] !== undefined) continue;
         W[c.clip] = e; T[c.clip] = Math.min(c.ofs + tl, CL[c.clip].duration - 0.001);
         used += e;
+        if (c.hand && env.reach() && !r.reachW) {                 // a hand goes to the ball around the top of the clip
+          const t = c.ofs + tl - CL[c.clip].marks.release;
+          r.reachW = c.hand * (e / (c.w || 1)) * smooth01((t + REACH_IN) / 0.22) * smooth01((REACH_OUT - t) / 0.22);
+          r.reachCue = c;
+        }
         if (i === top.length - 1) {
           if (c.face) face = { to: c.face, other: c.other, yaw: c.yaw };
           if (c.ball && isHolder) ballCue = c;
@@ -1435,7 +1494,7 @@ window.GAME = /*GAME_DATA*/null;
     }
     // is the shot released at this frame a dunk (so: no arc to trail)?
     const dunkAt = (p, f) => cues(p).some((l) => l.some((c) => c.slam && Math.abs(c.slam - 0.32 - f * env.dt) < 0.3));
-    return { attach, update, carry, plantFeet, ballInHand, cues, reset, carryOver, dunkAt, detail: rig.meta.detail || "full", clips: CL, names: Object.keys(clips) };
+    return { attach, update, carry, plantFeet, reachBall, ballInHand, cues, reset, carryOver, dunkAt, detail: rig.meta.detail || "full", clips: CL, names: Object.keys(clips) };
   }
 
   // ---- the arena round the 3D court: stands, crowd, benches, boards, roof. Built the first
@@ -2372,7 +2431,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     }
 
     // ---- animated bodies: the rig arrives after the view is up (or never: simple bodies stay)
-    let anim = null, bodyMode = "simple", bodyAuto = false, onSlow = null, footLock = true, fluid = true;
+    let anim = null, bodyMode = "simple", bodyAuto = false, onSlow = null, footLock = true, fluid = true, handReach = true;
     let animP = null, over = 0, grip = 0, slowT = 0, slowN = 0;
     const gripPos = new THREE.Vector3();
     function setRig(rig) {
@@ -2380,7 +2439,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
         const fg = figures[key];
         if (fg.rig) { fg.body.remove(fg.rig.model); fg.rig.jersey.map.dispose(); fg.rig.jersey.dispose(); fg.rig = null; }
       }
-      anim = createAnimator(THREE, rig, { dt, jerseyTexture, teamMat, tint, shadows: !small, flights, plant: () => footLock });
+      anim = createAnimator(THREE, rig, { dt, jerseyTexture, teamMat, tint, shadows: !small, flights, plant: () => footLock, reach: () => handReach });
       animP = null; dirty = 3;
     }
     // "animated" needs the rig; auto: drop to simple bodies if this device can't keep up
@@ -2563,6 +2622,8 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       }
       bY = Math.max(BALL_R, bY);
       ball.position.set(bX, bY, bZ);
+      // a blocker's or contester's hand goes to the ball, now that it is where it will be drawn
+      if (useRig) for (const q of st.players) { const f = figures[q.key]; if (f && f.rig && (f.rig.reachW > 0.01 || f.rig.reachFor)) anim.reachBall(f, bX, bY, bZ); }
       ball.rotation.x += dtg * 6; ball.rotation.z += dtg * 2;
       const sh = (1.1 + bY * 0.06) * BALL_R / 0.6;
       shadow.position.x = bX; shadow.position.z = bZ;
@@ -2595,11 +2656,12 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
              bodies: () => ({ mode: bodyMode, rig: !!anim, detail: anim ? anim.detail : null, auto: bodyAuto, clips: anim ? anim.names : [],
                               players: st ? st.players.map((q) => { const fg = figures[q.key], r = fg && fg.rig;
                                 return { key: q.key, n: q.n, off: q.off, sp: +(q.sp || 0).toFixed(1), animated: !!(r && r.model.visible),
-                                         name: q.pl.name, lag: +(fg.lag || 0).toFixed(2), look: fg.look, feet: +fg.H.toFixed(2), girth: +fg.build.girth.toFixed(2), reach: +fg.build.reach.toFixed(3),
+                                         name: q.pl.name, at: [+fg.x.toFixed(1), +fg.z.toFixed(1)], hand: r && r.reachFor && r.reachGap != null ? r.reachSide + ":" + r.reachW.toFixed(2) + ":" + r.reachGap.toFixed(2) + ":" + r.reachFrom.toFixed(2) : "", lag: +(fg.lag || 0).toFixed(2), look: fg.look, feet: +fg.H.toFixed(2), girth: +fg.build.girth.toFixed(2), reach: +fg.build.reach.toFixed(3),
                                          clips: r ? Object.keys(r.acts).filter((k) => r.acts[k].enabled).map((k) => k + ":" + r.acts[k].weight.toFixed(2)) : [] }; }) : [] }),
              cues: (p) => (anim ? anim.cues(p) : null),
              plantFeet: (on) => { footLock = !!on; dirty = 3; },      // (for comparing with and without, under ?debug)
-             fluid: (on) => { fluid = !!on; dirty = 3; },             // (the same for the smoothed movement, lean and look)
+             fluid: (on) => { fluid = !!on; dirty = 3; },
+             reach: (on) => { handReach = !!on; dirty = 3; },         // (and for the hand that goes to the ball)             // (the same for the smoothed movement, lean and look)
              feet: () => Object.values(figures).filter((fg) => fg.rig && fg.root.visible).map((fg) => ({ key: fg.key, ...Object.fromEntries(
                ["Left", "Right"].map((sd) => { const f = fg.rig.feet[sd] || {}, at = fg.rig.bones[sd + "Foot"].getWorldPosition(new THREE.Vector3());
                  return [sd, { down: !!f.down, held: !!f.on, stepping: f.wait > 0, at: [+at.x.toFixed(3), +at.y.toFixed(3), +at.z.toFixed(3)] }]; })) })),

@@ -173,7 +173,11 @@ ball holds it in a triple-threat stance; off the ball he stands on his toes, not
 A dribbler uses the hand away from the nearest defender (the left-handed dribbles are the
 same clips mirrored in the viewer) and the ball crosses low in front of him when he
 changes hands, at most every 0.8 s. A shot taken on the move comes out of the run: its
-clip is eased in up to the gather, with the running legs carrying on under it. Clips cross-fade; a shooter turns to
+clip is eased in up to the gather, with the running legs carrying on under it. A shot
+blocker's hand goes to the ball: the captured jump only raises both arms, so around the top
+of the jump the viewer re-poses the arm on the ball's side (shoulder and elbow) until the
+palm meets the ball where it actually is, as far as the arm reaches, and brings the other
+arm down. A defender contesting a shot points his raised hand at the ball the same way. Clips cross-fade; a shooter turns to
 the rim, a passer to his receiver, a defender to his man. Movement is smoothed for the animated players. The replay moves players at ten positions
 a second and lets them reach full speed in a fifth of a second; drawn exactly, starts,
 stops and cuts look robotic. The drawn player follows his recorded position as a body

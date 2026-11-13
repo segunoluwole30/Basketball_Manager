@@ -62,7 +62,7 @@ below into `.mocap-cache/` (gitignored).
 | `lob_pass` | 15_12 | basketball: dribble, lay-up shot, pass | the overhead pass; also plays for inbounds |
 | `catch` (and the held-ball pose) | 34_01 | football: throw, catch (subject B) | a two-hand catch at the chest |
 | `contest` | 13_10 | jump up to grab, reach for, tiptoe | one hand up |
-| `block` | 14_07 | jump up to grab, reach for, tiptoe | a jump with both hands up |
+| `block` | 14_07 | jump up to grab, reach for, tiptoe | a jump with both hands up; the viewer takes one hand to the ball and lowers the other |
 | `rebound` | 14_07 | jump up to grab, reach for, tiptoe | a jump with both hands up; also plays, lifted to the rim, for alley-oops |
 | `dunk` | 14_07 | jump up to grab, reach for, tiptoe | the same jump; the left arm is brought down by hand for a one-hand finish |
 | `steal` | 15_06 | lean forward, reach for | also plays for fouls |
@@ -74,7 +74,8 @@ below into `.mocap-cache/` (gitignored).
 
 Not motion-captured as such (no free clip was found): the dunk, the hook shot, the screen
 and the block are the nearest captured motion adapted as noted above. The viewer also lifts
-the collarbone with a raised arm, which the mocap does not record.
+the collarbone with a raised arm, which the mocap does not record, and re-poses a blocker's
+or contester's arm so the hand goes to the ball (our own code, no further source).
 
 ## Not included
 

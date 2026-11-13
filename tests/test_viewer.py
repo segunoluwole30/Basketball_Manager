@@ -426,6 +426,21 @@ console.log(JSON.stringify({ out, same: JSON.stringify(a) === JSON.stringify(b),
         self.assertIn("if (v > 5) cue.fin = Math.max(0.2, Math.min(0.45, c.marks.gather * 0.9));", src)
         self.assertIn("const fin = smooth01(tl / Math.min(c.fin || 0.2, c.dur / 3));", src)
 
+    def test_hand_to_ball(self):
+        """A blocker's (and a contester's) hand goes to the ball: arm IK on top of the clip."""
+        src = self.template
+        view = src[src.index("function createView3D"):]
+        self.assertIn('block: ["block", "release", 0.1, { face: "other", reach: "ball", hand: 1, offArm: true }],', src)
+        self.assertIn('contest: ["contest", "release", 0.2, { face: "other", hand: 0.7 }],', src)
+        self.assertEqual(src.count("function reachBall(fg, bx, by, bz) {"), 1)
+        # only around the top of the jump, and never for a ball behind him or far out of reach
+        self.assertIn("smooth01((t + REACH_IN) / 0.22) * smooth01((REACH_OUT - t) / 0.22);", src)
+        self.assertIn("const w = r.reachW * smooth01((ahead + 0.6) / 0.5) * (1 - smooth01((dist - 1.5 * len) / len));", src)
+        # once the ball is where it will be drawn
+        self.assertLess(view.index("ball.position.set(bX, bY, bZ);"), view.index("anim.reachBall(f, bX, bY, bZ);"))
+        self.assertIn('"LeftForeArm", "RightForeArm",', src)           # brought back to the clip's pose each frame
+        self.assertIn("reach: (on) => { handReach = !!on; dirty = 3; },", src)
+
     def test_light_model(self):
         """The same player with far fewer triangles: same skeleton, clips and parts."""
         full, light = (read_glb(PLAYER_ASSETS[n])[4] for n in ("player.glb", "player_light.glb"))
