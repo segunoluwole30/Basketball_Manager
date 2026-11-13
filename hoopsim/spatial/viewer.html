@@ -898,6 +898,35 @@ window.GAME = /*GAME_DATA*/null;
     return { gltf, meta, clone: S.clone };
   }
 
+  // Each player's look in 3D: hair (style and colour), beard, headband, arm and leg sleeves,
+  // wristbands, shoes. The page may carry it (look: {hair, hairColor, beard, band, sleeve, leg,
+  // wrist, shoes}); otherwise it is picked from his name, the same every time, with hair
+  // colours that suit his skin tone. Colours: "white", "black", "team" or #rrggbb.
+  const HAIR_STYLES = [["short", 28], ["fade", 26], ["bald", 10], ["afro", 9], ["locs", 12], ["flattop", 6], ["bun", 9]];
+  // the model's hair parts each style is made of (bald: none)
+  const HAIR_PARTS = { short: ["cap"], fade: ["fade"], afro: ["afro"], flattop: ["cap", "flattop"], locs: ["cap", "locs"], bun: ["cap", "bun"] };
+  const HAIR_DARK = ["#0d0b0a", "#0d0b0a", "#1c130d"], HAIR_ANY = ["#0d0b0a", "#1c130d", "#3a2416", "#6a4a2c", "#a8854e", "#7d3a1c"];
+  function lookOf(pl, tone) {
+    const L = pl.look && typeof pl.look === "object" ? pl.look : {};
+    const mix = (x) => { x = Math.imul(x ^ (x >>> 15), 0x2c1b3c6d); x = Math.imul(x ^ (x >>> 12), 0x297a2d39); return (x ^ (x >>> 15)) >>> 0; };
+    const roll = (salt) => (mix(hash(pl.name + salt)) % 1000) / 1000;   // 0..1, his own for each choice
+    const weighted = (list, x) => { let tot = 0; for (const e of list) tot += e[1]; x *= tot; for (const e of list) if ((x -= e[1]) < 0) return e[0]; return list[0][0]; };
+    const side = (salt) => (roll(salt) < 0.5 ? "L" : "R");
+    const light = tone === 2 || tone === 4, shades = light ? HAIR_ANY : HAIR_DARK;
+    const has = (k) => Object.prototype.hasOwnProperty.call(L, k);
+    return {
+      hair: has("hair") ? L.hair : weighted(light ? HAIR_STYLES.filter((e) => e[0] !== "afro" && e[0] !== "locs" && e[0] !== "flattop").concat([["short", 20]]) : HAIR_STYLES, roll("hair")),
+      hairColor: has("hairColor") ? L.hairColor : shades[mix(hash(pl.name + "hc")) % shades.length],
+      beard: has("beard") ? !!L.beard : roll("beard") < 0.38,
+      band: has("band") ? L.band : roll("band") < 0.14 ? ["white", "black", "team"][mix(hash(pl.name + "bc")) % 3] : null,
+      sleeve: has("sleeve") ? L.sleeve : roll("sleeve") < 0.22 ? side("ss") : null,
+      leg: has("leg") ? L.leg : roll("leg") < 0.18 ? (roll("lb") < 0.35 ? "both" : side("ls")) : null,
+      wrist: has("wrist") ? L.wrist : roll("wrist") < 0.3 ? (roll("wb") < 0.3 ? "both" : side("ws")) : null,
+      gear: has("gear") ? L.gear : ["black", "white", "team"][mix(hash(pl.name + "gc")) % 3],
+      shoes: has("shoes") ? L.shoes : weighted([["black", 34], ["white", 34], ["team", 20], ["#b0b4bb", 6], ["#c8372d", 6]], roll("shoes")),
+    };
+  }
+
   // What each action cue plays: [clip, the clip mark that sits on the cue's frame, seconds
   // after it, options]. face: who he turns to; reach: how high his hands must get (feet, or
   // "ball": where the ball is then), which lifts the jump; ball: he carries it in the clip.
@@ -948,11 +977,23 @@ window.GAME = /*GAME_DATA*/null;
       model.traverse((o) => {
         if (o.isBone) bones[o.name] = o;
         if (!o.isMesh) return;
-        const nm = o.material.name;
-        o.material = nm === "skin" ? skin : nm === "jersey" ? jersey : nm === "shorts" ? env.teamMat[pl.side] : kit;
+        const nm = o.material.name, lk = fg.look, on = (v, tag) => v === "both" || v === tag;
+        const part = nm.split("_");
+        if (nm === "skin") o.material = skin;
+        else if (nm === "jersey") o.material = jersey;
+        else if (nm === "shorts") o.material = env.teamMat[pl.side];
+        else if (nm === "kit") o.material = kit;
+        // the optional parts: his hair style, beard and gear show, the rest stay hidden
+        else if (part[0] === "hair") { o.visible = (HAIR_PARTS[lk.hair] || []).includes(part[1]); o.material = env.tint(lk.hairColor, pl.side); }
+        else if (nm === "beard") { o.visible = lk.beard; o.material = env.tint(lk.hairColor, pl.side); }
+        else if (nm === "headband") { o.visible = !!lk.band; o.material = env.tint(lk.band || "white", pl.side); }
+        else if (nm === "shoes") o.material = env.tint(lk.shoes, pl.side);
+        else if (part[0] === "sleeve" || part[0] === "leg" || part[0] === "wrist") {
+          o.visible = on(lk[part[0]], part[1]); o.material = env.tint(lk.gear, pl.side);
+        } else o.visible = false;
         o.castShadow = env.shadows; o.frustumCulled = false;
         // his weight: the model's "bulk" shape, more of it (or less than none) for his frame
-        if (body && ph && o.morphTargetInfluences && o.morphTargetInfluences.length) o.morphTargetInfluences[0] = (ph.girth - 1) / (body.bulk_girth - 1);
+        if (body && ph && o.morphTargetInfluences && o.morphTargetInfluences.length) o.morphTargetInfluences[0] = Math.max(-0.8, Math.min(1, (ph.girth - 1) / (body.bulk_girth - 1)));
       });
       // his wingspan: arms a little longer or shorter than the model's
       if (body && ph) {
@@ -1716,6 +1757,14 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     const skinMats = SKIN.map((c) => new THREE.MeshLambertMaterial({ color: c }));
     const skinByColour = {};
     // a player's skin: what the page says (skin: an index into the tones, or a #rrggbb colour), else by his name
+    const toneOf = (pl) => (Number.isInteger(pl.skin) && skinMats[pl.skin] ? pl.skin : typeof pl.skin === "string" ? -1 : hash(pl.name + "s") % skinMats.length);
+    // hair and gear colours: "team", "white", "black" or #rrggbb, one material each
+    const tints = { white: new THREE.MeshLambertMaterial({ color: 0xe9e9e6 }), black: new THREE.MeshLambertMaterial({ color: 0x17181c }) };
+    function tint(c, side) {
+      if (c === "team") return teamMat[side];
+      if (tints[c]) return tints[c];
+      return (tints[c] = new THREE.MeshLambertMaterial({ color: /^#[0-9a-f]{6}$/i.test(c) ? c : "#17181c" }));
+    }
     function skinOf(pl) {
       if (Number.isInteger(pl.skin) && skinMats[pl.skin]) return skinMats[pl.skin];
       if (typeof pl.skin === "string" && /^#[0-9a-f]{6}$/i.test(pl.skin))
@@ -1733,12 +1782,16 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       x.textAlign = "center"; x.textBaseline = "middle"; x.fillStyle = "#ffffff";
       const n = String(pl.num ?? "");
       if (rigged) {                                               // back at u 0.25, front at 0.75, chest high
+        x.fillStyle = colors[pl.side]; x.fillRect(0, 0, 256, 8);     // (no band across the shoulders)
+        x.fillStyle = "rgba(255,255,255,0.85)";
         x.fillRect(0, 122, 256, 6);                                 // hem; then a stripe down each side
-        x.fillRect(0, 30, 4, 92); x.fillRect(124, 30, 8, 92); x.fillRect(252, 30, 4, 92);
+        x.fillRect(0, 36, 4, 86); x.fillRect(124, 36, 8, 86); x.fillRect(252, 36, 4, 86);
         x.fillStyle = "#ffffff";
-        x.font = `700 44px ${colors.font}`; x.fillText(n, 64, 50);     // back
-        x.font = `700 34px ${colors.font}`; x.fillText(n, 192, 48);    // front
-        return canvasTex(c);
+        x.font = `700 44px ${colors.font}`; x.fillText(n, 64, 46);     // back
+        x.font = `700 34px ${colors.font}`; x.fillText(n, 192, 46);    // front
+        const tx = canvasTex(c);
+        tx.wrapS = THREE.RepeatWrapping;                           // (u runs past 1 across the seam at his side)
+        return tx;
       }
       x.font = `700 72px ${colors.font}`; x.fillText(n, 128, 68);   // back (u = 0.5)
       x.font = `700 44px ${colors.font}`; x.fillText(n, 0, 60); x.fillText(n, 256, 60);   // front (u = 0 = 1)
@@ -1768,7 +1821,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     }
     function figure(key, pl) {
       if (figures[key]) return figures[key];
-      const build = physique(pl), H = build.H, skin = skinOf(pl);
+      const build = physique(pl), H = build.H, skin = skinOf(pl), look = lookOf(pl, toneOf(pl));
       const root = new THREE.Group(), turn = new THREE.Group(), body = new THREE.Group();   // root: where; turn: which way
       root.add(turn); turn.add(body);                             // body: the simple figure (the animated one sits beside it)
       body.scale.set(build.girth, 1, build.girth);
@@ -1803,7 +1856,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       label.center.set(0.5, 0); label.position.y = H + 0.6; label.renderOrder = 10;
       root.add(label);
       scene.add(root);
-      return (figures[key] = { root, body: turn, simple: body, legs, arms, label, jersey, pl, key, H, skin, build, rig: null, x: 0, z: 0, heading: 0,
+      return (figures[key] = { root, body: turn, simple: body, legs, arms, label, jersey, pl, key, H, skin, build, look, rig: null, x: 0, z: 0, heading: 0,
                                phase: hash(key) % 7, seen: -1, labelKey: "", tex: [null, null], theme: colorsVersion, aspect: 1 });
     }
     const ring = new THREE.Mesh(geo.ring, ringMat);                // under the ball handler
@@ -2108,7 +2161,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     let animP = null, over = 0, grip = 0, slowT = 0, slowN = 0;
     const gripPos = new THREE.Vector3();
     function setRig(rig) {
-      anim = createAnimator(THREE, rig, { dt, jerseyTexture, teamMat, shadows: !small, flights });
+      anim = createAnimator(THREE, rig, { dt, jerseyTexture, teamMat, tint, shadows: !small, flights });
       dirty = 3;
     }
     // "animated" needs the rig; auto: drop to simple bodies if this device can't keep up
@@ -2284,7 +2337,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
              bodies: () => ({ mode: bodyMode, rig: !!anim, auto: bodyAuto, clips: anim ? anim.names : [],
                               players: st ? st.players.map((q) => { const fg = figures[q.key], r = fg && fg.rig;
                                 return { key: q.key, n: q.n, off: q.off, sp: +(q.sp || 0).toFixed(1), animated: !!(r && r.model.visible),
-                                         name: q.pl.name, feet: +fg.H.toFixed(2), girth: +fg.build.girth.toFixed(2), reach: +fg.build.reach.toFixed(3),
+                                         name: q.pl.name, look: fg.look, feet: +fg.H.toFixed(2), girth: +fg.build.girth.toFixed(2), reach: +fg.build.reach.toFixed(3),
                                          clips: r ? Object.keys(r.acts).filter((k) => r.acts[k].enabled).map((k) => k + ":" + r.acts[k].weight.toFixed(2)) : [] }; }) : [] }),
              cues: (p) => (anim ? anim.cues(p) : null),
              orbit: (yaw, pitch, zoom) => { user.yaw = yaw; user.pitch = pitch; user.zoom = zoom; dirty = 3; },

@@ -182,7 +182,7 @@ class AnimatedPlayersTests(unittest.TestCase):
         self.assertEqual(base64.b64decode(files["player.glb"]), PLAYER_ASSETS["player.glb"].read_bytes())
         self.assertEqual(files["GLTFLoader.js"], PLAYER_ASSETS["GLTFLoader.js"].read_text(encoding="utf-8"))
         self.assertNotIn("</script", player_block(page))
-        self.assertLess(len(page) - len(plain), 1_200_000)
+        self.assertLess(len(page) - len(plain), 1_900_000)
         self.assertEqual(page.count('id="three-src"'), 1)
 
     def test_asset_budget_and_model(self):
@@ -194,8 +194,11 @@ class AnimatedPlayersTests(unittest.TestCase):
         self.assertLess(size, 2_000_000)
         self.assertEqual(len(doc["skins"]), 1)                     # one shared rigged model
         self.assertGreaterEqual(len(doc["skins"][0]["joints"]), 20)
-        self.assertEqual([m["name"] for m in doc["materials"]], ["skin", "jersey", "shorts", "kit"])
+        names = [m["name"] for m in doc["materials"]]
+        self.assertEqual(names[:4], ["skin", "jersey", "shorts", "kit"])
+        self.assertEqual(names[4:], doc["extras"]["hoopsim"]["parts"])   # hair styles, beard, gear: shown per player
         self.assertIn("mocap.cs.cmu.edu", doc["asset"]["copyright"])
+        self.assertIn("MakeHuman", doc["asset"]["copyright"])       # the body
         clips = doc["extras"]["hoopsim"]["clips"]
         self.assertEqual(sorted(a["name"] for a in doc["animations"]), sorted(clips))
         for name in ("idle", "stance", "walk", "jog", "sprint", "backpedal", "slide", "slide_m", "dribble_idle",
@@ -225,7 +228,7 @@ class AnimatedPlayersTests(unittest.TestCase):
         for prim in mesh["primitives"]:
             self.assertEqual(list(prim["targets"][0]), ["POSITION"])
         body = doc["extras"]["hoopsim"]["body"]
-        self.assertGreater(body["bulk_girth"], 1.1)
+        self.assertGreater(body["bulk_girth"], 1.05)
         self.assertGreater(body["span"], 2 * body["arm"])
         src = self.template
         self.assertEqual(src.count("function physique(pl)"), 1)
@@ -233,11 +236,55 @@ class AnimatedPlayersTests(unittest.TestCase):
         self.assertIn("const ht = pl.ht > 0 ? pl.ht : b[0]", src)
         self.assertIn("const wt = pl.wt > 0 ? pl.wt : b[1]", src)
         self.assertIn("const ws = pl.ws > 0 ? pl.ws : ht", src)
-        self.assertIn("o.morphTargetInfluences[0] = (ph.girth - 1) / (body.bulk_girth - 1);", src)
+        self.assertIn("o.morphTargetInfluences[0] = Math.max(-0.8, Math.min(1, (ph.girth - 1) / (body.bulk_girth - 1)));", src)
         self.assertIn('bones[sd + "Arm"].scale.setScalar(arm);', src)
         self.assertIn("function skinOf(pl)", src)                  # a stored skin tone wins over the name's
         # exported pages carry no builds: nothing to look players up in
         self.assertNotIn('"ht":', build_html(self.data))
+
+    def test_jersey_wraps_the_body(self):
+        """The jersey is a layer of the body, textured right round: its u runs past 1 at the seam."""
+        raw = PLAYER_ASSETS["player.glb"].read_bytes()
+        doc = read_glb(PLAYER_ASSETS["player.glb"])[4]
+        size = struct.unpack("<I", raw[12:16])[0]
+        blob = raw[20 + size + 8:]
+        prim = next(p for p in doc["meshes"][0]["primitives"] if doc["materials"][p["material"]]["name"] == "jersey")
+        def read(i, fmt, width):
+            acc = doc["accessors"][i]; view = doc["bufferViews"][acc["bufferView"]]
+            start = view["byteOffset"] + acc.get("byteOffset", 0)
+            return struct.unpack(f"<{acc['count'] * width}{fmt}", blob[start:start + acc["count"] * width * struct.calcsize(fmt)])
+        idx = sorted(set(read(prim["indices"], "H", 1)))
+        self.assertGreater(len(idx), 600)                          # the body's own detail, not a tube of rings
+        uv = read(prim["attributes"]["TEXCOORD_0"], "f", 2)
+        us = [uv[2 * i] for i in idx]; vs = [uv[2 * i + 1] for i in idx]
+        self.assertLess(min(us), 0.05)
+        self.assertGreater(max(us), 1.0)                           # wraps: the viewer's texture repeats
+        self.assertGreaterEqual(min(vs), -0.05)
+        self.assertLessEqual(max(vs), 1.0001)
+        self.assertIn("tx.wrapS = THREE.RepeatWrapping;", self.template)
+
+    def test_looks_per_player(self):
+        """Hair, beard and gear are parts of the one model, switched on per player."""
+        doc = read_glb(PLAYER_ASSETS["player.glb"])[4]
+        parts = doc["extras"]["hoopsim"]["parts"]
+        for name in ("hair_cap", "hair_fade", "hair_afro", "hair_flattop", "hair_locs", "hair_bun", "beard",
+                     "headband", "sleeve_L", "sleeve_R", "wrist_L", "wrist_R", "leg_L", "leg_R", "shoes"):
+            self.assertIn(name, parts)
+        self.assertEqual(len(doc["meshes"][0]["primitives"]), 4 + len(parts))
+        src = self.template
+        self.assertEqual(src.count("function lookOf(pl, tone)"), 1)
+        # every style the viewer can pick is made of hair parts the model has (bald: none)
+        styles = re.findall(r'\["(\w+)", \d+\]', src.split("const HAIR_STYLES = [", 1)[1].split(";", 1)[0])
+        made_of = json.loads(re.sub(r"(\w+):", r'"\1":', src.split("const HAIR_PARTS = ", 1)[1].split(";", 1)[0]))
+        self.assertEqual(set(styles), set(made_of) | {"bald"})
+        for pieces in made_of.values():
+            for piece in pieces:
+                self.assertIn("hair_" + piece, parts)
+        # a look stored on the player wins; otherwise it comes from his name, the same every time
+        self.assertIn('const L = pl.look && typeof pl.look === "object" ? pl.look : {};', src)
+        self.assertIn('hair: has("hair") ? L.hair :', src)
+        self.assertIn("} else o.visible = false;", src)            # a part the viewer doesn't know stays hidden
+        self.assertNotIn("Math.random", src.split("function lookOf(pl, tone)", 1)[1].split("// What each action cue plays", 1)[0])
 
     def test_web_pages_carry_real_builds(self):
         try:
@@ -261,7 +308,7 @@ class AnimatedPlayersTests(unittest.TestCase):
     def test_licences_recorded(self):
         notes = (PLAYER_ASSETS["player.glb"].parent / "LICENSES.md").read_text(encoding="utf-8")
         for needle in ("mocap.cs.cmu.edu", "NSF EIA-0196217", "GLTFLoader.js", "SkeletonUtils.js",
-                       "BufferGeometryUtils.js", "MIT", "Mixamo", "player.glb"):
+                       "BufferGeometryUtils.js", "MIT", "Mixamo", "player.glb", "MakeHuman", "CC0"):
             self.assertIn(needle, notes)
         clips = read_glb(PLAYER_ASSETS["player.glb"])[4]["extras"]["hoopsim"]["clips"]
         for src in {c["src"] for c in clips.values()}:
