@@ -519,16 +519,18 @@ and training refits them so each value predicts the points the possession
 actually went on to score:
 
 ```bash
-python -m hoopsim.spatial.train                 # 5 rounds x 20,000 possessions, ~2.5 min
+python -m hoopsim.spatial.train --resume --check 64   # 12 rounds x 120 full games (~15 min), then checks
+python -m hoopsim.spatial.check_values                # do the saved values match the engine?
 python -m hoopsim.spatial.measure               # learned values (default)
 python -m hoopsim.spatial.measure --values heuristic
 ```
 
-Each round plays possessions with the current values, tries a random option 10–25%
-of the time so every option gets tested, records every decision with the
-possession's eventual points, and refits by least squares (pulled toward the
-previous weights). It trains on leagues 100–102 and is tested on leagues 0–2. It's
-deterministic, and the results are stable across extra rounds.
+Each round plays games with the current values, tries a random option 10–25%
+of the time so every option gets tested, records every decision with the points
+its possession went on to score, and refits by least squares. It trains on leagues
+100–102 and is tested on leagues 0–2. It's deterministic. Training used to play
+stand-alone half-court possessions and jump to each round's fit; it now plays full
+games and takes damped steps (see *Values that match the engine*).
 
 What it learned:
 - A shot is worth about 0.9–1.05 × its expected points + 0.2–0.4 (the
@@ -1488,6 +1490,163 @@ Still off or worth watching:
 * eFG is the stat most often out now: .555 on the seed mean against .546 (.553 before),
   and .56+ in the stronger-shooting leagues. Taking it down (`three_make_adj`) costs
   points per 100, which is already short in seed 0.
+
+### Values that match the engine
+The decision values (*Learned decision values*) were last trained before "Defence that
+recovers" was finished. "Shots with room", "Star scoring" and "Steadier leagues" were all
+calibrated with those stale values, because retraining broke the calibration: a 3-round
+resumed retrain gave seeds 0 / 1 / 2 11 / 13 / 11 of 13 (seed 0: 106.8 points, 110.1 per
+100), and running the same fits on full games for five rounds took the three share to
+.436 / .445 / .460 at 112-113 points per 100. So no change that needed a retrain could be
+made safely.
+
+**Why.** The engine's outcomes were not the problem. By zone, full games (seeds 0-2) were
+close to the NBA: rim .660 (NBA .666), short paint .468 (.449), mid-range .444 (.423),
+threes .370 (.360). The problem was the values and how they were trained:
+* **The values were not worth what their options scored.** Recording every decision in
+  full games with the points its possession went on to score, the stale values overrated
+  post-ups by 0.32, holding by 0.14, pick-and-rolls by 0.11 and drives by 0.10, against
+  0.04 for catch-and-shoot threes.
+* **The shots the players valued were not the shots the engine played.** A decision saw
+  make chance x points. The engine also fouls (23% of rim attempts, with free throws) and
+  blocks. So a rim attempt was valued at 1.28 points, made 0.97 from the floor and scored
+  1.41 in all. A pull-up's contest was guessed from the man's current gap: mid-range
+  pull-ups were valued as if he'd be 9.2 ft away and went up 3.6 ft contested, step-back
+  threes 6.1 ft against 3.9. Both were valued 0.2-0.28 points over what they made.
+  Least squares can't fit a value that is right for threes and wrong for twos in
+  different directions, so the weight on expected points fell with every retrain
+  (0.94 -> 0.69). Shot quality counted for less and less.
+* **Training didn't play the game.** It played stand-alone half-court possessions between
+  starters: threes were 54% of shots there (40% in full games), with no transition flows,
+  early offence, inbounds, fatigue, bench or ends of quarters.
+* **Training didn't converge.** Each round jumped to the least-squares fit of the last
+  round's games. Options that are nearly equal swapped back and forth: in full games,
+  holding the ball was worth 1.08, 1.03, 1.07, 0.97, 1.10, 0.87, 1.07, 0.88 over eight
+  rounds (on one fixed sample of decisions), and points per possession went 1.12, 1.10,
+  1.12, 1.10, 1.14, 1.09, 1.14, 1.07. Where a retrain stopped decided the calibration.
+* **Exploring spoiled the returns.** 10% of training decisions are random. Every decision
+  before a random one in its possession was credited with its bad outcome, so keeping
+  the ball alive looked worse than it is, and shooting looked better.
+
+**Changes.** In the payoff model (all in `SpatialParams`, off in `LEGACY_PARAMS`, which
+still reproduces the legacy pin):
+* **Whole-shot values** (`shot_value_whole`): a shot's expected points include the block
+  chance and the shooting foul with its free throws (an and-one or two or three shots),
+  computed by the same code `take_shot` uses (`block_chance`, `foul_chance`,
+  `free_throw_pct`).
+* **Pull-up contests predicted** (`pullup_contest`): from where his man is and how fast
+  he gets to the pull-up point, stopping a stride off as on any jumper, never more room
+  than the old guess. Predicted against actual: 4.1 against 4.15 ft (mid-range), 4.0 against 3.8 ft (threes).
+* **Holding knows whether the defence is set**: a `flow` feature for the hold option (a
+  flow out of transition). Holding in a flow was overrated by 0.21.
+
+In training (`train.py`, `fullgame.py`):
+* **Full games** (`--full-games`, 120 per round by default) with a recorder in `FullGame`:
+  a decision is credited with what the possession scored from its half-court segment on
+  (a non-shooting foul restarts the half court; the possession goes on).
+* **On-policy returns**: decisions before a random one in the same possession aren't
+  recorded (`HalfCourtGame.on_policy_decisions`).
+* **Damped steps** (`--step 0.4`): values move 40% of the way to each round's fit, and
+  the last 6 rounds are averaged. Each round prints every option's value minus what it
+  scored; it settles within about ±0.03 (post-ups ±0.1, a few hundred a round).
+* `train` defaults are now `--rounds 12 --full-games 120 --step 0.4 --average 6`
+  (about 15 minutes). `--full-games 0` is the old half-court training.
+
+Re-centred for fresh values (outcomes toward the NBA, plus two decision knobs the stale
+values had been compensating):
+
+| | before | after | why |
+|---|---|---|---|
+| `rim_make_adj` | -0.025 | -0.015 | rim .660 against .666 |
+| `short_make_adj` (new) | - | -0.02 | short paint .468 against .449 |
+| `three_make_adj` | -0.023 | -0.026 | fresh values shoot better threes |
+| `dribble_contest` (new) | - | 0.6 | honest pull-ups went in at .38 / .29 from mid / three (NBA ~.41 / ~.33): a man giving ground contests a pull-up at 0.6 of a closeout |
+| `foul_scale` | 1.05 | 1.0 | whole-shot values like contact; fouls had risen to 20.5 |
+| `patience` | 0.5 | 0.45 | fresh values hold longer; pace had fallen ~1.5 |
+| `patience_three` | 0.9 | 1.2 | 0.9 offset stale values that underrated threes; fresh values took .43-.46 (1.3: .36-.39) |
+
+**The retrain.** Resumed from the previous values: 16 rounds of 120 games while the
+payoff model and training changed, then 10 + 10 + 10 + 10 + 8 resumed rounds as the
+re-centring moved (`train --start ... --rounds N`), the last 8 under the final settings
+(the committed file is their last 6 averaged).
+Over the last rounds every option's value minus scored stays within
+±0.03 for every option but post-ups (±0.1). Two independent 6-round continuations of the same settings gave option
+values within 0.01 of each other (post-ups 0.03); their 64-game measures differ by about
+what the measure's own noise is (±1.2 points per 100, ±.007 eFG).
+
+Full games, 64 per league (`measure --games 64 --jobs 2`, seeds 0 / 1 / 2 / 3 / 4). "Before" is
+the stale values with the engine as it was; "after" is the retrained values with the
+changes above:
+
+| | before | after | NBA 2025-26 |
+|---|---|---|---|
+| pace | 98.2 / 100.1 / 101.7 / 101.4 / 100.3 | 97.4 / 98.5 / 100.4 / 100.6 / 100.0 | 99.4 |
+| points | 111.6 / 116.7 / 115.2 / 115.8 / 115.3 | 111.2 / 113.4 / 114.0 / 114.4 / 115.5 | 115.6 |
+| points per 100 | 113.3 / 116.4 / 113.3 / 114.2 / 114.7 | 113.0 / 115.2 / 113.4 / 113.5 / 114.7 | 115.8 |
+| transition share | .155 / .158 / .165 / .163 / .155 | .152 / .156 / .165 / .161 / .151 | .150 |
+| transition points per play | 1.22 / 1.19 / 1.27 / 1.25 / 1.26 | 1.23 / 1.23 / 1.20 / 1.17 / 1.17 | 1.26 |
+| FTA per 100 | 25.4 / 24.6 / 23.0 / 23.5 / 24.2 | 23.7 / 24.2 / 23.1 / 22.4 / 24.0 | 23.6 |
+| fouls per 100 | 20.7 / 19.7 / 19.5 / 19.0 / 19.2 | 19.3 / 19.3 / 18.9 / 18.4 / 19.1 | 20.0 |
+| turnovers per 100 | 14.7 / 14.2 / 14.5 / 13.7 / 14.2 | 14.4 / 14.2 / 14.7 / 14.1 / 14.4 | 14.6 |
+| three share | .400 / .420 / .429 / .434 / .413 | .403 / .419 / .426 / .436 / .420 | .415 |
+| eFG | .549 / .558 / .561 / .554 / .555 | .550 / .552 / .554 / .551 / .561 | .546 |
+| 3P% | .37 / .37 / .36 / .36 / .36 | .35 / .37 / .36 / .36 / .37 | .36 |
+| ORB% | .255 / .279 / .226 / .245 / .258 | .256 / .278 / .252 / .252 / .245 | .260 |
+| within tolerance (of 13) | 13 / 12 / 12 / 13 / 13 | 12 / 13 / 13 / 12 / 12 | |
+
+Seed means (0-2) stay 13/13: pace 98.8, points 112.9, points per 100 113.9, transition
+.158 at 1.22, three share .416, eFG .552, ORB% .262, turnovers 14.4, FTA 23.7, fouls 19.2.
+The misses: seed 0's points (111.2 against a floor of 111.6) and transition points per play
+in seeds 3 and 4 (1.17). Pace is about a possession lower than before (fresh values
+hold a little longer). A team's top scorer per game is 25.6-29.7 (27.0-30.7 before).
+Games take as long as before: 1.64 s against 1.62 s for the previous engine and values,
+side by side on the same (busy) machine. The statistical engine is untouched
+(`python -m hoopsim.calibrate` 17/17).
+
+The values retrained the old way would have been: 3 resumed half-court rounds, seeds 0 /
+1 / 2 11 / 13 / 11 (points 106.8 / 112.7 / 113.0); five undamped full-game rounds,
+three share .436 / .445 / .460.
+
+The realism audit (`audit --games 48 --seed 7`) goes from 24 ok / 1 watch / 1 off to
+24 / 2 / 0. Rim / short / mid / three 30.6 / 18.1 / 9.9 / 41.4% (30.7 / 17.3 / 10.1 /
+42.0), corner threes 24.8% (25.3), early shots 14.6% (14.0), late 19.8%, passes 3.10.
+Teleports read 0.00 per game this sample (they're a separate task) and distance per player is still a
+watch. One shot row went from ok to watch: very tight shots (0-2 ft) 11.8% against
+10.0% (NBA 5-11%). Valued whole, a contested finish now counts its free throws, and
+players take a few more of them.
+
+**The guard.**
+* `python -m hoopsim.spatial.check_values` plays 36 full games on the measure leagues
+  (no exploring) and compares every option's mean value with what it scored, failing
+  any off by more than 0.10 (options with fewer than 600 decisions aren't judged).
+  `--measure 64` also runs the full-game measure on seeds 0-2 and lists every target
+  out of tolerance, per seed and on the seed means.
+* `python -m hoopsim.spatial.train --check 64` runs both after training and says so if
+  the new values move the engine out of calibration.
+* `tests/test_values_match.py` (`ConvergedTests`, ~25 s): the committed values must match
+  the engine on 20 games within 0.12 per option, and twos and threes within 0.12 of each
+  other. An engine change that changes what options are worth fails it until the values
+  are retrained. The old values failed it on five options, by 0.13-0.28 (shots, drives
+  carried on, post-ups, holding, twos).
+
+Tests: `tests/test_values_match.py` also covers the switches (off in `LEGACY_PARAMS`), the
+whole-shot formula against its parts, a pull-up into a sagging man, pull-ups never given
+more room than the old guess, the dribble contest, the short-paint adjustment, the hold
+`flow` feature, on-policy recording, the full-game recorder and the damped step.
+Re-measured with the new values: the pull-up value test uses the predicted contest; set plays
+add 7.8% passes (test floor 8% -> 6%); early shots on seed 3 are 13.7% (floor 14% -> 13%;
+audit 14.6%); Seven Seconds against Grit and Grind is 99.0 against 95.8 possessions in six
+games each (gap required 5 -> 2.5). `measure --values-file` and `train --start/--out` take any values file; `measure --games`
+passes values and params to its worker processes.
+
+Still off or worth watching:
+* Post-ups are rare in the measure leagues and noisy: the values rate them 0.1-0.17 over
+  what they score there (on the training leagues within ±0.1).
+* Shot values still miss by zone in ways a linear model with one `is_three` flag can't
+  see: short-paint shots score ~0.1 more than valued, catch-and-shoot mid-range ~0.1
+  less (offensive rebounds of short misses).
+* Points per 100 still sit 1-2 below the NBA's 115.8 with eFG at or above it: the measure
+  counts about 2% more possessions than Basketball-Reference's formula.
 
 ### Where the defence picks up
 On a walk-up (after a make, or a team that doesn't push), the defence gets back and waits

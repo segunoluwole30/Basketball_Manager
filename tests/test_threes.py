@@ -129,6 +129,7 @@ class OffDribbleTests(unittest.TestCase):
         kind, action, feats = g.pull_up_option(h)
         point = action[2]
         contest = max(0.0, C.dist(on.pos, h.pos) - 0.5 + 0.02 * (h.a("speed") - on.a("speed")) * 10)
+        contest = g.pullup_contest(h, on, point, contest)     # README "Values that match the engine"
         # take_shot shoots a pull-up set (not on the move): the value must match.
         self.assertAlmostEqual(feats[1], g.shot_value(h, p=point, contest_d=contest, defender=on,
                                                       catch=False))

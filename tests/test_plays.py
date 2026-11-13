@@ -34,7 +34,8 @@ class SetPlayTests(unittest.TestCase):
         # (sets often finish in a pick-and-roll rather than another pass, and a denied
         # swing can kill the action). About +10% time: +16% before star scoring
         # (README "Star scoring"), whose usage penalty lengthens a plain offence too.
-        self.assertGreater(with_plays.stats["passes"], 1.08 * without.stats["passes"])
+        # Passes +8%, +7.8% with the values retrained in README "Values that match the engine".
+        self.assertGreater(with_plays.stats["passes"], 1.06 * without.stats["passes"])
         self.assertGreater(with_plays.stats["seconds"], 1.07 * without.stats["seconds"])
 
     def test_legacy_params_run_no_entries(self):
