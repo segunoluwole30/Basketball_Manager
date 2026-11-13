@@ -435,7 +435,7 @@ console.log(JSON.stringify({ out, same: JSON.stringify(a) === JSON.stringify(b),
         self.assertEqual(src.count("function reachBall(fg, bx, by, bz) {"), 1)
         # only around the top of the jump, and never for a ball behind him or far out of reach
         self.assertIn("smooth01((t + REACH_IN) / 0.22) * smooth01((REACH_OUT - t) / 0.22);", src)
-        self.assertIn("const w = r.reachW * smooth01((ahead + 0.6) / 0.5) * (1 - smooth01((dist - 1.5 * len) / len));", src)
+        self.assertIn("const w = r.reachW * smooth01((ahead + 0.6) / 0.5) * (1 - smooth01((dist - 1.5 * len) / len)) * smooth01((v4.y + 0.2 * len) / (0.5 * len));", src)
         # once the ball is where it will be drawn
         self.assertLess(view.index("ball.position.set(bX, bY, bZ);"), view.index("anim.reachBall(f, bX, bY, bZ);"))
         self.assertIn('"LeftForeArm", "RightForeArm",', src)           # brought back to the clip's pose each frame

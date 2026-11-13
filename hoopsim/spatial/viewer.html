@@ -1201,10 +1201,12 @@ window.GAME = /*GAME_DATA*/null;
       v4.set(bx, by, bz).sub(vH);
       const dist = v4.length(), len = vK.setFromMatrixPosition(b[r.reachSide + "ForeArm"].matrixWorld).distanceTo(vH) * 2;
       const ahead = (v4.x * Math.sin(h) + v4.z * Math.cos(h)) / (Math.hypot(v4.x, v4.z) || 1);
-      // not for a ball behind him, or one far out of reach (then the clip's own arms do)
-      const w = r.reachW * smooth01((ahead + 0.6) / 0.5) * (1 - smooth01((dist - 1.5 * len) / len));
+      // not for a ball behind him, one far out of reach (then the clip's own arms do), or one
+      // still held low: a hand never goes down into the shooter's chest
+      const w = r.reachW * smooth01((ahead + 0.6) / 0.5) * (1 - smooth01((dist - 1.5 * len) / len)) * smooth01((v4.y + 0.2 * len) / (0.5 * len));
       if (w <= 0.01) { r.reachGap = null; return; }
-      v4.multiplyScalar(Math.max(0, dist - 0.38 * k - BALL_R * 0.6) / (dist || 1)).add(vH);
+      // (contesting, the hand stays a foot off the ball: a hand in the shooter's face, not a block)
+      v4.multiplyScalar(Math.max(0, dist - 0.38 * k - (c.offArm ? BALL_R * 0.6 : 1)) / (dist || 1)).add(vH);
       r.reachGap = solve(r.reachSide, v4, w);
       const from = r.reachFrom;
       if (c.offArm) {                                             // the other arm: down and out to the side, nearly straight
