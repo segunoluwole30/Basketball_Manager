@@ -24,7 +24,7 @@ from .manager import (
 from .contracts import cap_room, payment_route, payroll_for
 from .lineup import POSITIONS
 from .models import Attributes, League, Phase, Player
-from .playoffs import play_playoffs, ranked, start_playoffs, team_records
+from .playoffs import eliminated, play_playoffs, ranked, start_playoffs, team_records
 from .season import (
     finish_season, play_regular_season, regular_season_over, run_offseason, trade_deadline_day,
 )
@@ -397,11 +397,11 @@ class Game:
             self.say("The regular season isn't over yet ('end' plays the rest).")
             return
         start_playoffs(lg)
-        made_it = any(self.me.id in (s.high_id, s.low_id) for s in lg.playoffs)
+        made_it = not eliminated(lg, self.me.id)
         self.say("\nPLAYOFFS" + ("" if made_it else " (you missed out this year)"))
         champ = play_playoffs(lg, self.rng)
         for s in sorted(lg.playoffs, key=lambda s: (s.round, s.id)):
-            stage = "Finals" if s.conference is None else f"{s.conference} round {s.round}"
+            stage = "Finals" if s.conference is None else (f"{s.conference} play-in" if s.play_in else f"{s.conference} round {s.round}")
             mark = " <-- you" if self.me.id in (s.high_id, s.low_id) else ""
             self.say(f"  {stage:<16} ({s.high_seed}) {lg.teams[s.high_id].abbreviation} {s.high_wins}-{s.low_wins} "
                      f"{lg.teams[s.low_id].abbreviation} ({s.low_seed}){mark}")

@@ -652,6 +652,7 @@ class LeagueRules:
     timeouts_per_game: int = 7
     timeouts_per_overtime: int = 2
     playoff_series_length: int = 7
+    play_in: bool = True           # seeds 7-10 of an eight-team conference bracket play in for 7 and 8
     draft_rounds: int = 2
     mid_level_exception: int = 12_500_000   # one signing per offseason for teams over the cap
     # "statistical" (fast), "spatial" (players on a court) or "hybrid" (spatial for the
@@ -690,7 +691,7 @@ class Series:
     """A playoff series. The higher seed has home court."""
 
     id: int
-    round: int                     # 1 = first round
+    round: int                     # 1 = first round, 0 = the play-in
     conference: Optional[str]      # None for the finals
     high_id: int
     low_id: int
@@ -700,6 +701,7 @@ class Series:
     high_wins: int = 0
     low_wins: int = 0
     game_ids: list[int] = field(default_factory=list)
+    play_in: str = ""              # play-in games: "7v8", "9v10" or "decider" (for the 8 seed)
 
     @property
     def wins_needed(self) -> int:

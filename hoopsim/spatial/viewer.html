@@ -68,6 +68,9 @@ body {
 .home.off .abbr::after { content: none; }
 .home.off .abbr::before { content: "\25CF "; color: var(--accent); font-size: 18px; vertical-align: middle; }
 .clock { text-align: center; }
+.board .series-line { grid-column: 1 / -1; text-align: center; font-family: var(--font-body); font-size: 13px;
+  color: var(--muted); margin-top: -4px; }
+.board .series-line[hidden] { display: none; }
 .clock .sc { font-size: 40px; font-weight: 700; line-height: 1; color: var(--accent);
   font-variant-numeric: tabular-nums; min-width: 2.4ch; display: inline-block; }
 .clock .label { font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
@@ -222,6 +225,7 @@ aside { min-width: 0; display: flex; flex-direction: column; background: var(--p
       <div class="team home" id="homeBox"><div class="pts" id="homePts">0</div>
         <div class="name"><div class="abbr" id="homeAbbr">HME</div><div class="full" id="homeName"></div></div>
         <span class="chip"></span></div>
+      <div class="series-line" id="seriesLine" hidden></div>
     </div>
     <div class="court-wrap"><canvas id="court" width="1000" height="560" aria-label="Court with players"></canvas>
       <div class="view3d" id="view3d" hidden><canvas id="court3d" aria-label="3D court with players"></canvas>
@@ -718,6 +722,19 @@ window.GAME = /*GAME_DATA*/null;
   // ---- UI
   $("homeAbbr").textContent = G.home.abbr; $("homeName").textContent = G.home.name;
   $("awayAbbr").textContent = G.away.abbr; $("awayName").textContent = G.away.name;
+  // Playoff games: the series as it stood before tip-off, then the result at the final buzzer.
+  function seriesLine(fin) {
+    const s = G.series;
+    if (!s) return;
+    let h = s.home_wins, a = s.away_wins;
+    if (fin) { if (fin[0] > fin[1]) h++; else if (fin[1] > fin[0]) a++; }
+    const lead = h > a ? s.home : s.away, hi = Math.max(h, a), lo = Math.min(h, a);
+    const status = s.play_in ? (h || a ? `${lead} wins` : s.status)
+      : h === a ? `Series tied ${h}–${a}` : `${lead} ${hi >= s.wins_needed ? "wins" : "leads"} ${hi}–${lo}`;
+    $("seriesLine").textContent = `${s.title} · ${s.play_in ? s.matchup : "Game " + s.game} · ${status}`;
+    $("seriesLine").hidden = false;
+  }
+  seriesLine(null);
   const lineups = $("lineups");
   let lineupKey = "";
   function updateLineups(p, i) {
@@ -763,7 +780,10 @@ window.GAME = /*GAME_DATA*/null;
   }
   // Live: no spoilers. The box score appears at the final buzzer.
   let boxReady = false;
-  const revealBox = () => { if (boxReady) offerTab("boxCard", true); };
+  const revealBox = () => {
+    if (boxReady) offerTab("boxCard", true);
+    if (!LIVE) seriesLine(G.final || (P.length ? P[P.length - 1].end_score : null));
+  };
   if (G.live) {
     $("about").innerHTML = "<strong>Live.</strong> Your game as it happened, possession by possession. " +
       "The box score appears at the final buzzer (or jump ahead with the quarter buttons).";
@@ -2763,6 +2783,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
         renderCoach(true);
         setText("gameClock", "Final");
         setText("homePts", st.home.score); setText("awayPts", st.away.score);
+        seriesLine([st.home.score, st.away.score]);
         setText("callText", `Final: ${st.away.abbr} ${st.away.score}, ${st.home.abbr} ${st.home.score}`);
         const rows = (side) => st[side].players.map((p) => ({ name: p.name, min: p.min, starter: false, pts: p.pts,
           orb: 0, drb: p.reb, ast: p.ast, stl: 0, blk: 0, tov: p.tov, pf: p.pf, fgm: p.fgm, fga: p.fga,

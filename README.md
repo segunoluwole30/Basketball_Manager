@@ -295,6 +295,15 @@ office** returns to the app. If an AI team makes you a trade offer on the way,
 it stops there, as the normal sim does. A watched game is simulated in full
 before you see it; to make decisions, coach it live instead.
 
+**Playoff games in the viewer.** A playoff game's scoreboard has a line under it
+with the series as it stood at tip-off, such as *East First Round · Game 3 ·
+BOS leads 2–0*. At the final buzzer it changes to the new score (*Series tied
+2–2*, *BOS wins 4–1*). Play-in games show the matchup and what is at stake
+(*East Play-in · 7 v 8 · Winner is the 7 seed*). This works when watching,
+coaching live and replaying. The line is worked out when the page is served, so
+playoff replays saved before it existed show it too, and regular-season games
+have no line.
+
 **Coaching live** (`spatial/live.py`). **🏀 Play live** plays on to your next game
 (regular season or playoffs) and puts you on the bench. The game is simulated one
 possession at a time, only a possession or two ahead of what you're watching, so
@@ -381,7 +390,7 @@ package (`hoopsim/web/static/`), so Node isn't needed to play.
 | **Squad** | sortable roster tables (overview, ratings, stats, contracts) for any team, finances. Click any name for the player card: attributes, scouted potential with its range, scouting notes, ability by position, player instructions, this season's line and a career section: small charts of points, rebounds and assists per game and current ability by season (ability from end-of-season snapshots, plus today's), and a season-by-season table for the regular season and the playoffs. |
 | **Tactics** | starting five by position (with each player's ability at that slot), minutes that must total 240 (with a "balance" helper), the assistant-coach toggle, team tactics and player instructions. |
 | **Transfers** | free agents with their asks and a contract form that shows how you'd pay (cap space, mid-level exception, minimum); a trade builder with live salary-matching and roster feedback and the other team's verdict. |
-| **League** | standings, leaders, schedule and results with box scores (current season), a daily scoreboard, the playoff bracket and past seasons. |
+| **League** | standings, leaders, schedule and results with box scores (current season), a daily scoreboard, the playoff bracket and past seasons. See *Playoff bracket* below. |
 | **Calendar** | The season a month at a time: your games (home/away, results, **B2B** badges), league games per night, opening night, Thanksgiving, Christmas, the All-Star break, the trade deadline and the playoffs. Click a day for every game on it, and **Go to this day** to play every day before it and stop at its start. See *Schedule* below. |
 | **Stats** | *League leaders*: per-game points, rebounds, assists, steals and blocks, FG%, 3P% and FT%, and advanced lists (true shooting %, usage %, share of team FGA, points/rebounds/assists per 36), filtered by season, regular season or playoffs, and position; your players are highlighted. To qualify a player needs 60% of the most games any team has played (4 games in the playoffs), plus 5 FGA, 2 3PA or 2 FTA per game for the shooting lists and 15 minutes per game for the rate lists. *Team stats*: a sortable table of points for and against, pace, offensive, defensive and net rating and the four factors for offence and defence (eFG%, TOV%, ORB%/DRB%, FT rate, 3PA rate). *Game log*: every game a team has played this season with the score, running record and top scorer, linked to the box score and, for recorded games, the viewer. |
 | **Offseason** | one screen per step: team options, re-signing (asks and the chance he stays), the draft board pick by pick, every free-agency round, trade offers and roster cuts. Any decision, a whole step or the rest of the summer can be handed to your assistant. |
@@ -2122,6 +2131,32 @@ start the game tired (`Tuning.b2b_start_energy` = 0.85) and shoot slightly worse
 rested ones won 46.4% and lost by 1.2 points (NBA: roughly 1.5). Playoffs start six
 days after the regular season (the play-in week) and are played every other day.
 
+**Playoff bracket** (League screen, *Playoffs* tab; `web/bracket.py`, served in
+`/api/playoffs` as `bracket`). The play-in comes first, three games per
+conference. Below it is the bracket: the East's first round, conference
+semifinals and conference finals on the left, the Finals in the middle and the
+West on the right, mirrored. Each box shows the seeds, abbreviations and team
+names, the series score and a status line (*BOS leads 2–0*). The winner of a
+finished series is highlighted and your team is marked. Click a box for its
+games, with box score and watch links where they exist. Slots that haven't been
+drawn yet show the teams already through and *TBD* for the rest, and fill in as
+series finish. During the regular season the tab shows the projected bracket from
+the current standings, with dashed boxes. On narrow screens (phones) the bracket
+is shown round by round, East and West side by side. Game lists, the daily
+scoreboard and the box score show the series score of each playoff game too.
+
+`/api/playoffs` → `bracket`: `{projected, conferences: [{conference, play_in:
+[slot × 3], rounds: [[slot, …] per round], round_labels}], finals: slot}`. A
+slot is `{id (series id, or null if not drawn yet), round, conference, label,
+play_in, matchup, teams: [{id, abbr, name, seed} × 2], wins, over, winner_id,
+best_of, games, status, projected}`. It is `null` before any game has been
+played. Each playoff game view (`games`, `/api/game/{id}`, schedules) has `series:
+{title, game, play_in, status}`, where `status` is the series score after the
+game. The viewer's page data (`/api/replay/{id}`, `/api/live/page`) has
+`series: {series_id, title, round, conference, play_in, matchup, game, best_of,
+wins_needed, home, away, home_wins, away_wins, status}`, with the series as it
+stood before the game.
+
 The browser app's **Calendar** screen shows the season a month at a time:
 
 - Each day shows your games (home/away, result, a **B2B** badge on second
@@ -2394,8 +2429,18 @@ report = run_offseason(league, rng)        # everything between seasons
   games if there are any, and the league's date moves to it). The web app's sims
   use it, so every control moves the date a calendar day at a time.
 - **Playoffs** (`playoffs.py`): the top two thirds of each conference (rounded down
-  to a power of two) are seeded by record, then point differential. Best-of-7
+  to a power of two) are seeded by record and the tiebreakers. Best-of-7
   series use 2-2-1-1-1 home court, and the conference champions meet in the finals.
+- **Play-in** (`playoffs.py`, NBA format): when a conference has an eight-team
+  bracket and at least ten teams, seeds 7 to 10 play single games first. On the
+  first night 7 hosts 8 (the winner is the 7 seed) and 9 hosts 10 (the loser is
+  out). Two nights later the 7 v 8 loser hosts the 9 v 10 winner, and the winner
+  of that game is the 8 seed. Round one starts six days after the regular season,
+  as before. Play-in games are postseason games (`Game.playoff`, in a `Series`
+  with `round` 0, `best_of` 1 and `play_in` set to `"7v8"`, `"9v10"` or
+  `"decider"`), but they aren't counted in playoff stats, and the teams knocked out
+  in the play-in go into the draft lottery. `LeagueRules.play_in = False` turns it off.
+  Smaller leagues, with four-team brackets, have no play-in.
 - **Awards**: MVP, Finals MVP, Defensive POY, Rookie of the Year, Sixth Man and Most
   Improved. Each player's season line (stats, age, CA) goes into `player.career`.
 

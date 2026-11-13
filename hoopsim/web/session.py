@@ -33,8 +33,9 @@ from ..manager import (
 )
 from ..market import _salaries_match, evaluate_trade, execute_user_trade
 from ..models import ContractOption, DefensiveScheme, League, OffensiveFocus, Phase, Player
-from ..playoffs import (_HIGH_SEED_HOME, _advance_bracket, current_round, next_playoff_day, ranked,
-                        start_playoffs, team_records)
+from ..playoffs import (_HIGH_SEED_HOME, _advance_bracket, current_round, eliminated, next_playoff_day,
+                        ranked, start_playoffs, team_records, waiting_for_play_in)
+from . import bracket as bracket_view
 from ..season import (
     OFFSEASON_STEPS, STEP_TITLES, answer_offseason, finish_season, manager_answer,
     offseason_pending, offseason_report, pending_players, play_regular_day,
@@ -735,6 +736,11 @@ class GameSession:
                 theirs = g.result.away_score if at_home else g.result.home_score
                 v["won"] = mine > theirs
                 v["score"] = f"{mine}-{theirs}"
+        if g.playoff:
+            ctx = bracket_view.series_context(lg, g)
+            if ctx:
+                v["series"] = {"title": ctx["title"], "game": ctx["game"], "play_in": ctx["play_in"],
+                               "status": ctx.get("status_after", ctx["status"])}
         return v
 
     # -- simulation -------------------------------------------------------------------
@@ -837,9 +843,14 @@ class GameSession:
         self._expire_offers()
         start_playoffs(lg)
         me = lg.user_team_id
-        made = any(me in (s.high_id, s.low_id) for s in lg.playoffs)
+        made = me in waiting_for_play_in(lg) or any(me in (s.high_id, s.low_id) for s in lg.playoffs
+                                                       if not s.play_in)
+        play_in = next((s for s in lg.playoffs if s.play_in and me in (s.high_id, s.low_id)), None)
+        n = lg.rules.playoff_series_length
         self._news("playoffs", "The playoffs begin",
-                   ["You're in! Every series is best of seven." if made else
+                   [f"You're in! Every series is best of {n}." if made else
+                    (f"You're in the play-in ({bracket_view.PLAY_IN_MATCHUP[play_in.play_in]}): "
+                     + bracket_view.PLAY_IN_NOTE[play_in.play_in].lower() + ".") if play_in else
                     "You missed the playoffs this year. You can still watch the bracket."])
         self.dirty = True
         return self.playoffs()
@@ -928,8 +939,16 @@ class GameSession:
             if s.over and s.id not in over_before and me in (s.high_id, s.low_id):
                 won = s.winner_id == me
                 opp = lg.teams[s.loser_id if won else s.winner_id]
+                if s.play_in:
+                    seed = {"7v8": "the 7 seed" if won else "one more chance, in the decider",
+                            "9v10": "the decider for the 8 seed" if won else "an early summer",
+                            "decider": "the 8 seed" if won else "an early summer"}[s.play_in]
+                    self._news("playoffs", f"Play-in {'win' if won else 'loss'} vs {opp.abbreviation}",
+                               [f"You {'beat' if won else 'lost to'} the {opp.full_name} in the play-in"
+                                f" ({bracket_view.PLAY_IN_MATCHUP[s.play_in]}): {seed}."])
+                    continue
                 score = f"{max(s.high_wins, s.low_wins)}-{min(s.high_wins, s.low_wins)}"
-                stage = "the Finals" if s.conference is None else f"round {s.round}"
+                stage = "the Finals" if s.conference is None else f"the {bracket_view.series_title(lg, s)}"
                 self._news("playoffs", f"{'Series won' if won else 'Eliminated'}: {score} vs {opp.abbreviation}",
                            [f"You {'beat' if won else 'lost to'} the {opp.full_name} {score} in {stage}."])
         if finished:
@@ -949,7 +968,8 @@ class GameSession:
         series = []
         for s in sorted(lg.playoffs, key=lambda s: (s.round, s.id)):
             series.append({
-                "id": s.id, "round": s.round, "conference": s.conference,
+                "id": s.id, "round": s.round, "conference": s.conference, "play_in": s.play_in,
+                "title": bracket_view.series_title(lg, s),
                 "high_id": s.high_id, "low_id": s.low_id,
                 "high": lg.teams[s.high_id].abbreviation, "low": lg.teams[s.low_id].abbreviation,
                 "high_seed": s.high_seed, "low_seed": s.low_seed,
@@ -959,7 +979,8 @@ class GameSession:
         champion = None
         if series and series[-1]["conference"] is None and series[-1]["over"]:
             champion = series[-1]["winner_id"]
-        return {"series": series, "champion": champion, "stage": self._stage()}
+        return {"series": series, "champion": champion, "stage": self._stage(),
+                "user_team_id": lg.user_team_id, "bracket": bracket_view.bracket(lg, self._game_view)}
 
     # -- league ------------------------------------------------------------------------
     def standings(self) -> dict:
@@ -1080,7 +1101,7 @@ class GameSession:
             match = LiveMatch(lg, nxt, self.rng)
             self.live = {"match": match, "kind": "regular", "game_id": nxt.id, "day": nxt.day}
         elif lg.phase is Phase.PLAYOFFS:
-            if not any(me in (s.high_id, s.low_id) and not s.over for s in lg.playoffs):
+            if eliminated(lg, me):
                 raise UserError("your season is over: no playoff games to coach")
             over_before = {s.id for s in lg.playoffs if s.over}
             while True:
@@ -1115,7 +1136,11 @@ class GameSession:
 
     def live_page(self) -> str:
         from ..spatial.export import PLAYER_ASSETS_URL, build_html
-        return build_html(self._viewer_builds(self._live().header()), animation=PLAYER_ASSETS_URL)
+        data = self._live().header()
+        series = bracket_view.viewer_series(self._lg(), self._lg().games[self.live["game_id"]])
+        if series:
+            data["series"] = series                  # the scoreboard's series line
+        return build_html(self._viewer_builds(data), animation=PLAYER_ASSETS_URL)
 
     def live_next(self, after: int = 0, want: int = 2) -> dict:
         return self._live().next_chunk(after, want)
@@ -1181,7 +1206,7 @@ class GameSession:
                 return {"ok": True, "game_id": None, "stopped_for": r["stopped_for"], "state": self.state()}
             game_id = nxt.id
         elif lg.phase is Phase.PLAYOFFS:
-            if not any(me in (s.high_id, s.low_id) and not s.over for s in lg.playoffs):
+            if eliminated(lg, me):
                 raise UserError("your season is over: no playoff games to watch")
             while True:
                 r = self.sim_playoffs("day")
@@ -1246,6 +1271,9 @@ class GameSession:
             raise UserError("no recording of that game: only your team's most recent games on the "
                             "spatial engine are kept", 404)
         data["live"] = bool(live)
+        series = bracket_view.viewer_series(lg, lg.games[int(game_id)])
+        if series:
+            data["series"] = series                  # the scoreboard's series line (old replays too)
         from ..spatial.highlights import annotate
         annotate(data.get("possessions", []))       # older replays were saved without highlight levels
         return build_html(self._viewer_builds(data), animation=PLAYER_ASSETS_URL)

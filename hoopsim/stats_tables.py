@@ -30,8 +30,10 @@ SHOT_FIELDS = ("fgm", "fga", "tpm", "tpa", "ftm", "fta", "orb", "drb", "ast", "s
 
 
 def _games(league: League, season: int, playoff: bool) -> list:
+    play_in = {gid for s in league.playoffs if s.play_in for gid in s.game_ids}    # not playoff stats
     return sorted((g for g in league.games.values()
-                   if g.season == season and g.playoff == playoff and g.box_score and g.result),
+                   if g.season == season and g.playoff == playoff and g.box_score and g.result
+                   and g.id not in play_in),
                   key=lambda g: (g.day, g.id))
 
 
