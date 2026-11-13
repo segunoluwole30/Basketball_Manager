@@ -110,7 +110,9 @@ class EffectTests(unittest.TestCase):
         self.assertGreater(ps["three"], bal["three"] + 0.05)
         self.assertLess(tri["three"], bal["three"] - 0.03)
         self.assertGreater(fast["poss"], slow["poss"] + 6)
-        self.assertGreater(helio["top"], bal["top"] + 0.05)              # the star takes his shots
+        # The star takes his shots, though his share levels off (engine.usage_ceiling):
+        # about 23% of the team's shots against 20%.
+        self.assertGreater(helio["top"], bal["top"] + 0.02)
         self.assertGreater(motion["ast"], helio["ast"] + 0.05)            # the ball moves
         # NBA-like ranges: three-point share 25-62% (a weak-shooting roster), 90-110 possessions.
         for r in (bal, ps, tri, fast, slow, helio, motion):

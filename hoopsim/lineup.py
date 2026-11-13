@@ -78,9 +78,12 @@ def _share(want: list[float], cap: int) -> list[int]:
     fixed: dict[int, float] = {}
     while True:
         free = [i for i in range(len(want)) if i not in fixed]
+        if not free:                     # everyone at the cap (e.g. six healthy players)
+            scale = 0.0
+            break
         left = GAME_MINUTES - sum(fixed.values())
         scale = left / sum(want[i] for i in free)
-        over = [i for i in free if want[i] * scale > cap]
+        over = [i for i in free if want[i] * scale > cap + 1e-9]
         if not over:
             break
         for i in over:

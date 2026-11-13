@@ -82,6 +82,15 @@ class Tuning:
     # How strongly ratings move outcomes. 1.0 = raw ratings; lower compresses
     # every rating toward 10 so talent gaps produce realistic point margins.
     skill_impact: float = 0.5
+    # Shot shares level off: a share of the on-court shots above ``usage_knee`` is bent
+    # toward ``usage_ceiling`` (NBA: the top usage rates are 33-37%, about 40% at most).
+    usage_knee: float = 0.22
+    usage_ceiling: float = 0.35
+    # ...and the players who carry the load draw the fouls: shooting-foul odds are
+    # multiplied by exp(foul_draw * (his share - foul_draw_share)), so a 33% option draws
+    # about a third more (NBA: top scorers' FTA/FGA about 0.40, the league's 0.25).
+    foul_draw: float = 2.5
+    foul_draw_share: float = 0.215         # about the shot-weighted average share (keeps team FTA)
     # Fatigue
     drain_per_second: float = 0.00042      # stamina-10 player on court
     recover_per_second: float = 0.0011     # on the bench
@@ -209,10 +218,47 @@ def _clamp(x: float, lo: float, hi: float) -> float:
     return lo if x < lo else hi if x > hi else x
 
 
-USAGE = 0.34   # how strongly better scorers dominate the shots
+USAGE = 0.42   # how strongly better scorers dominate the shots (shares level off: usage_ceiling)
 # On a held-for last shot the defence is set and walls off the rim, so the
 # shot becomes an isolation pull-up far more often.
 ISOLATION_MIX = {RIM: 0.55, CLOSE: 0.9, MID: 1.9, THREE: 1.15}
+
+
+def usage_ceiling(weights: list[float], knee: float, ceiling: float) -> list[float]:
+    """Shot shares (summing to 1) with diminishing returns past ``knee``.
+
+    A share is bent toward ``ceiling`` once it passes the knee (slope 1 at the knee,
+    so nothing jumps): ``bend(x) = knee + room * (1 - exp(-(x - knee) / room))``.
+    What the star gives up goes to his teammates in equal parts, not in proportion to
+    their shares: the defence loading up on him leaves the others open alike, so the
+    role players pick up as much as the second option. Nobody is lifted past the knee
+    (any surplus is shared among the rest), which keeps the order of the shares.
+    ``ceiling <= knee`` turns it off.
+    """
+    total = sum(weights)
+    shares = [w / total for w in weights]
+    if ceiling <= knee or max(shares) <= knee:
+        return shares
+    room = ceiling - knee
+    out = [x if x <= knee else knee + room * (1 - math.exp(-(x - knee) / room)) for x in shares]
+    freed = 1.0 - sum(out)
+    # Water-filling: equal parts; whoever would pass the knee stops there, the rest share it.
+    below = sorted((i for i, x in enumerate(out) if x < knee), key=lambda i: -out[i])
+    while below and freed > 1e-12:
+        part = freed / len(below)
+        i = below[0]                                  # the closest to the knee
+        give = min(part, knee - out[i])
+        if give < part:                               # he fills up: share the rest
+            out[i] = knee
+            freed -= give
+            below.pop(0)
+            continue
+        for i in below:
+            out[i] += part
+        freed = 0.0
+    if freed > 1e-12:                                 # everyone at the knee: spread it evenly
+        out = [x + freed / len(out) for x in out]
+    return out
 
 
 def _offense_skill(ig: _InGame) -> float:
@@ -544,14 +590,14 @@ class _GameSim:
         """
         rng, t = self.rng, self.t
         need_three = bool(bias) and bias.get(THREE, 1) >= 4
+        share = 0.2                          # his share of the on-court shots
         if putback is not None:
             slot = offense.lineup.index(putback)
         else:
             # Pass-first players take fewer shots.
             style = offense_style(offense.tactics)
             weights = [math.exp(USAGE * style.usage_scale * (_offense_skill(ig) - 10)
-                                - 0.03 * (ig.p.tendencies.passing - 10)
-                                + (0.35 * (ig.r("three_point") - 10) if need_three or heave else 0))
+                                - 0.03 * (ig.p.tendencies.passing - 10))
                        for ig in offense.lineup]
             ranks = option_ranks(offense.tactics, [ig.p.id for ig in offense.lineup])
             if style.star and not (need_three or heave):     # heliocentric: the star takes his shots
@@ -561,8 +607,22 @@ class _GameSim:
             for i, ig in enumerate(offense.lineup):          # the coach's 1st, 2nd and 3rd options
                 r = ranks.get(ig.p.id)
                 if r is not None:
-                    weights[i] *= OPTION_SHOTS[r] * (LATE_GAME_FIRST if r == 0 and late_clock else 1.0)
+                    weights[i] *= OPTION_SHOTS[r]
+            # Nobody carries an offence alone: past a knee, more of the shots cost more
+            # (the defence loads up on him, the ball sticks), so a star's share levels off.
+            # An offence built around one man (heliocentric) gives him more room.
+            shares = usage_ceiling(weights, t.usage_knee + style.usage_room,
+                                   t.usage_ceiling + style.usage_room)
+            # Situations that override the usual share: the last shot goes to the 1st
+            # option, and a needed three or a heave to the shooters.
+            weights = list(shares)
+            for i, ig in enumerate(offense.lineup):
+                if late_clock and ranks.get(ig.p.id) == 0:
+                    weights[i] *= LATE_GAME_FIRST
+                if need_three or heave:
+                    weights[i] *= math.exp(0.35 * (ig.r("three_point") - 10))
             slot = rng.choices(range(5), weights)[0]
+            share = shares[slot]
         shooter = offense.lineup[slot]
         defender = self._defender(offense, defense, slot)
         if heave:
@@ -604,9 +664,10 @@ class _GameSim:
         if late_clock:
             make_p *= t.late_clock_make_factor if late_clock == "hold" else t.chase_make_factor
 
-        # Shooting foul?
+        # Shooting foul? The man the defence is loading up on draws the whistles.
         p_foul = t.shooting_foul[zone] * math.exp(0.05 * (shooter.r("strength") - 10)
-                                                  - 0.04 * (defender.r("basketball_iq") - 10))
+                                                  - 0.04 * (defender.r("basketball_iq") - 10)
+                                                  + t.foul_draw * (share - t.foul_draw_share))
         if rng.random() < p_foul:
             fouler = defender
             if zone == RIM and rng.random() < 0.4:

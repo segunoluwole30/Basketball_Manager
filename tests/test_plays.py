@@ -32,9 +32,10 @@ class SetPlayTests(unittest.TestCase):
         without.play(300)
         self.assertEqual(without.stats["entries"], 0)
         # (sets often finish in a pick-and-roll rather than another pass, and a denied
-        # swing can kill the action)
+        # swing can kill the action). About +10% time: +16% before star scoring
+        # (README "Star scoring"), whose usage penalty lengthens a plain offence too.
         self.assertGreater(with_plays.stats["passes"], 1.08 * without.stats["passes"])
-        self.assertGreater(with_plays.stats["seconds"], 1.15 * without.stats["seconds"])
+        self.assertGreater(with_plays.stats["seconds"], 1.07 * without.stats["seconds"])
 
     def test_legacy_params_run_no_entries(self):
         g = game(LEGACY_PARAMS)

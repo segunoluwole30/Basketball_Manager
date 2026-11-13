@@ -124,6 +124,19 @@ class SpatialParams:
     # above ``early_until``; then into the set as usual.
     early_offense: float = 0.3
     early_until: float = 17.0
+    # Star scoring (README "Star scoring"): nobody carries an offence alone. A player's
+    # share of his team's shots while he's on the floor (this game, starting from 20% over
+    # ``usage_prior`` shots) costs his own shots and passes to him
+    # ``usage_penalty`` * (share - ``usage_knee``)^2 points of value above the knee (a
+    # heliocentric offence's ``usage_room`` raises the knee): a 32% share costs 0.13. Not in
+    # early offence (shot clock above ``early_until``): the defence isn't set yet; nor
+    # for the man a "get him the ball" shout is for.
+    # And the go-to scorer draws the fouls: shooting-foul odds
+    # x exp(``foul_draw`` * (share - 0.22)). 0 switches each off.
+    usage_penalty: float = 20.0
+    usage_knee: float = 0.24
+    usage_prior: float = 10.0
+    foul_draw: float = 2.5
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -208,6 +221,8 @@ LEGACY_PARAMS = SpatialParams(
     four_high=0.0,
     early_offense=0.0,
     contest_spread=0.0,
+    usage_penalty=0.0,
+    foul_draw=0.0,
 )
 
 # Searched fields: (low, high). Everything else stays at its default.

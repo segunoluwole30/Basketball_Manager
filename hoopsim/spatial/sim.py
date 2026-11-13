@@ -266,6 +266,9 @@ class HalfCourtGame:
         self.possessions: list[dict] = []      # recorded frames + events
         self.stats = Counter()
         self.box = {id(a): Counter() for a in self.everyone}
+        # Shot load (``usage_share``): shots a player took, and his team's shots while he was on.
+        self.shots_taken: Counter = Counter()
+        self.shots_on_floor: Counter = Counter()
         # A live coach's shouted instructions per side (see ``shout_bias``); empty: none.
         self.shouts: dict = {"home": {}, "away": {}}
 
@@ -1116,7 +1119,8 @@ class HalfCourtGame:
         else:
             temperature = 0.03 + 0.006 * (20 - h.a("basketball_iq"))   # smarter = closer to the best option
             scored = [(self.model.value(k, f) + self.style_bias(h, k, a) + self.situation_bias(k, a)
-                       + self.shout_bias(h, k, a) + self.patience_bias(h, k, f), (k, a, f))
+                       + self.shout_bias(h, k, a) + self.patience_bias(h, k, f)
+                       + self.usage_bias(h, k, a), (k, a, f))
                       for k, a, f in options]
             kind, action, feats = _softmax_choice(rng, scored, temperature)
         self.decisions.append((kind, feats))
@@ -1147,6 +1151,33 @@ class HalfCourtGame:
                 self.next_decision = now + rng.uniform(0.6, 1.2)
         else:
             self.next_decision = now + rng.uniform(0.6, 1.2)
+
+    def usage_share(self, a: Agent) -> float:
+        """His share of his team's shots while he's been on the floor this game, starting
+        from 20% (``usage_prior`` shots' worth) so a hot first few minutes don't count much."""
+        k = self.p.usage_prior
+        return (self.shots_taken[id(a)] + 0.2 * k) / (self.shots_on_floor[id(a)] + k)
+
+    def usage_bias(self, h: Agent, kind: str, action: tuple) -> float:
+        """Nobody carries an offence alone: past a knee, a player's share of the shots
+        costs his own shots (the defence loads up on him) and passes to him (his
+        teammates look elsewhere), so a star's share levels off (``usage_penalty``).
+        Drives, post-ups and pick-and-rolls are left alone: they make shots for others
+        too, and taxing them costs the offence more than it spreads the scoring."""
+        pen = self.p.usage_penalty
+        if not pen or self.shot_clock > self.p.early_until:   # early: the defence isn't set yet
+            return 0.0
+        if kind == "shoot":
+            who = h
+        elif kind == "pass":
+            who = action[1]
+        else:
+            return 0.0
+        if (self.shouts.get(self.side) or {}).get("ball_to") is who:
+            return 0.0                    # the coach is shouting for him to get it
+        knee = self.p.usage_knee + offense_style(self.teams[self.side].tactics).usage_room
+        over = max(0.0, self.usage_share(who) - knee)
+        return -pen * over * over
 
     def predicted_contest(self, closer: Agent, h: Agent, dd: float, rt: float) -> float:
         """How close the nearest defender will be when a shot goes up ``rt`` seconds
@@ -1733,6 +1764,10 @@ class HalfCourtGame:
                   else "drive" if self.mode == "drive"
                   else (self.catch_source or ("dunker" if C.dist_to_rim(h.pos) < 8 else "catch"))
                   if (catch if released is not None else self.just_caught(moving)) else "other")
+        share = self.usage_share(h)
+        self.shots_taken[id(h)] += 1
+        for a in self.offense:
+            self.shots_on_floor[id(a)] += 1
         # Block?
         if dd < 4.0:
             closeness = max(0.0, min(1.0, (4.0 - dd) / 2.5))
@@ -1748,7 +1783,8 @@ class HalfCourtGame:
                 land = C.clamp((h.x + rng.uniform(-6, 6), h.y + rng.uniform(2, 8)))
                 self.start_rebound(h.pos, land, 0.6)
                 return
-        fouled = rng.random() < t.shooting_foul[z] * self.p.foul_scale * (0.3 + 0.7 * level)
+        draw = math.exp(self.p.foul_draw * (share - 0.22)) if self.p.foul_draw else 1.0
+        fouled = rng.random() < t.shooting_foul[z] * self.p.foul_scale * (0.3 + 0.7 * level) * draw
         if fouled:
             prob *= 0.45
         made = rng.random() < prob
