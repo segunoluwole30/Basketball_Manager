@@ -16,8 +16,8 @@ from typing import Optional
 from .lineup import POSITIONS, auto_lineup
 from .models import (
     ABILITY_MAX, ABILITY_MIN, ATTR_MAX, Attributes, Contract, ContractOption, Game,
-    HiddenAttributes, League, LeagueRules, Physique, Player, Position, Team, Tactics, Tendencies,
-    clamp, compute_ability,
+    ABILITY_ATTRIBUTES, HiddenAttributes, League, LeagueRules, Physique, Player, Position, Team, Tactics,
+    Tendencies, clamp, compute_ability, derived_drawing_fouls,
 )
 
 
@@ -30,7 +30,7 @@ _TEMPLATES = {
     Position.PF: (1, 2, 0, -1, -1, -1, -2, -1, -1, 2, -1, 1, 2, 2, -1, 2, 0, 0, 0, 0),
     Position.C:  (2, 2, -2, -4, -2, -2, -4, -2, -3, 3, -2, 3, 3, 3, -3, 3, 0, -1, 0, 0),
 }
-TEMPLATES = {pos: dict(zip(Attributes.names(), t, strict=True)) for pos, t in _TEMPLATES.items()}
+TEMPLATES = {pos: dict(zip(ABILITY_ATTRIBUTES, t, strict=True)) for pos, t in _TEMPLATES.items()}
 
 # Stretch bigs: most NBA power forwards and many centres now shoot threes. This
 # share of each big position is drawn as a shooter: offsets added to the template
@@ -38,6 +38,10 @@ TEMPLATES = {pos: dict(zip(Attributes.names(), t, strict=True)) for pos, t in _T
 # comes at the cost of a little everything else).
 STRETCH_SHARE = {Position.PF: 0.50, Position.C: 0.35}
 STRETCH = {"three_point": 5, "mid_range": 1, "close_range": -1}
+
+# Personal spread of foul drawing around what a player's ratings suggest
+# (``models.derived_drawing_fouls``).
+DRAWING_FOULS_NOISE = 2.5
 
 # Mean height (cm) and weight (kg) by position.
 _BODY = {
@@ -108,12 +112,12 @@ def _attributes_for_target(position: Position, height_z: float, age: int,
     if rng.random() < STRETCH_SHARE.get(position, 0.0):
         for n, v in STRETCH.items():
             template[n] += v
-    noise = {n: rng.gauss(0, 1.8) for n in Attributes.names()}
+    noise = {n: rng.gauss(0, 1.8) for n in ABILITY_ATTRIBUTES}
     decline = max(0.0, (age - 30) * 0.6)
 
     def build(shift: float) -> Attributes:
         values = {}
-        for n in Attributes.names():
+        for n in ABILITY_ATTRIBUTES:
             v = 10 + template[n] + shift + noise[n]
             if n in _TALL_PLUS:
                 v += height_z
@@ -173,6 +177,11 @@ def generate_player(rng: random.Random, player_id: int, on: date, *,
     frac = min(1.0, development_fraction(age) * rng.uniform(0.92, 1.05))
     target = max(ABILITY_MIN, round(potential * frac))
     attrs = _attributes_for_target(position, height_z, age, target, rng)
+    # Foul drawing follows finishing, strength and the ball in his hands, with a personal
+    # touch. Drawn from its own generator, seeded by the main one's state without using
+    # it, so every other draw (and so every generated league) is what it was before.
+    attrs.drawing_fouls = derived_drawing_fouls(
+        attrs, random.Random(hash(rng.getstate()[1])).gauss(0, DRAWING_FOULS_NOISE))
 
     nations, weights = zip(*NATIONALITIES)
     return Player(

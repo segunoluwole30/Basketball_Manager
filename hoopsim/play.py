@@ -470,7 +470,7 @@ class Game:
         draft = ("" if p.draft_year is None else
                  f" #{p.draft_pick} pick in {p.draft_year}." if p.draft_pick else f" Undrafted in {p.draft_year}.")
         self.say(f"  Current ability {p.current_ability}, potential {potential_text(lg, p)}.{draft}")
-        groups = [("Scoring", ["finishing", "close_range", "mid_range", "three_point", "free_throw"]),
+        groups = [("Scoring", ["finishing", "close_range", "mid_range", "three_point", "free_throw", "drawing_fouls"]),
                   ("Playmaking", ["passing", "ball_handling", "vision"]),
                   ("Defence", ["perimeter_defense", "interior_defense", "stealing", "blocking"]),
                   ("Rebounding", ["offensive_rebounding", "defensive_rebounding"]),
