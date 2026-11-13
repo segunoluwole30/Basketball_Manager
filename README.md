@@ -168,10 +168,17 @@ contest (hand up), block, steal reach, rebound jump, screen, charge fall. Everyt
 read off the frames: idle and defensive stance, walk/jog/sprint, dribbling standing and on
 the move (the ball bounces under the hand), defensive slides and backpedalling while facing
 the ball, and a planted foot on a hard stop or cut. Clips cross-fade; a shooter turns to
-the rim, a passer to his receiver, a defender to his man. Against foot sliding, run and
-slide cycles play at the player's real speed (stride length over ground speed, blended
-between the walk, jog and sprint cycles in step), and a player standing still stays put
-until the simulation has moved him half a foot. Jumps are lifted so the hands meet the
+the rim, a passer to his receiver, a defender to his man. Against foot sliding, two things.
+The stride is matched to the ground he covers: every moving clip carries its natural speed
+and stride (measured from its root travel in the build, `speed` and `stride` in the glTF
+extras), the cycle plays at the rate that makes the blend's stride cover his speed in the
+replay, and below a clip's easy cadence it is mixed with the standing pose, so a slow
+defender takes short quick steps instead of slow long ones. And feet that are down are
+planted: a foot within a few inches of the floor is held where it landed (hip and knee
+re-posed by two-bone IK) while the body moves and turns over it, until the clip lifts it;
+if holding it would over-stretch the leg, that foot takes a quick step to catch up, one
+foot at a time. A player standing still stays put until the simulation has moved him half
+a foot. Jumps are lifted so the hands meet the
 ball (a rebound, a block, the rim on a dunk). A clip that is still running when a
 possession ends plays on through the pause and into the next one. Replays recorded before
 the cues existed get shots, passes, catches and rebounds read off the frames instead.
@@ -196,7 +203,7 @@ arm sleeve, leg sleeves, wristbands, and shoes in black, white, team colour or s
 louder. They are parts of the one model, switched on per player. A look can be set per
 player in the editor (**Look in 3D**, see *In-game editor*); it is stored on the player in
 the save and sent with the page data as a `look` object (`hair`, `hairColor`, `beard`,
-`band`, `sleeve`, `leg`, `wrist`, `gear`, `shoes`). Any part not set, and every part of a
+`band`, `sleeve`, `leg`, `wrist`, `gear`, `shoes`, `face`). Any part not set, and every part of a
 player with no stored look, is picked from the player's name, so it is the same in every
 game.
 
@@ -213,8 +220,13 @@ hair styles are generated and fitted by `tools/build_player_assets.py`.
 No real player's likeness is used.
 
 Faces differ too: the model carries MakeHuman's three face shapes as morph targets (the
-head only), and each player leans toward one of them by an amount picked from his name (a
-`face` entry in a stored `look` overrides it). The mocap has no collarbone movement, so the
+head only). A face is three weights from 0 to 1, how far toward each shape. From the name,
+every shape is common for every skin tone (skin tone only nudges the odds, about 40/30/30
+toward one shape), and how much of a second and third shape is mixed in varies by player,
+so faces don't fall into three types. The editor's **Face** control sets it instead (one
+shape and how strongly; `look.face`, checked by `editor.clean_look`); "From name" or "Use
+default" clears it. The light model has no face shapes, so a stored face has no effect
+there. The mocap has no collarbone movement, so the
 viewer lifts the collarbone with a raised arm, which keeps the shoulder from pinching.
 
 The files (`spatial/assets/player.glb`, 1.23 MB, or `player_light.glb`, 0.74 MB, plus three.js r160's `GLTFLoader`,
@@ -1926,7 +1938,8 @@ can change any player's:
 * name, birth date, nationality, position(s), height, wingspan, weight and jersey;
 * morale, an injury (heal it), contract (salary, end season, option) and team;
 * his look in the 3D viewer: hair style and colour, beard, headband, arm sleeve, leg
-  sleeves, wristbands, the colour of sleeves and bands, and shoes. Each part is either
+  sleeves, wristbands, the colour of sleeves and bands, shoes, and face (one of the
+  model's three face shapes and how strongly). Each part is either
   "From name" (picked from his name, as for everyone else) or set; colours are white,
   black, team colour or any `#rrggbb`. **Use default** clears the stored look. It is an
   optional field on the player (`Player.look`; old saves load without one), checked

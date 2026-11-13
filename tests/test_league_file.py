@@ -220,6 +220,42 @@ class EditorTests(unittest.TestCase):
         self.assertIsNone(self.p.look)
         self.assertNotIn("look", self.p.to_dict())                  # saves without a look are as before
 
+    def test_look_face(self):
+        """The face: three weights 0-1 (how far toward each of the model's face shapes),
+        checked strictly, saved, and cleared on its own or with the rest of the look."""
+        self.assertEqual(clean_look({"face": [1, 0, 0.333]}), {"face": [1.0, 0.0, 0.33]})
+        self.assertEqual(clean_look({"face": (0, 0, 0)}), {"face": [0.0, 0.0, 0.0]})      # the model's own even mix
+        self.assertEqual(edit_player(self.lg, self.p.id, {"look": {"hair": "fade", "face": [0.2, 0.7, 0]}}), ["look"])
+        self.assertEqual(self.p.look, {"hair": "fade", "face": [0.2, 0.7, 0.0]})
+        self.assertEqual(player_sheet(self.lg, self.p)["look"]["face"], [0.2, 0.7, 0.0])
+        self.assertEqual(player_sheet(self.lg, self.p)["limits"]["look"]["faces"], 3)
+        with tempfile.TemporaryDirectory() as d:
+            save_league(self.lg, Path(d) / "x.db")
+            back = load_league(Path(d) / "x.db")
+        self.assertEqual(back.players[self.p.id].look, self.p.look)
+        for bad in ([1, 0], [1, 0, 0, 0], [1, 0, 2], [0, 0, -0.1], [True, 0, 0], ["1", 0, 0], [None, 0, 0],
+                    [float("nan"), 0, 0], [float("inf"), 0, 0], "abc", 0.5, None, {"a": 1}):
+            with self.subTest(bad=bad), self.assertRaises(EditError):
+                edit_player(self.lg, self.p.id, {"look": {"face": bad}, "first_name": "X"})
+        self.assertNotEqual(self.p.first_name, "X")                 # an invalid face changes nothing
+        self.assertEqual(self.p.look["face"], [0.2, 0.7, 0.0])
+        # clearing the face alone leaves the rest; clearing the look clears it too
+        self.assertEqual(edit_player(self.lg, self.p.id, {"look": {"hair": "fade"}}), ["look"])
+        self.assertEqual(self.p.look, {"hair": "fade"})
+        edit_player(self.lg, self.p.id, {"look": {"face": [0, 0, 1]}})
+        self.assertEqual(edit_player(self.lg, self.p.id, {"look": None}), ["look"])
+        self.assertIsNone(self.p.look)
+
+    def test_old_saves_without_face_load(self):
+        """A look saved before faces could be set still loads, and stays without one."""
+        from hoopsim.models import Player
+        d = self.p.to_dict()
+        d["look"] = {"hair": "locs", "beard": True}
+        p = Player.from_dict(d)
+        self.assertEqual(p.look, {"hair": "locs", "beard": True})
+        self.assertEqual(clean_look(p.look), p.look)                # and is still a valid look
+        self.assertNotIn("face", p.to_dict()["look"])
+
     def test_old_saves_without_look_load(self):
         d = self.p.to_dict()
         self.assertNotIn("look", d)
