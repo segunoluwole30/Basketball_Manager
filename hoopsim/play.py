@@ -24,6 +24,7 @@ from .manager import (
 from .contracts import cap_room, payment_route, payroll_for
 from .lineup import POSITIONS
 from .models import Attributes, League, Phase, Player
+from .clinch import race, race_changes, standings_lines
 from .playoffs import play_playoffs, ranked, start_playoffs, team_records
 from .season import (
     finish_season, play_regular_season, regular_season_over, run_offseason, trade_deadline_day,
@@ -302,8 +303,9 @@ class Game:
             extra = f" | trade deadline in {deadline - max(played_days, default=0)} days"
         if regular_season_over(lg):
             extra = " | regular season over: type 'next' for the playoffs"
+        mark = race(lg)[self.me.id]["marker"]
         return (f"[{lg.current_date:%b %d %Y}] {self.me.full_name} {self.record(self.me.id)} "
-                f"({place} in the {self.me.conference}){extra}")
+                f"({place} in the {self.me.conference}{', ' + mark if mark else ''}){extra}")
 
     # -- main loop ---------------------------------------------------------------
     def run(self) -> None:
@@ -345,6 +347,7 @@ class Game:
             return
         before = {g.id for g in lg.games.values() if g.played}
         hurt_before = {p.id for p in lg.roster(self.me.id) if p.injury}
+        race_before = race(lg)
         events = play_regular_season(lg, self.rng, days=days, manager=self.manager)
         new = sorted((g for g in lg.games.values() if g.played and g.id not in before
                       and self.me.id in (g.home_team_id, g.away_team_id)), key=lambda g: g.day)
@@ -357,6 +360,9 @@ class Game:
                 self.say(f"  INJURY: {p.name} - {p.injury.description}, out {p.injury.games_remaining} games")
         for e in events:
             self.say("  " + e)
+        for c in race_changes(lg, race_before, race(lg)):
+            you = c["team_id"] == self.me.id
+            self.say(f"  {'*** ' if you else ''}[{c['marker']}] {c['text']}{' ***' if you else ''}")
 
     def result_line(self, g) -> str:
         lg = self.league
@@ -606,14 +612,9 @@ class Game:
 
     # -- league ---------------------------------------------------------------------------------
     def cmd_standings(self, args):
-        lg = self.league
-        rec = team_records(lg)
-        for conf in sorted({t.conference for t in lg.teams.values()}):
-            self.say(f"\n{conf:<28}{'W':>4}{'L':>4}{'NET':>7}")
-            for tid in ranked(lg, [t.id for t in lg.teams.values() if t.conference == conf]):
-                w, l, diff = rec[tid]
-                mark = " <--" if tid == self.me.id else ""
-                self.say(f"  {lg.teams[tid].full_name:<26}{w:>4}{l:>4}{diff / max(1, w + l):>+7.1f}{mark}")
+        self.say("")
+        for line in standings_lines(self.league, self.me.id):
+            self.say(line)
 
     def cmd_leaders(self, args):
         lg = self.league

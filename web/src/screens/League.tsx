@@ -56,6 +56,40 @@ export function BoxScoreModal({ id, onClose }: { id: number; onClose: () => void
   );
 }
 
+function RaceModal({ teamId, onClose }: { teamId: number; onClose: () => void }) {
+  const f = useFetch<any>(`/api/standings/race/${teamId}`);
+  const d = f.data && f.data.team_id === teamId ? f.data : null;
+  const status = (r: any) => {
+    if (r.clinched) return <b className="race-in">Clinched</b>;
+    if (r.eliminated) return <span className="race-out">Out of reach</span>;
+    const parts = [];
+    if (r.wins_to_clinch != null) parts.push(`clinched with ${r.wins_to_clinch} more win${r.wins_to_clinch === 1 ? "" : "s"}`);
+    if (r.losses_to_elimination != null) parts.push(`out after ${r.losses_to_elimination} more loss${r.losses_to_elimination === 1 ? "" : "es"}`);
+    return parts.length ? parts.join(" · ") : <span className="muted">open</span>;
+  };
+  return (
+    <Modal title={d ? <>{d.marker && <span className={`clinch clinch-${d.marker}`}>{d.marker}</span>} {d.name}</> : "Playoff race"} onClose={onClose}>
+      {f.error ? <ErrorBox error={f.error} /> : !d ? <Loading what="Working out the race" /> : (
+        <>
+          <table className="table table-dense race-table">
+            <thead><tr><th>Race</th><th>Status</th></tr></thead>
+            <tbody>
+              {d.races.map((r: any) => (
+                <tr key={r.key}><td>{r.marker && <span className={`clinch clinch-${r.marker}`}>{r.marker}</span>} {r.label}</td><td>{status(r)}</td></tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="muted small">
+            Win (or lose) that many of the remaining games and it's settled whatever else happens: these numbers count only
+            this team's own results, so results elsewhere can settle it sooner. A tie the tie-breakers can't settle yet
+            counts against the team when clinching and for it when eliminating.
+          </p>
+        </>
+      )}
+    </Modal>
+  );
+}
+
 function Standings() {
   const f = useFetch<any>("/api/standings");
   const [view, setView] = useState<"conference" | "division">(() => {
@@ -65,8 +99,15 @@ function Standings() {
     setView(v);
     try { localStorage.setItem("hoopsim-standings", v); } catch { /* private mode */ }
   };
+  const [race, setRace] = useState<number | null>(null);
+  const meaning = (m: string) => f.data?.legend?.find((x: any) => x.marker === m)?.meaning ?? "";
   const teamCell = (r: any) => (
-    <span>{r.name}{r.div_leader && <span className="div-lead" title="Division leader"> ⓓ</span>}</span>
+    <span className="team-cell">
+      <span className={`clinch ${r.marker ? `clinch-${r.marker}` : ""}`} title={r.markers?.map(meaning).join("; ") || undefined}
+        aria-label={r.marker ? meaning(r.marker) : undefined}>{r.marker}</span>
+      <span className="name-full">{r.name}</span><span className="name-abbr">{r.abbr}</span>
+      {r.div_leader && <span className="div-lead" title="Division leader"> ⓓ</span>}
+    </span>
   );
   const cols = (division: boolean) => [
     division ? { key: "div_rank", label: "#", num: true, desc: false } : { key: "rank", label: "#", num: true, desc: false },
@@ -77,12 +118,16 @@ function Standings() {
     division
       ? { key: "div_gb", label: "GB", num: true, desc: false, render: (r: any) => (r.div_gb ? r.div_gb.toFixed(1) : "–") }
       : { key: "gb", label: "GB", num: true, desc: false, render: (r: any) => (r.gb ? r.gb.toFixed(1) : "–") },
-    { key: "div_record", label: "DIV", title: "Record against division rivals", sort: (r: any) => +r.div_record.split("-")[0] },
-    { key: "conf_record", label: "CONF", title: "Record against the conference", sort: (r: any) => +r.conf_record.split("-")[0] },
-    { key: "net", label: "NET", title: "Point differential per game", num: true, render: (r: any) => (r.net > 0 ? `+${r.net}` : r.net) },
-    { key: "last10", label: "L10", sort: (r: any) => +r.last10.split("-")[0] },
-    { key: "streak", label: "STRK" },
+    { key: "div_record", label: "DIV", title: "Record against division rivals", className: "col-wide", sort: (r: any) => +r.div_record.split("-")[0] },
+    { key: "conf_record", label: "CONF", title: "Record against the conference", className: "col-wide", sort: (r: any) => +r.conf_record.split("-")[0] },
+    { key: "net", label: "NET", title: "Point differential per game", num: true, className: "col-wide col-net", render: (r: any) => (r.net > 0 ? `+${r.net}` : r.net) },
+    { key: "last10", label: "L10", title: "Last 10 games", sort: (r: any) => +r.last10.split("-")[0] },
+    { key: "streak", label: "STRK", title: "Current streak", sort: (r: any) => (r.streak ? (r.streak[0] === "W" ? 1 : -1) * +r.streak.slice(1) : 0) },
   ];
+  const table = (rows: any[], division: boolean) => (
+    <Table dense rows={rows} rowKey={(r: any) => r.team_id} rowClass={(r: any) => (r.team_id === f.data?.user_team_id ? "row-me" : "")}
+      onRowClick={(r: any) => setRace(r.team_id)} columns={cols(division)} />
+  );
   return (
     <Fetched f={f} what="Loading standings">
       {(d) => (
@@ -97,12 +142,19 @@ function Standings() {
             </span>
             <span className="muted small">ⓓ division leader. Ties: head-to-head, division winner, division and conference record, point differential (NBA order).</span>
           </div>
+          {d.legend?.length > 0 && (
+            <ul className="clinch-legend small" aria-label="Standings markers">
+              {d.legend.map((m: any) => (
+                <li key={m.marker}><span className={`clinch clinch-${m.marker}`}>{m.marker}</span> {m.meaning}</li>
+              ))}
+              <li className="muted">Markers appear once they're mathematically certain. Click a team for its magic numbers.</li>
+            </ul>
+          )}
           {view === "conference" ? (
             <div className="two-col">
               {d.conferences.map((c: any) => (
                 <Panel key={c.conference} title={`${c.conference}ern Conference`.replace("ernern", "ern")}>
-                  <Table dense rows={c.teams} rowKey={(r: any) => r.team_id} rowClass={(r: any) => (r.team_id === d.user_team_id ? "row-me" : "")}
-                    columns={cols(false)} />
+                  {table(c.teams, false)}
                 </Panel>
               ))}
             </div>
@@ -112,14 +164,14 @@ function Standings() {
                 <div key={c.conference} className="stack">
                   {d.divisions.filter((x: any) => x.conference === c.conference).map((x: any) => (
                     <Panel key={x.division} title={`${x.division} Division`}>
-                      <Table dense rows={x.teams} rowKey={(r: any) => r.team_id} rowClass={(r: any) => (r.team_id === d.user_team_id ? "row-me" : "")}
-                        columns={cols(true)} />
+                      {table(x.teams, true)}
                     </Panel>
                   ))}
                 </div>
               ))}
             </div>
           )}
+          {race != null && <RaceModal teamId={race} onClose={() => setRace(null)} />}
         </>
       )}
     </Fetched>

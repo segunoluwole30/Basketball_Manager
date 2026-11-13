@@ -381,7 +381,7 @@ package (`hoopsim/web/static/`), so Node isn't needed to play.
 | **Squad** | sortable roster tables (overview, ratings, stats, contracts) for any team, finances. Click any name for the player card: attributes, scouted potential with its range, scouting notes, ability by position, player instructions, this season's line and a career section: small charts of points, rebounds and assists per game and current ability by season (ability from end-of-season snapshots, plus today's), and a season-by-season table for the regular season and the playoffs. |
 | **Tactics** | starting five by position (with each player's ability at that slot), minutes that must total 240 (with a "balance" helper), the assistant-coach toggle, team tactics and player instructions. |
 | **Transfers** | free agents with their asks and a contract form that shows how you'd pay (cap space, mid-level exception, minimum); a trade builder with live salary-matching and roster feedback and the other team's verdict. |
-| **League** | standings, leaders, schedule and results with box scores (current season), a daily scoreboard, the playoff bracket and past seasons. |
+| **League** | standings (with clinch and elimination markers, GB, last 10 and streak; click a team for its magic numbers), leaders, schedule and results with box scores (current season), a daily scoreboard, the playoff bracket and past seasons. |
 | **Calendar** | The season a month at a time: your games (home/away, results, **B2B** badges), league games per night, opening night, Thanksgiving, Christmas, the All-Star break, the trade deadline and the playoffs. Click a day for every game on it, and **Go to this day** to play every day before it and stop at its start. See *Schedule* below. |
 | **Stats** | *League leaders*: per-game points, rebounds, assists, steals and blocks, FG%, 3P% and FT%, and advanced lists (true shooting %, usage %, share of team FGA, points/rebounds/assists per 36), filtered by season, regular season or playoffs, and position; your players are highlighted. To qualify a player needs 60% of the most games any team has played (4 games in the playoffs), plus 5 FGA, 2 3PA or 2 FTA per game for the shooting lists and 15 minutes per game for the rate lists. *Team stats*: a sortable table of points for and against, pace, offensive, defensive and net rating and the four factors for offence and defence (eFG%, TOV%, ORB%/DRB%, FT rate, 3PA rate). *Game log*: every game a team has played this season with the score, running record and top scorer, linked to the box score and, for recorded games, the viewer. |
 | **Offseason** | one screen per step: team options, re-signing (asks and the chance he stays), the draft board pick by pick, every free-agency round, trade offers and roster cuts. Any decision, a whole step or the rest of the summer can be handed to your assistant. |
@@ -2114,8 +2114,8 @@ Point differential follows in both cases. When a step splits the tied teams, eac
 group starts again from the top. The NBA's "record against playoff teams" steps
 are left out, and point differential settles those cases. The same procedure picks
 each division's winner and the playoff seeds. The League screen's standings have
-a **Conference / Division** toggle, with division leaders marked ⓓ and DIV and
-CONF record columns. Rest matters in both engines: on the
+a **Conference / Division** toggle, with division leaders marked ⓓ, DIV and
+CONF record columns and the clinch markers (see *Playoff race* below). Rest matters in both engines: on the
 second night of a back-to-back, players who logged 10+ minutes the night before
 start the game tired (`Tuning.b2b_start_energy` = 0.85) and shoot slightly worse
 (`b2b_form` = 0.975). Over six 30-team statistical seasons, tired teams against
@@ -2137,6 +2137,90 @@ The browser app's **Calendar** screen shows the season a month at a time:
   buttons do. The next day to play has a dashed outline.
 
 The routes are `/api/calendar`, `/api/calendar/day/{day}` and `POST /api/sim/to`.
+
+## Playoff race: clinch and elimination markers (`hoopsim/clinch.py`)
+
+The standings mark teams the way NBA.com and Basketball-Reference do. A marker
+appears only once it's mathematically certain, and it appears as soon as the
+check below can prove it, usually weeks before the end of the season.
+
+| Marker | Meaning |
+|---|---|
+| **w** | clinched the best record in the league |
+| **z** | clinched the conference's #1 seed. This is NBA.com's *z* (best record in the conference, so home court through the conference finals). |
+| **y** | clinched the division |
+| **x** | clinched a top-6 seed, so a playoff spot without the play-in |
+| **pi** | clinched at least a play-in spot (top 10) |
+| **o** | eliminated from playoff and play-in contention (can't finish in the top 10) |
+
+A row shows its strongest marker (w, then z, y, x, pi, o). In NBA-sized
+conferences (an 8-team bracket and at least 10 teams) the places follow the NBA's
+format: 1–6 go straight in and 7–10 go to the play-in. hoopsim doesn't play a
+play-in yet, so its bracket still takes seeds 1–8 straight in. The details view
+therefore also shows a **Top 8** line. In smaller leagues there's no play-in:
+**x** means a bracket place (for example top 4 of 6) and **o** means missing the
+bracket. Division titles are only marked when a conference has more than one
+division with more than one team.
+
+**How it's decided.** The check uses every team's remaining schedule, including who
+plays whom, not just the number of games left:
+
+- **Clinching place k** (in the conference, the division or the league): let the
+  team lose all its remaining games. Losing more can only hurt it, so this is its
+  worst case. Then ask whether some set of k rivals can *all* finish level with it
+  or better. For a given set that's a max-flow problem, like the classic baseball
+  elimination problem. Each rival in the set wins its games against everyone
+  outside the set, and the games between set members, which two of them can't
+  both win, are shared out by the flow. If no set of k can do it, the place is
+  clinched.
+- **Eliminated from place k**: let the team win out. Then ask whether some set of
+  `group size - k` rivals can all stay behind it. Set members lose to everyone
+  outside the set, and the games among them must all be won by somebody. If no
+  such set exists, the team is out.
+- Any subset of a feasible set is also feasible, so a depth-first search over
+  rivals, sorted from the most to the least likely, skips infeasible branches. It
+  finds a witness or proves there's none. The search is capped at 1,500 flow checks
+  per question. Hitting the cap counts as "not proven", which can delay a marker
+  but never make it wrong.
+- **Ties.** The real tie-breakers (`playoffs._Tiebreak`) can depend on games not
+  yet played and, in the end, on point differential. A tie is therefore counted
+  against the team when clinching and for it when eliminating. One case is settled
+  exactly: if at most one rival can still finish exactly level, any tie is a
+  two-team tie, whose first step is the season series. Under "loses out" or "wins
+  out", that series is already fixed, so a series the team has already won (or
+  lost) decides the tie. Three-team ties and split series stay pessimistic. Markers
+  that depend on them can come a few days later than a perfect solver's.
+- When the regular season is over, the final standings decide every marker.
+
+A brute-force test enumerates every remaining outcome of tiny leagues, with point
+differentials both ways. It checks that no marker is ever wrong and that at least
+three quarters of the true clinches and eliminations are shown. Every miss in
+those runs was a tie case.
+
+**Magic numbers.** Click a team in the standings for its races (best record, #1
+seed, division, top 6, top 8, top 10). Each race shows *clinched*, *out of reach*,
+or "clinched with N more wins" and "out after N more losses". These numbers count
+only the team's own results: win N more and the place is yours whatever else
+happens. They're sound upper bounds, found with the same checks plus a binary
+search.
+
+**Speed.** The markers for 30 teams take 5–25 ms at any point of the season, and
+one team's details 2–60 ms. The web app caches both until the next game is played.
+Nothing is stored in the save, so old saves show markers as soon as they load.
+
+**Where they show.** Every place markers appear:
+
+- The League screen's standings, in both the Conference and Division views. A
+  legend sits on top, the marker sits before each team name (hover for its
+  meaning), and the columns are GB, L10 and STRK. Clicking a team shows its race.
+- The Home screen's standings.
+- `GET /api/standings`, which has `marker`, `markers` and a `legend`. One team's
+  race is at `GET /api/standings/race/{team_id}`.
+- The CLI's `standings` command (and `python -m hoopsim season`), with GB, L10 and
+  streak columns, and in the status line.
+- After each sim, new markers become inbox news: "Playoff spot clinched" for your
+  team, and a "Playoff race" digest for the rest of the league. The CLI prints them
+  after the day's results.
 
 ## Storage (`hoopsim/db.py`)
 
