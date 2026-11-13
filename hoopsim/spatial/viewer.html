@@ -960,6 +960,8 @@ window.GAME = /*GAME_DATA*/null;
   // after it, options]. face: who he turns to; reach: how high his hands must get (feet, or
   // "ball": where the ball is then), which lifts the jump; ball: he carries it in the clip.
   const CUE_CLIPS = {
+    drive: ["drive", "", 0, { w: 0.75 }],                         // the first steps of a drive; then the dribble clips
+    cut: ["burst", "", 0, { w: 0.6 }],                            // the first strides of a cut
     pass: ["pass", "release", 0, { face: "other" }],
     lob_pass: ["lob_pass", "release", 0, { face: "other" }],
     inbound: ["lob_pass", "release", 0, { face: "other" }],
@@ -996,6 +998,8 @@ window.GAME = /*GAME_DATA*/null;
   // turn), LEAN radians per ft/s2 up to LEAN_MAX. Look: his chest and head turn toward the
   // ball (the man with it: the rim) by up to LOOK_MAX radians, whichever way his legs point.
   const LEAN = 0.0085, LEAN_MAX = 0.2, LOOK_MAX = 1.15, LOOK_CHEST = 0.28, LOOK_HEAD = 0.5;
+  const HAND_HOLD = 0.8, HAND_CROSS = 0.2;    // a dribbler keeps a hand at least this long (s); the ball takes this long to cross
+  const READY = 0.4;                          // how much of the defensive crouch is in an off-ball attacker's stance
   const STEP_RATE = 0.8, STEP_MAX = 1.7;      // a gait's easy cadence, and its fastest, as a share of the clip's own
   // planted feet: a foot counts as down within FOOT_ON ft of the floor (and until FOOT_OFF).
   // If holding it would stretch the leg more than FOOT_REACH ft from the clip, it takes a
@@ -1010,6 +1014,20 @@ window.GAME = /*GAME_DATA*/null;
     for (const c of rig.gltf.animations) clips[c.name] = c;
     clips.hold = clips.catch.clone(); clips.hold.name = "hold";   // the ball held in front: the end of the catch
     CL.hold = { duration: CL.catch.duration, still: true };
+    // Left-handed dribbles: the same clips mirrored (the skeleton is symmetric: left and right
+    // bones swap, rotations and the root's sideways travel flip).
+    for (const name of ["dribble_idle", "dribble_walk", "dribble_run"]) {
+      const c = clips[name].clone(); c.name = name + "_m";
+      for (const tr of c.tracks) {
+        tr.name = tr.name.startsWith("Left") ? "Right" + tr.name.slice(4) : tr.name.startsWith("Right") ? "Left" + tr.name.slice(5) : tr.name;
+        const v = tr.values;
+        if (tr.name.endsWith(".quaternion")) for (let i = 0; i < v.length; i += 4) { v[i + 1] = -v[i + 1]; v[i + 2] = -v[i + 2]; }
+        else if (tr.name.endsWith(".position")) for (let i = 0; i < v.length; i += 3) v[i] = -v[i];
+      }
+      clips[c.name] = c;
+      CL[c.name] = { ...CL[name], mirrored: true, dribble: { ...CL[name].dribble, hand: CL[name].dribble.hand === "L" ? "R" : "L" } };
+    }
+    const DRIBBLES = ["dribble_idle", "dribble_walk", "dribble_run", "dribble_idle_m", "dribble_walk_m", "dribble_run_m"];
     const MOVING = ["walk", "jog", "sprint", "backpedal", "slide", "slide_m", "dribble_walk", "dribble_run"];
     const slideTo = { 1: CL.slide.side > 0 ? "slide" : "slide_m", [-1]: CL.slide.side > 0 ? "slide_m" : "slide" };
     const kit = new THREE.MeshLambertMaterial({ vertexColors: true });
@@ -1055,7 +1073,7 @@ window.GAME = /*GAME_DATA*/null;
       fg.body.add(model);
       fg.rig = { model, jersey, bones, mixer: new THREE.AnimationMixer(model), acts: {}, w: {}, k: H / H0,
                  phase: (hash(fg.key || pl.name) % 100) / 100, free: hash(pl.name) % 7, carry: [], active: [],
-                 ax: 0, az: 0, anchored: false, hand: new THREE.Vector3(), grip: 0, armRest: {}, feet: {}, busy: 0, pitch: 0, roll: 0, look: 0,
+                 ax: 0, az: 0, anchored: false, hand: new THREE.Vector3(), grip: 0, armRest: {}, feet: {}, busy: 0, pitch: 0, roll: 0, look: 0, left: false, handT: 9, cross: 0, ballHand: null,
                  adjusted: ["Spine1", "Head", "LeftArm", "RightArm", "LeftUpLeg", "RightUpLeg", "LeftLeg", "RightLeg", "LeftFoot", "RightFoot"].map((n) => bones[n]).filter(Boolean) };
       for (const sd of ["Left", "Right"]) if (bones[sd + "ForeArm"]) fg.rig.armRest[sd] = bones[sd + "ForeArm"].position.clone().normalize();
       return fg.rig;
@@ -1195,6 +1213,12 @@ window.GAME = /*GAME_DATA*/null;
         const cue = { clip: m[0], t0: fi * dt + m[2] - ((c.marks && c.marks[m[1]]) || 0), ofs: 0, dur: c.duration,
                       face: o.face, other, yaw: o.yaw || 0, w: o.w || 1, hold: !!c.hold, reach: 0,
                       ball: o.noBall ? null : o.ball || c.ball || null, name };
+        // A shot taken on the move comes out of the run: the clip is eased in up to its gather
+        // (the running legs carry on under it) instead of cutting to the clip's own first pose.
+        if (c.marks && c.marks.gather && fi > 3) {
+          const cx = 6 + 2 * pl, v = Math.hypot(fr[fi][cx] - fr[fi - 3][cx], fr[fi][cx + 1] - fr[fi - 3][cx + 1]) / (30 * dt);
+          if (v > 5) cue.fin = Math.max(0.2, Math.min(0.45, c.marks.gather * 0.9));
+        }
         if (o.reach) cue.reach = o.reach === "ball" ? Math.min(11, Math.max(name === "rebound" ? 8.6 : 0, fr[fi][4] / 10 + 0.2)) : o.reach;
         // a dunk is recorded as a shot that arcs up and drops in: he takes it to the rim himself
         if (name === "dunk" || name === "alley_oop") { cue.slam = f * dt + 0.22; cue.name = "dunk"; }
@@ -1222,7 +1246,7 @@ window.GAME = /*GAME_DATA*/null;
     // how much of him a cue takes, tl seconds into it (eases in and out)
     function envelope(c, tl) {
       if (tl < 0 || tl > c.dur) return 0;
-      const fin = smooth01(tl / Math.min(0.2, c.dur / 3));
+      const fin = smooth01(tl / Math.min(c.fin || 0.2, c.dur / 3));
       const fout = c.hold ? 1 : smooth01((c.dur - tl) / Math.min(0.28, c.dur / 3));
       return Math.min(fin, fout) * (c.w || 1);
     }
@@ -1287,12 +1311,24 @@ window.GAME = /*GAME_DATA*/null;
       const steps = (v) => clamp01(sp / (v * STEP_RATE)) * smooth01((sp - 0.3) / 0.6);
       const vRun = Math.max(CL.walk.speed, Math.min(sp, CL.sprint.speed));
       if (dribbling) {
+        // Which hand: the one away from the nearest defender. He changes hands (a crossover)
+        // when the defender is clearly on the ball's side, and not more than every HAND_HOLD s.
+        r.handT += dta;
+        let near = 7, side = 0;
+        for (const o of s.players) {
+          if (o.off === q.off) continue;
+          const dX = o.y - q.y, dZ = o.x - q.x, dist = Math.hypot(dX, dZ);          // (court x, y -> world Z, X)
+          if (dist < near) { near = dist; side = dX * Math.cos(h) - dZ * Math.sin(h); }   // + : he is to the dribbler's left
+        }
+        const wantLeft = side < -0.8 ? true : side > 0.8 ? false : r.left;      // defender on his right: left hand
+        if (wantLeft !== r.left && (r.handT > HAND_HOLD || fresh)) { r.left = wantLeft; r.handT = 0; }
+        const m = r.left ? "_m" : "";
         const a = CL.dribble_walk.speed, b = CL.dribble_run.speed * 0.8;
-        if (sp <= a) { tgt.dribble_walk = steps(a); tgt.dribble_idle = 1 - tgt.dribble_walk; }
-        else { const k = clamp01((sp - a) / (b - a)); tgt.dribble_walk = 1 - k; tgt.dribble_run = k; }
+        if (sp <= a) { tgt["dribble_walk" + m] = steps(a); tgt["dribble_idle" + m] = 1 - tgt["dribble_walk" + m]; }
+        else { const k = clamp01((sp - a) / (b - a)); tgt["dribble_walk" + m] = 1 - k; tgt["dribble_run" + m] = k; }
       } else if (isHolder) {
         const go = steps(vRun);
-        tgt.hold = 1 - go; if (go > 0) run(go);
+        tgt.triple = 1 - go; if (go > 0) run(go);                 // standing with the ball: the triple-threat stance
       } else if (!q.off && sp < 7.5) {                             // on defence: stance, slides, backpedal
         const f2 = fwd * fwd, l2 = 1 - f2;
         const go = steps(l2 * CL.slide.speed + f2 * (fwd > 0 ? vRun : CL.backpedal.speed));
@@ -1302,9 +1338,11 @@ window.GAME = /*GAME_DATA*/null;
           if (fwd > 0) run(go * f2); else tgt.backpedal = go * f2;
         }
       } else {
-        const still = pose && sp < 3.5 ? pose.clip : q.off ? "idle" : "stance";
         const go = steps(vRun);
-        tgt[still] = 1 - go; if (go > 0) run(go);
+        if (pose && sp < 3.5) tgt[pose.clip] = 1 - go;
+        else if (q.off) { tgt.idle = (1 - go) * (1 - READY); tgt.stance = (1 - go) * READY; }   // off the ball: on his toes, not at ease
+        else tgt.stance = 1 - go;
+        if (go > 0) run(go);
       }
       // ease the weights (at once after a cut), then leave room for the one-shots
       const kk = fresh ? 1 : 1 - Math.exp(-dtg / 0.09);
@@ -1329,6 +1367,7 @@ window.GAME = /*GAME_DATA*/null;
         const a = action(r, name), d = CL[name].duration;
         a.enabled = true; a.weight = r.w[name] * room;
         a.time = name === "hold" ? d - 0.02 : CL[name].speed > 0 ? r.phase * d : r.free % d;
+        if (CL[name].mirrored && CL[name].speed > 0) a.time = ((r.phase + 0.5) % 1) * d;      // (a mirrored stride is half a cycle out of step)
       }
       for (const name in W) { const a = action(r, name); a.enabled = true; a.weight = W[name]; a.time = T[name]; }
       r.mixer.update(0);
@@ -1356,7 +1395,7 @@ window.GAME = /*GAME_DATA*/null;
 
     // Where the ball is in his hands (world). Dribbling: under the hand, bouncing off the
     // floor between the clip's marks; otherwise between both hands or on the shooting hand.
-    function ballInHand(fg, out) {
+    function ballInHand(fg, out, dta = 0) {
       const r = fg.rig, b = r.bones;
       fg.root.updateMatrixWorld(true);
       const palm = (side, v) => {
@@ -1365,10 +1404,21 @@ window.GAME = /*GAME_DATA*/null;
       };
       if (r.dribbling) {
         let best = "dribble_idle", bw = -1;
-        for (const nm of ["dribble_idle", "dribble_walk", "dribble_run"]) if ((r.w[nm] || 0) > bw) { bw = r.w[nm] || 0; best = nm; }
+        for (const nm of DRIBBLES) if ((r.w[nm] || 0) > bw) { bw = r.w[nm] || 0; best = nm; }
         const m = CL[best].dribble, d = CL[best].duration, t = r.acts[best] ? r.acts[best].time : 0;
-        palm(m.hand === "L" ? "Left" : "Right", out);
-        out.y -= BALL_R + 0.04;                                   // under the palm
+        const under = (hand, v) => { palm(hand === "L" ? "Left" : "Right", v); v.y -= BALL_R + 0.04; return v; };   // under the palm
+        under(m.hand, out);
+        // a change of hands: the ball crosses low in front of him from the old hand to the new
+        if (r.ballHand && r.ballHand !== m.hand) r.cross = HAND_CROSS;
+        r.ballHand = m.hand;
+        if (r.cross > 0) {
+          r.cross = Math.max(0, r.cross - dta);
+          const u = smooth01(1 - r.cross / HAND_CROSS);
+          under(m.hand === "L" ? "R" : "L", v3);
+          out.lerpVectors(v3, out, u);
+          out.y = Math.max(BALL_R, out.y * (1 - 0.75 * Math.sin(Math.PI * u)));
+          return out;
+        }
         for (const [rel, back] of m.bounces) {
           const span = ((back - rel) % d + d) % d, u = (((t - rel) % d + d) % d) / span;
           if (u >= 0 && u < 1) { out.y = BALL_R + Math.max(0, out.y - BALL_R) * Math.pow(Math.abs(1 - 2 * u), 0.75); break; }
@@ -1376,6 +1426,7 @@ window.GAME = /*GAME_DATA*/null;
         out.y = Math.max(BALL_R, out.y);
         return out;
       }
+      r.ballHand = null; r.cross = 0;
       const mode = r.ballCue ? r.ballCue.ball : "both";
       palm("Right", out);
       if (mode === "both") { palm("Left", v3); out.add(v3).multiplyScalar(0.5); out.y += 0.1; }
@@ -2500,10 +2551,10 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       if (useRig) for (const q of st.players) { const f = figures[q.key]; if (f.rig && f.rig.slam) slamFig = f; }
       if (slamFig) {
         const c = slamFig.rig.slam, after = st.at - c.slam;
-        if (after < 0) anim.ballInHand(slamFig, gripPos);
+        if (after < 0) anim.ballInHand(slamFig, gripPos, dta);
         else gripPos.set(rimX, Math.max(BALL_R, 9.7 - 16 * after * after), 0);   // through the net and down
         grip = 1; ring.visible = false;
-      } else if (useRig && holderFig) { anim.ballInHand(holderFig, gripPos); grip = snap ? 1 : grip + (1 - grip) * (1 - Math.exp(-dtg / 0.05)); }
+      } else if (useRig && holderFig) { anim.ballInHand(holderFig, gripPos, dta); grip = snap ? 1 : grip + (1 - grip) * (1 - Math.exp(-dtg / 0.05)); }
       else grip = snap || !useRig ? 0 : Math.max(0, grip - dtg / 0.16);
       if (grip > 0) {
         const g = grip * grip * (3 - 2 * grip);

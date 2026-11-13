@@ -68,6 +68,10 @@ CLIPS = {
                                                        desc="jump up to grab, left arm lowered by hand")),
     "steal":        ("15_06", 110, 290, "shot", dict(marks=dict(release=181), desc="lean forward, reach for")),
     "plant":        ("127_05", 40, 170, "shot", dict(marks=dict(release=110), desc="run to quick stop")),
+    # -- offence --
+    "triple":       ("102_30", 2, 16, "loop", dict(still=True, pingpong=True, ball="both", desc="basketball: straight drive from a stop (the stance before it, ball in both hands)")),
+    "drive":        ("102_30", 16, 112, "shot", dict(desc="basketball: straight drive from a stop (the first steps)")),
+    "burst":        ("102_10", 1, 52, "shot", dict(desc="basketball: running, no ball (the first strides)")),
     "fall":         ("90_18", 78, 215, "shot", dict(marks=dict(release=128), hold=True, desc="fall backwards (rug pull)")),
     # hand-keyed on a mocap pose
     "screen":       ("102_28", 468, 500, "loop", dict(still=True, pingpong=True, pose="screen", desc="defensive stance, arms folded in by hand")),

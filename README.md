@@ -164,10 +164,16 @@ motion-capture clips through an `AnimationMixer`. **Players: Animated | Light | 
 pick the clips:
 jump shot (gather, then release on the frame the ball leaves), free throw, layup, floater,
 hook, a one-hand dunk and the alley-oop (he carries the ball to the rim), chest and overhead pass, catch,
-contest (hand up), block, steal reach, rebound jump, screen, charge fall. Everything else is
+contest (hand up), block, steal reach, rebound jump, screen, charge fall, the first steps
+of a drive and the first strides of a cut. Everything else is
 read off the frames: idle and defensive stance, walk/jog/sprint, dribbling standing and on
 the move (the ball bounces under the hand), defensive slides and backpedalling while facing
-the ball, and a planted foot on a hard stop or cut. Clips cross-fade; a shooter turns to
+the ball, and a planted foot on a hard stop or cut. On offence, a player standing with the
+ball holds it in a triple-threat stance; off the ball he stands on his toes, not at ease.
+A dribbler uses the hand away from the nearest defender (the left-handed dribbles are the
+same clips mirrored in the viewer) and the ball crosses low in front of him when he
+changes hands, at most every 0.8 s. A shot taken on the move comes out of the run: its
+clip is eased in up to the gather, with the running legs carrying on under it. Clips cross-fade; a shooter turns to
 the rim, a passer to his receiver, a defender to his man. Movement is smoothed for the animated players. The replay moves players at ten positions
 a second and lets them reach full speed in a fifth of a second; drawn exactly, starts,
 stops and cuts look robotic. The drawn player follows his recorded position as a body
@@ -238,7 +244,7 @@ default" clears it. The light model has no face shapes, so a stored face has no 
 there. The mocap has no collarbone movement, so the
 viewer lifts the collarbone with a raised arm, which keeps the shoulder from pinching.
 
-The files (`spatial/assets/player.glb`, 1.23 MB, or `player_light.glb`, 0.74 MB, plus three.js r160's `GLTFLoader`,
+The files (`spatial/assets/player.glb`, 1.26 MB, or `player_light.glb`, 0.77 MB, plus three.js r160's `GLTFLoader`,
 `BufferGeometryUtils` and `SkeletonUtils` in `spatial/vendor/`, 0.15 MB, unmodified) are
 served by the web app at `/viewer-assets/` and fetched only the first time 3D is shown,
 and only the model the chosen level needs; nothing is added to the page itself. If they
@@ -251,7 +257,7 @@ tried again. A choice made by hand (the switch or **B**) is kept until you chang
 Exported pages
 (`python -m hoopsim watch`) keep the simple bodies and stay self-contained; add
 `--animated` (or `export.build_html(..., animation="embed")`) to carry the players inside
-the page, about 1.7 MB more (the full model only: no Light there). The motion is from the CMU Graphics Lab Motion Capture
+the page, about 1.8 MB more (the full model only: no Light there). The motion is from the CMU Graphics Lab Motion Capture
 Database (free for any use); `tools/build_player_assets.py` builds the model and cuts and
 retargets the clips. Sources, licences and the clip-by-clip list are in
 `spatial/assets/LICENSES.md`. Measured cost: about 0.6 ms of CPU per frame for ten animated

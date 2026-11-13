@@ -210,7 +210,8 @@ class AnimatedPlayersTests(unittest.TestCase):
         self.assertEqual(sorted(a["name"] for a in doc["animations"]), sorted(clips))
         for name in ("idle", "stance", "walk", "jog", "sprint", "backpedal", "slide", "slide_m", "dribble_idle",
                      "dribble_walk", "dribble_run", "jumper", "free_throw", "layup", "floater", "pass", "lob_pass",
-                     "catch", "contest", "block", "rebound", "dunk", "steal", "plant", "plant_m", "fall", "screen"):
+                     "catch", "contest", "block", "rebound", "dunk", "steal", "plant", "plant_m", "fall", "screen",
+                     "triple", "drive", "burst"):
             self.assertIn(name, clips)
             self.assertGreater(clips[name]["duration"], 0.3, name)
             self.assertTrue(clips[name]["src"], name)              # every clip names its mocap source
@@ -405,6 +406,26 @@ console.log(JSON.stringify({ out, same: JSON.stringify(a) === JSON.stringify(b),
         self.assertIn('adjusted: ["Spine1", "Head", "LeftArm"', src)   # brought back to the clip's pose each frame
         self.assertIn("fluid: (on) => { fluid = !!on; dirty = 3; },", src)
 
+    def test_offence(self):
+        """Offensive stances and clips, dribbling with either hand, shots out of the run."""
+        src = self.template
+        self.assertIn('drive: ["drive", "", 0, { w: 0.75 }],', src)
+        self.assertIn('cut: ["burst", "", 0, { w: 0.6 }],', src)
+        self.assertIn("tgt.triple = 1 - go;", src)                     # standing with the ball: triple threat
+        self.assertIn("tgt.idle = (1 - go) * (1 - READY); tgt.stance = (1 - go) * READY;", src)
+        # left-handed dribbles are made in the viewer by mirroring: no extra clips in the file
+        clips = read_glb(PLAYER_ASSETS["player.glb"])[4]["extras"]["hoopsim"]["clips"]
+        self.assertFalse([n for n in clips if n.startswith("dribble") and n.endswith("_m")])
+        self.assertIn('for (const name of ["dribble_idle", "dribble_walk", "dribble_run"]) {', src)
+        self.assertIn('dribble: { ...CL[name].dribble, hand: CL[name].dribble.hand === "L" ? "R" : "L" } };', src)
+        # the hand away from the nearest defender, not changed more often than HAND_HOLD
+        self.assertIn("const wantLeft = side < -0.8 ? true : side > 0.8 ? false : r.left;", src)
+        self.assertIn("if (wantLeft !== r.left && (r.handT > HAND_HOLD || fresh))", src)
+        self.assertIn("if (r.ballHand && r.ballHand !== m.hand) r.cross = HAND_CROSS;", src)   # the ball crosses over
+        # a shot on the move is eased in up to its gather
+        self.assertIn("if (v > 5) cue.fin = Math.max(0.2, Math.min(0.45, c.marks.gather * 0.9));", src)
+        self.assertIn("const fin = smooth01(tl / Math.min(c.fin || 0.2, c.dur / 3));", src)
+
     def test_light_model(self):
         """The same player with far fewer triangles: same skeleton, clips and parts."""
         full, light = (read_glb(PLAYER_ASSETS[n])[4] for n in ("player.glb", "player_light.glb"))
@@ -551,7 +572,7 @@ console.log(JSON.stringify({ out, same: JSON.stringify(a) === JSON.stringify(b),
         cue_map = src.split("const CUE_CLIPS = {", 1)[1].split("};", 1)[0]
         mapped = {m.group(1): m.group(2) for m in re.finditer(r'^\s*(\w+): \["(\w+)"', cue_map, re.M)}
         poses = dict(re.findall(r'(\w+): "(\w+)"', src.split("const POSE_CUES = {", 1)[1].split("}", 1)[0]))
-        from_frames = {"drive", "cut"}                             # running and dribbling: read off the frames
+        from_frames = set()                                        # (running and dribbling come off the frames too)
         self.assertEqual(set(ACTIONS), set(mapped) | set(poses) | from_frames)
         clips = read_glb(PLAYER_ASSETS["player.glb"])[4]["extras"]["hoopsim"]["clips"]
         for action, clip in {**mapped, **poses}.items():
