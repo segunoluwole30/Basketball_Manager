@@ -27,7 +27,8 @@ How ratings are made
 * Potential from age, hidden attributes partly from availability, physique from the
   roster's height and weight. Shot tendencies are what the ratings don't explain:
   set so the statistical engine reproduces each player's real shot mix. Pass-first
-  is assists for his share of the ball.
+  is assists for his share of the ball, less some of his shot load. The four scoring
+  ratings come from shooting and shot load only, not from the impact level.
 
 Every rating can be changed in the game's editor afterwards.
 """
@@ -107,7 +108,14 @@ OLDER_WEIGHT = 0.5
 # also set how many shots he takes. Usage (z-score of log usage rate) is added to them, so
 # a 30%-usage star out-shoots a 15%-usage spot-up shooter with the same percentages.
 # Threes get half: a three rating also sets three-point volume and accuracy.
-LOAD = {"finishing": 1.0, "close_range": 1.0, "mid_range": 1.0, "three_point": 0.5}
+# The same ratings set how well he shoots, and in the NBA efficiency doesn't rise with
+# usage, so the load is kept to what volume needs (0.65; it was 1.0) and part of the
+# volume goes through the pass-first tendency instead (``LOAD_PASSING``).
+LOAD = {"finishing": 0.65, "close_range": 0.65, "mid_range": 0.65, "three_point": 0.33}
+# Pass-first tendency points taken off per unit of shot load (z of log usage): a
+# high-usage scorer shoots more without his shooting ratings, and so his percentages,
+# going up with it (statistical engine: -3% of shot weight per point).
+LOAD_PASSING = 2.0
 THREE_VOLUME = 0.25          # three_point: 75% accuracy, 25% volume (volume is a tendency)
 # The engines already favour taller rebounders; take part of the height out of the
 # rebound ratings so bigs' boards aren't counted twice.
@@ -276,7 +284,7 @@ def raw_features(p: dict) -> dict[str, float]:
     obpm, dbpm, bpm = mins(st["obpm"], -1.5, 900), mins(st["dbpm"], -0.5, 900), mins(st["bpm"], -2, 900)
     ws48 = mins(st["ws_per_48"], 0.07, 900)
     pf36 = shrink(per36(t["pf"]), mp, 3.2, 600)
-    fta36, fg3a36 = per36(t["fta"]), per36(t["fg3a"])
+    fg3a36 = per36(t["fg3a"])
     mpg = st["mp"] / max(st["g"], 1)
     age = p["age"]
     youth = -max(0, age - 28)                         # athleticism fades in the thirties
@@ -284,8 +292,9 @@ def raw_features(p: dict) -> dict[str, float]:
         "three_point": (1 - THREE_VOLUME) * three / 0.035 + THREE_VOLUME * math.log1p(fg3a36) / 0.5,
         "free_throw": ft,
         "mid_range": mid / 0.05 + 0.6 * ft / 0.08,
-        "close_range": short / 0.06 + 0.3 * math.log1p(per36(st["zones"]["03_10"][0])),
-        "finishing": rim / 0.06 + 0.5 * math.log1p(fta36) + 2.0 * st["dunk_share"],
+        # Accuracy only: volume is the shot load's, free throws are foul drawing's.
+        "close_range": short / 0.06,
+        "finishing": rim / 0.06 + 2.0 * st["dunk_share"],
         "passing": math.log(max(ast, 3)),
         "vision": math.log(max(ast, 3)) / 0.5 - 0.3 * tov / 4 + 0.2 * obpm / 2,
         "ball_handling": ast / 8 + usg / 8 - tov / 5 - (h - 200) / 12,
@@ -331,8 +340,12 @@ def generated_targets(free_agents: int, seed: int = 7) -> tuple[list[int], dict[
 
 def make_attributes(z: dict[str, float], spread, position: Position, target: int) -> dict[str, int]:
     """The ratings that make up ability (drawing_fouls is rated on its own: foul_drawing)."""
+    # The scoring ratings (``LOAD``) come from his shooting and his shot load alone: the
+    # level from impact goes into the rest. Otherwise a high-impact player's shooting
+    # ratings rise with it, and he shoots better in the engine than he does in life.
     def build(shift: float) -> dict[str, int]:
-        return {n: int(max(ATTR_MIN, min(ATTR_MAX, round(spread[n][0] + spread[n][1] * z[n] + shift))))
+        return {n: int(max(ATTR_MIN, min(ATTR_MAX, round(spread[n][0] + spread[n][1] * z[n]
+                                                          + (0.0 if n in LOAD else shift)))))
                 for n in ABILITY_ATTRIBUTES}
     lo, hi = -15.0, 15.0
     for _ in range(40):                 # find the shift that lands on the target ability
@@ -636,6 +649,7 @@ def _rate(players: list[dict], abil_dist: list[int], spread, today: date) -> Non
              for k in ABILITY_ATTRIBUTES}
         for k in LOAD:                   # the scoring ratings bend toward their top instead
             z[k] = max(-2.8, soft_top(zs[k][p["_id"]] + LOAD[k] * load))
+        p["_load"] = load
         attrs = make_attributes(z, spread, pos, target)
         p["attributes"] = attrs
         ca = compute_ability(Attributes(**attrs), pos)
@@ -746,8 +760,10 @@ def _tendencies(p, a, league_shots=None) -> dict[str, int]:
         # Pass-first means assists for his share of the ball: a creator who scores and
         # passes (high assist and usage rates) isn't pass-first, and the statistical
         # engine would otherwise take shots away from him.
-        "passing": scale(math.log(max(st["ast_pct"], 3) / max(st["usg_pct"], 8)) if fga >= 40 else None,
-                         -0.30, 0.43, base["passing"]),
+        # Less the volume his shooting ratings no longer carry (``LOAD_PASSING``).
+        "passing": max(ATTR_MIN, min(ATTR_MAX, scale(
+            math.log(max(st["ast_pct"], 3) / max(st["usg_pct"], 8)) if fga >= 40 else None,
+            -0.30, 0.43, base["passing"]) - round(LOAD_PASSING * p.get("_load", 0.0)))),
         "cutting": scale(None if rim is None else rim * st["ast_fg2"], 0.18, 0.09, base["cutting"]),
     }
     profile = shot_profile(st)
