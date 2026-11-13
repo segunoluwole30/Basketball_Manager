@@ -722,8 +722,9 @@ class FullGame:
 
     def _push_after_make(self, offense: Side, tempo: Optional[str] = None) -> float:
         base = self.ot.push_after_score
-        logit = math.log(base / (1 - base)) + self.ot.pace_effect * (offense.tactics.pace - 10)
-        logit += offense_style(offense.tactics).push_after_make     # seven seconds or less
+        p = self.hc.p
+        logit = math.log(base / (1 - base)) + self.ot.pace_effect * (p.pace(offense.tactics.pace) - 10)
+        logit += p.system_tempo * offense_style(offense.tactics).push_after_make     # seven seconds or less
         if tempo == "push":
             logit += 2.0                        # the coach: push it after makes too
         return 1 / (1 + math.exp(-logit))

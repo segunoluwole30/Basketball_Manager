@@ -13,6 +13,7 @@ the searched fields and their ranges; the rest are held fixed.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
 
@@ -52,12 +53,12 @@ class SpatialParams:
     contest_outside: float = 1.7          # ... and on mid-range and three-point jumpers (was 1.602; README "Defence that recovers")
     rim_make_adj: float = -0.025          # added to the open make chance at the rim (README "Patient offence": -0.03; "Defence that recovers")
     three_make_adj: float = -0.023        # added to the open make chance from three (was -0.0204; README "Shots with room")
-    foul_scale: float = 1.0               # multiplies shooting-foul chances (search chose 1.28; held at 1, see README)
+    foul_scale: float = 1.05              # multiplies shooting-foul chances (search chose 1.28; held at 1, see README; 1.05: README "Steadier leagues")
     # --- turnovers and rebounds ------------------------------------------------
-    dribble_turnover_per_sec: float = 0.04    # with a defender in your face (was 0.0576, then 0.045; on-ball men stay closer since README "Defence that recovers")
+    dribble_turnover_per_sec: float = 0.05    # (0.04 before README "Steadier leagues") with a defender in your face (was 0.0576, then 0.045; on-ball men stay closer since README "Defence that recovers")
     pass_steal_scale: float = 0.037       # was 0.213, when ~5% of passes were lost (NBA ~2-2.5%), then 0.045 (README "Defence that recovers")
-    errant_pass: float = 0.0062           # passes thrown away or fumbled (not picked off; was 0.0184, then 0.007)
-    defensive_rebound_edge: float = 3.2   # was 4.576 (full-game ORB% .21 against .26)
+    errant_pass: float = 0.0072           # passes thrown away or fumbled (not picked off; was 0.0184, then 0.007, then 0.0062)
+    defensive_rebound_edge: float = 2.4   # was 4.576 (full-game ORB% .21 against .26), then 3.2 (README "Steadier leagues": ratings count less)
     # --- rotation lag (the defence falls behind as the ball moves) -------------
     rotation_lag: float = 0.6             # extra reaction (in reactions) per level of scramble
     scramble_bend: float = 4.0            # receiver's man this far beyond his closeout spot = defence bent (ft)
@@ -85,7 +86,7 @@ class SpatialParams:
     patience_full: float = 17.0           # was 14, then 16 (README "Defence that recovers"; "Shots with room")
     patience_none: float = 3.0            # was 4 (README "Defence that recovers")
     patience_great: float = 1.25
-    patience_three: float = 1.0           # ... scaled by this for threes (0.25 when closeouts overran; README "Defence that recovers"; then 0.8)
+    patience_three: float = 0.9           # (1.0 before README "Steadier leagues") ... scaled by this for threes (0.25 when closeouts overran; README "Defence that recovers"; then 0.8)
     patience_hold: float = 0.3            # ... and standing on the ball by this share of it
     # Off-ball spacing: after a catch, a perimeter man this close (ft) to the ball or a
     # teammate's spot fills the nearest open spot instead (0: off).
@@ -137,6 +138,36 @@ class SpatialParams:
     usage_knee: float = 0.24
     usage_prior: float = 10.0
     foul_draw: float = 2.5
+    # Steadier leagues (README "Steadier leagues"): a team's identity moves its numbers
+    # about as far as in the NBA, not two or three times as far, so a 12-team league's
+    # means don't follow whichever systems it happens to have. 0 (a span) or 1 (a
+    # scale) switches each off; LEGACY_PARAMS has them all off.
+    # The pace tactic's distance from 10 is read as ``tempo_span`` * tanh(distance /
+    # ``tempo_span``): small differences kept, extremes bent (pace 14 counts as 12.7).
+    tempo_span: float = 3.0
+    # A coaching system's tempo levers (running after rebounds and makes, extra or fewer
+    # entry actions, holding or shooting early) count this share of their face value:
+    # the system also sets the pace slider, so they came on top of it.
+    system_tempo: float = 0.5
+    # The coach's standing nudges to one option (sliders, offensive focus and the
+    # system's bias together, in points of value) are bent past ``team_bias_span``:
+    # they stack (Grit and Grind's threes: -0.074), and against a choice temperature of
+    # 0.03-0.12 they swung post-ups, threes and holds far more than any NBA team's
+    # identity does. The players' own tendencies are not bent.
+    team_bias_span: float = 0.04
+    # A rebounder's edge per point of his (offensive or defensive) rebounding rating, in
+    # log odds (was 0.25: a 20-rated rebounder had 12x a 10-rated one's chance from the
+    # same spot, and league ORB% followed its rosters; height counts as before).
+    rebound_rating: float = 0.08
+    # A post-up is a contact play: the on-ball man is on him the whole time, so strips at
+    # the perimeter handler's rate turned ~30% of post-ups over (NBA ~11%) and made
+    # post-heavy teams' turnovers double the league's. Strips while backing down x this.
+    post_strip: float = 0.5
+    # An inside-focus offence puts its second big on the other block this share of the
+    # time (two in, three out); otherwise he spaces like any four. Every catch on a block
+    # is a post-up, so both bigs there every time made post-heavy teams post about once a
+    # possession, with the turnovers and offensive rebounds that brings.
+    inside_pair: float = 0.4
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -151,6 +182,15 @@ class SpatialParams:
 
     def with_values(self, **changes) -> "SpatialParams":
         return replace(self, **changes)
+
+    def pace(self, pace: float) -> float:
+        """The pace tactic as the spatial engine reads it (``tempo_span``)."""
+        return 10.0 + self.bend(pace - 10.0, self.tempo_span)
+
+    @staticmethod
+    def bend(x: float, span: float) -> float:
+        """``span`` * tanh(``x`` / ``span``): slope 1 near 0, never past ``span`` (0: ``x``)."""
+        return span * math.tanh(x / span) if span > 0 else x
 
     def save(self, path) -> None:
         Path(path).write_text(json.dumps(self.to_dict(), indent=1))
@@ -223,6 +263,12 @@ LEGACY_PARAMS = SpatialParams(
     contest_spread=0.0,
     usage_penalty=0.0,
     foul_draw=0.0,
+    tempo_span=0.0,
+    system_tempo=1.0,
+    team_bias_span=0.0,
+    rebound_rating=0.25,
+    post_strip=1.0,
+    inside_pair=1.0,
 )
 
 # Searched fields: (low, high). Everything else stays at its default.
@@ -254,7 +300,7 @@ SEARCH_SPACE = {
     "dribble_turnover_per_sec": (0.02, 0.12),
     "pass_steal_scale": (0.03, 0.5),
     "errant_pass": (0.003, 0.03),
-    "defensive_rebound_edge": (3.0, 7.0),
+    "defensive_rebound_edge": (2.0, 7.0),
     "rotation_lag": (0.0, 1.2),
     "scramble_decay": (0.1, 0.8),
     "entry_actions": (0.0, 4.5),
