@@ -8,6 +8,7 @@ editor was used.
 """
 from __future__ import annotations
 
+import re
 from datetime import date
 from typing import Any, Optional
 
@@ -44,6 +45,56 @@ def _block(current, cls, changes: dict, label: str):
     for k, v in changes.items():
         values[k] = _int(v, ATTR_MIN, ATTR_MAX, k.replace("_", " "))
     return cls(**values)
+
+
+# The 3D viewer's player looks (viewer.html lookOf): the values it understands.
+LOOK_HAIR = ("short", "fade", "bald", "afro", "locs", "flattop", "bun")
+LOOK_SIDES = ("L", "R", "both")                  # arm sleeve, leg sleeves, wristbands (or None)
+LOOK_COLOURS = ("white", "black", "team")        # or "#rrggbb"
+LOOK_KEYS = ("hair", "hairColor", "beard", "band", "sleeve", "leg", "wrist", "gear", "shoes")
+_HEX = re.compile(r"#[0-9a-fA-F]{6}")
+
+
+def _colour(v: Any, name: str) -> str:
+    if isinstance(v, str):
+        v = v.strip()
+        if v in LOOK_COLOURS:
+            return v
+        if _HEX.fullmatch(v):
+            return v.lower()
+    raise EditError(f"{name} must be white, black, team or a #rrggbb colour")
+
+
+def clean_look(look: Any) -> Optional[dict]:
+    """A player's 3D look, checked: None (or {}) means "pick it from his name"; otherwise a
+    dict of any of LOOK_KEYS (the parts left out are still picked from his name)."""
+    if look is None:
+        return None
+    if not isinstance(look, dict):
+        raise EditError("look must be an object (or null for the default)")
+    unknown = set(look) - set(LOOK_KEYS)
+    if unknown:
+        raise EditError(f"unknown look parts: {', '.join(sorted(map(str, unknown)))}")
+    out: dict[str, Any] = {}
+    for k in LOOK_KEYS:
+        if k not in look:
+            continue
+        v = look[k]
+        if k == "hair":
+            if v not in LOOK_HAIR:
+                raise EditError(f"hair must be one of {', '.join(LOOK_HAIR)}")
+        elif k == "beard":
+            if not isinstance(v, bool):
+                raise EditError("beard must be true or false")
+        elif k in ("sleeve", "leg", "wrist"):
+            if v is not None and v not in LOOK_SIDES:
+                raise EditError(f"{k} must be L, R, both or none")
+        elif k == "band":
+            v = None if v is None else _colour(v, "headband")
+        else:
+            v = _colour(v, {"hairColor": "hair colour", "gear": "gear colour", "shoes": "shoe colour"}[k])
+        out[k] = v
+    return out or None
 
 
 def player_list(league: League, team_id: Optional[int] = None, query: str = "",
@@ -85,10 +136,12 @@ def player_sheet(league: League, player: Player) -> dict:
         "morale": round(player.morale), "injury": player.injury.to_dict() if player.injury else None,
         "contract": None if c is None else {"salary": c.salary, "expires_season": c.expires_season,
                                              "option": c.option.value if c.option else None},
+        "look": dict(player.look) if player.look else None,
         "limits": {"rating": [ATTR_MIN, ATTR_MAX], "ability": [ABILITY_MIN, ABILITY_MAX],
                    "positions": [p.value for p in Position],
                    "salary": [0, int(league.rules.salary_cap * league.rules.max_salary_cap_fraction)],
-                   "expires_season": [league.season, league.season + 6]},
+                   "expires_season": [league.season, league.season + 6],
+                   "look": {"hair": list(LOOK_HAIR), "sides": list(LOOK_SIDES), "colours": list(LOOK_COLOURS)}},
     }
 
 
@@ -100,7 +153,7 @@ def edit_player(league: League, player_id: int, changes: dict) -> list[str]:
         raise EditError("no such player")
     allowed = {"first_name", "last_name", "birth_date", "nationality", "position", "secondary_positions",
                "height_cm", "wingspan_cm", "weight_kg", "jersey_number", "attributes", "hidden",
-               "tendencies", "potential_ability", "morale", "contract", "heal", "team_id"}
+               "tendencies", "potential_ability", "morale", "contract", "heal", "team_id", "look"}
     unknown = set(changes) - allowed
     if unknown:
         raise EditError(f"can't edit {', '.join(sorted(unknown))}")
@@ -169,6 +222,7 @@ def edit_player(league: League, player_id: int, changes: dict) -> list[str]:
         except ValueError:
             raise EditError("option must be player, team or none") from None
         contract = Contract(salary, expires, option, cur.rookie_scale)
+    look = clean_look(changes["look"]) if "look" in changes else p.look
     team_id = p.team_id
     if "team_id" in changes:
         team_id = changes["team_id"]
@@ -208,6 +262,9 @@ def edit_player(league: League, player_id: int, changes: dict) -> list[str]:
     if contract is not p.contract:
         p.contract = contract
         done.append("contract")
+    if (look or None) != (p.look or None):
+        p.look = look
+        done.append("look")
     if changes.get("heal") and p.injury:
         p.injury = None
         done.append("healed")

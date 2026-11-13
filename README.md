@@ -176,22 +176,27 @@ the cues existed get shots, passes, catches and rebounds read off the frames ins
 
 Each player has his own build. In the browser interface the page carries his real height,
 weight and wingspan (looked up in the league when the page is served, so recordings are
-unchanged): height scales the whole figure, weight sets how much of the model's "bulk"
+unchanged). Replays list each player's league id (`export.viewer_data`, used wherever page
+data or a replay is made), so he is found exactly, even after a rename, a new number or a
+trade; replays saved before ids were recorded still load and are matched by name and
+number. Height scales the whole figure, weight sets how much of the model's "bulk"
 shape he gets (a morph target: the same body in a much heavier build, or run backwards for
 a slighter one), and
 wingspan lengthens or shortens his arms. The simple bodies get the height and the width
 too. Without those numbers (exported pages, or a player who has left the league) he gets
 the typical build for his position, varied a little by his name. Skin tone is still picked
-by name: players have no stored look yet, but a `skin` field on a player in the page data
-(an index into the viewer's tones, or `#rrggbb`) is used when present.
+by name; a `skin` field on a player in the page data (an index into the viewer's tones, or
+`#rrggbb`) is used when present.
 
 Each player also has his own look: one of seven hair styles (short, fade, afro, flat top,
 locs, bun, bald) in a hair colour that suits his skin tone, perhaps a beard, a headband, an
 arm sleeve, leg sleeves, wristbands, and shoes in black, white, team colour or something
-louder. They are parts of the one model, switched on per player. Until players have a
-stored look, it is picked from the player's name, so it is the same in every game; a `look`
-object on a player in the page data (`hair`, `hairColor`, `beard`, `band`, `sleeve`, `leg`,
-`wrist`, `gear`, `shoes`) overrides any of it.
+louder. They are parts of the one model, switched on per player. A look can be set per
+player in the editor (**Look in 3D**, see *In-game editor*); it is stored on the player in
+the save and sent with the page data as a `look` object (`hair`, `hairColor`, `beard`,
+`band`, `sleeve`, `leg`, `wrist`, `gear`, `shoes`). Any part not set, and every part of a
+player with no stored look, is picked from the player's name, so it is the same in every
+game.
 
 The body is MakeHuman's base mesh (CC0): a real human figure with a face, hands and
 muscle definition, shaped into a tall athlete, bound to the mocap skeleton and simplified.
@@ -207,7 +212,10 @@ The files (`spatial/assets/player.glb`, 1.07 MB, plus three.js r160's `GLTFLoade
 served by the web app at `/viewer-assets/` and fetched only the first time 3D is shown;
 nothing is added to the page itself. If they fail to load, the view says so and keeps the
 simple bodies; if the device can't hold about 18 frames a second with them, it switches to
-Simple by itself (unless you picked Animated by hand). Exported pages
+Simple by itself (unless you picked Animated by hand). That automatic switch is remembered
+for 7 days, and only while the device looks the same (the same WebGL renderer and screen
+size); after that, or on another GPU or screen, animated players are tried again. A choice
+made by hand (the switch or **B**) is kept until you change it. Exported pages
 (`python -m hoopsim watch`) keep the simple bodies and stay self-contained; add
 `--animated` (or `export.build_html(..., animation="embed")`) to carry the players inside
 the page, about 1.6 MB more. The motion is from the CMU Graphics Lab Motion Capture
@@ -1773,7 +1781,13 @@ can change any player's:
 * ratings, hidden ratings and tendencies (1-20 sliders);
 * potential (never below current ability);
 * name, birth date, nationality, position(s), height, wingspan, weight and jersey;
-* morale, an injury (heal it), contract (salary, end season, option) and team.
+* morale, an injury (heal it), contract (salary, end season, option) and team;
+* his look in the 3D viewer: hair style and colour, beard, headband, arm sleeve, leg
+  sleeves, wristbands, the colour of sleeves and bands, and shoes. Each part is either
+  "From name" (picked from his name, as for everyone else) or set; colours are white,
+  black, team colour or any `#rrggbb`. **Use default** clears the stored look. It is an
+  optional field on the player (`Player.look`; old saves load without one), checked
+  against the values the viewer understands (`editor.clean_look`).
 
 You can also change a team's city, name, abbreviation and reputation.
 

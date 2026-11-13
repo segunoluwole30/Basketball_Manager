@@ -900,8 +900,11 @@ window.GAME = /*GAME_DATA*/null;
 
   // Each player's look in 3D: hair (style and colour), beard, headband, arm and leg sleeves,
   // wristbands, shoes. The page may carry it (look: {hair, hairColor, beard, band, sleeve, leg,
-  // wrist, shoes}); otherwise it is picked from his name, the same every time, with hair
-  // colours that suit his skin tone. Colours: "white", "black", "team" or #rrggbb.
+  // wrist, gear, shoes}: the web app sends what the editor set); any part it leaves out is
+  // picked from his name, the same every time, with hair colours that suit his skin tone.
+  // hair: one of HAIR_STYLES; beard: true/false; sleeve, leg, wrist: "L", "R", "both" or
+  // null; band: a colour or null; gear (sleeves and bands): a colour. Colours: "white",
+  // "black", "team" or #rrggbb. (hoopsim/editor.py LOOK_* checks the same sets.)
   const HAIR_STYLES = [["short", 28], ["fade", 26], ["bald", 10], ["afro", 9], ["locs", 12], ["flattop", 6], ["bun", 9]];
   // the model's hair parts each style is made of (bald: none)
   const HAIR_PARTS = { short: ["cap"], fade: ["fade"], afro: ["afro"], flattop: ["cap", "flattop"], locs: ["cap", "locs"], bun: ["cap", "bun"] };
@@ -2381,9 +2384,13 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     view3d.setPreset(camPreset);
     view3d.setArena(arenaQ);
     view3d.setLabels(labelMode);
-    if (rigData) { view3d.setRig(rigData); applyBodies(); }
+    if (bodyPref === "auto") autoSimple = readAutoSimple();     // the renderer is known now
+    if (rigData) view3d.setRig(rigData);
+    applyBodies();
     if (DEBUG) {
       window.hoopsim3D = view3d;
+      view3d.bodyPref = () => ({ pref: bodyPref, autoSimple, device: deviceSig() });
+      view3d.fallBack = fallBackToSimple;        // as if the device had been too slow
       view3d.seek = (n, time, play = false) => { goTo(n); t = Math.min(time, duration(P[poss])); setPlaying(play); drawFrame(); };
       view3d.time = () => ({ poss, t });
     }
@@ -2393,21 +2400,56 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
   }
   // Players in 3D: Animated (the rigged model and its clips, fetched the first time 3D is
   // shown) or Simple (the low-poly bodies: also what you get if the files don't load, on
-  // a device that can't keep up, and in pages exported without them). Remembered.
-  let bodyPref = "auto", rigData = null, rigState = BODY_CFG ? "idle" : "none";
+  // a device that can't keep up, and in pages exported without them). A choice made by
+  // hand (the switch or B) is remembered for good. Falling back on a slow device by itself
+  // is remembered for a week, and only while the device looks the same (its graphics
+  // renderer and screen); after that, animated players are tried again.
+  const AUTO_SIMPLE_KEY = "hoopsim-bodies-auto", AUTO_SIMPLE_DAYS = 7;
+  let bodyPref = "auto", autoSimple = false, rigData = null, rigState = BODY_CFG ? "idle" : "none";
   try { bodyPref = localStorage.getItem("hoopsim-bodies") || "auto"; } catch (e) {}
   if (!["auto", "animated", "simple"].includes(bodyPref)) bodyPref = "auto";
+  const wantsSimple = () => bodyPref === "simple" || (bodyPref === "auto" && autoSimple);
+  function deviceSig() {
+    // what makes the device "the same one": its WebGL renderer and its screen (either way up)
+    let gl = "";
+    try {
+      const c = view3d && view3d.renderer.getContext();
+      const ext = c && c.getExtension("WEBGL_debug_renderer_info");
+      gl = String((c && (ext ? c.getParameter(ext.UNMASKED_RENDERER_WEBGL) : c.getParameter(c.RENDERER))) || "");
+    } catch (e) {}
+    let scr = "";
+    try {
+      const w = screen.width | 0, h = screen.height | 0;
+      scr = Math.min(w, h) + "x" + Math.max(w, h) + "@" + (+(window.devicePixelRatio || 1).toFixed(2));
+    } catch (e) {}
+    return { gl, screen: scr };
+  }
+  function readAutoSimple() {
+    // true while a recent automatic fallback was made on this same device
+    let rec = null;
+    try { rec = JSON.parse(localStorage.getItem(AUTO_SIMPLE_KEY) || "null"); } catch (e) { rec = null; }
+    if (!rec || typeof rec !== "object") return false;
+    const age = Date.now() - rec.at, sig = deviceSig();
+    const ok = Number.isFinite(age) && age >= 0 && age < AUTO_SIMPLE_DAYS * 864e5 && rec.gl === sig.gl && rec.screen === sig.screen;
+    if (!ok) { try { localStorage.removeItem(AUTO_SIMPLE_KEY); } catch (e) {} }
+    return ok;
+  }
+  function fallBackToSimple() {
+    autoSimple = true;
+    try { localStorage.setItem(AUTO_SIMPLE_KEY, JSON.stringify({ at: Date.now(), ...deviceSig() })); } catch (e) {}
+    applyBodies();
+    setText("viewMsg", "Animated players were slow here: switched to simple bodies.");
+  }
   function applyBodies() {
-    const on = bodyPref !== "simple" && rigState === "ready";
-    $("bodyAnim").checked = bodyPref !== "simple" && rigState !== "failed"; $("bodySimple").checked = !$("bodyAnim").checked;
-    if (view3d) view3d.setBodies(on ? "animated" : "simple", bodyPref === "auto", () => {
-      setBodyPref("simple"); setText("viewMsg", "Animated players were slow here: switched to simple bodies.");
-    });
+    const on = !wantsSimple() && rigState === "ready";
+    $("bodyAnim").checked = !wantsSimple() && rigState !== "failed"; $("bodySimple").checked = !$("bodyAnim").checked;
+    if (view3d) view3d.setBodies(on ? "animated" : "simple", bodyPref === "auto" && !autoSimple, fallBackToSimple);
   }
   function setBodyPref(v) {
-    bodyPref = v;
-    try { localStorage.setItem("hoopsim-bodies", v); } catch (e) {}
-    if (v !== "simple" && rigState === "idle") loadBodies(); else applyBodies();
+    // a choice by hand: kept for good, and it replaces any automatic fallback
+    bodyPref = v; autoSimple = false;
+    try { localStorage.setItem("hoopsim-bodies", v); localStorage.removeItem(AUTO_SIMPLE_KEY); } catch (e) {}
+    if (!wantsSimple() && rigState === "idle") loadBodies(); else applyBodies();
   }
   async function loadBodies() {
     if (rigState !== "idle" || !view3d) return;
@@ -2442,7 +2484,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       catch (e) { console.warn("3D view:", e); no3D(NO_GL); mode = "2d"; }
       viewBusy = false;
     }
-    if (mode === "3d" && bodyPref !== "simple" && rigState === "idle") loadBodies();
+    if (mode === "3d" && !wantsSimple() && rigState === "idle") loadBodies();
     viewMode = mode;
     $("v2d").checked = mode === "2d"; $("v3d").checked = mode === "3d";
     canvas.hidden = mode === "3d";

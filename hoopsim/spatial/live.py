@@ -364,6 +364,7 @@ class LiveMatch:
 
     def header(self) -> dict:
         """The viewer's static data: teams and rosters (in ``Side.roster`` order)."""
-        d = self.fg.to_dict()
+        from .export import viewer_data
+        d = viewer_data(self.fg)
         return {"version": 2, "fullgame": True, "dt": d["dt"], "home": d["home"], "away": d["away"],
                 "possessions": [], "live_client": {"user_side": self.user_side, "game_id": self.game.id}}

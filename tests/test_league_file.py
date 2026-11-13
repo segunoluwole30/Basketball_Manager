@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from hoopsim import load_league, save_league
-from hoopsim.editor import EditError, edit_player, edit_team, edited, player_list, player_sheet
+from hoopsim.editor import EditError, clean_look, edit_player, edit_team, edited, player_list, player_sheet
 from hoopsim.league_file import LeagueFileError, league_files, load_league_file
 from hoopsim.models import Position
 from hoopsim.season import play_regular_season
@@ -195,6 +195,38 @@ class EditorTests(unittest.TestCase):
             back = load_league(Path(d) / "x.db")
         self.assertEqual(back.players[self.p.id].attributes.three_point, 20)
         self.assertEqual(edited(back)["count"], 1)
+
+    def test_look(self):
+        """The 3D look: optional, checked against what the viewer understands, saved, cleared."""
+        self.assertIsNone(self.p.look)
+        self.assertIsNone(player_sheet(self.lg, self.p)["look"])
+        look = {"hair": "locs", "hairColor": "#1C130D", "beard": False, "band": "team", "sleeve": "L",
+                "leg": "both", "wrist": None, "gear": "white", "shoes": "#c8372d"}
+        self.assertEqual(edit_player(self.lg, self.p.id, {"look": look}), ["look"])
+        self.assertEqual(self.p.look, {**look, "hairColor": "#1c130d"})
+        self.assertEqual(edit_player(self.lg, self.p.id, {"look": dict(self.p.look)}), [])   # no change
+        with tempfile.TemporaryDirectory() as d:
+            save_league(self.lg, Path(d) / "x.db")
+            back = load_league(Path(d) / "x.db")
+        self.assertEqual(back.players[self.p.id].look, self.p.look)
+        for bad in ({"hair": "mohawk"}, {"hairColor": "red"}, {"shoes": "#12345"}, {"beard": "yes"},
+                    {"sleeve": "left"}, {"gear": None}, {"cape": True}, ["hair"], {"band": "#zzzzzz"}):
+            with self.subTest(bad=bad), self.assertRaises(EditError):
+                edit_player(self.lg, self.p.id, {"look": bad, "first_name": "X"})
+        self.assertNotEqual(self.p.first_name, "X")                 # an invalid look changes nothing
+        self.assertEqual(clean_look({}), None)
+        self.assertEqual(clean_look({"hair": "bald"}), {"hair": "bald"})
+        self.assertEqual(edit_player(self.lg, self.p.id, {"look": None}), ["look"])   # use default
+        self.assertIsNone(self.p.look)
+        self.assertNotIn("look", self.p.to_dict())                  # saves without a look are as before
+
+    def test_old_saves_without_look_load(self):
+        d = self.p.to_dict()
+        self.assertNotIn("look", d)
+        from hoopsim.models import Player
+        self.assertIsNone(Player.from_dict(d).look)
+        d["look"] = {"hair": "fade"}
+        self.assertEqual(Player.from_dict(d).look, {"hair": "fade"})
 
 
 if __name__ == "__main__":
