@@ -13,11 +13,12 @@ Timeline (days before the All-Star Game, a Sunday in mid-February):
   starting five goes to a reserve).
 * 2 (Friday): Rising Stars: rookies against sophomores (or two drafted teams of
   young players when a league is too new to have both).
-* 1 (Saturday): the Three-Point Contest. Five racks of five (four 1-point balls and
-  a 2-point money ball each, plus one rack of money balls placed where the shooter
-  likes), and two 3-point "deep" shots from 6 feet behind the line: 40 points at
-  most. Eight shooters, the top three go to the final; ties are settled by a
-  shoot-off.
+* 1 (Saturday): the Three-Point Contest, the NBA's format as of 2025, shot ball by
+  ball. Five racks of five round the arc (four 1-point balls and a 2-point money ball
+  each, one rack of money balls placed where the shooter likes) and two 3-point "deep"
+  shots six feet behind the line: 40 points at most, in 70 seconds. Eight shooters,
+  the top three go to the final; ties are settled by a 30-second shoot-off. Every ball
+  is recorded (``three["record"]``), so the contest can be watched in the viewer.
 * 0 (Sunday): the All-Star Game, East against West, with its MVP.
 
 The exhibitions are played on a throwaway copy of the players (no injuries, no
@@ -43,7 +44,8 @@ GUARDS = {Position.PG, Position.SG}
 # Exhibition replays live in league.replays under these fixed ids (overwritten each
 # season, never pruned with ordinary game replays).
 EVENT_REPLAY_BASE = 10_000_000
-REPLAY_IDS = {"game": EVENT_REPLAY_BASE + 1, "rising": EVENT_REPLAY_BASE + 2}
+REPLAY_IDS = {"game": EVENT_REPLAY_BASE + 1, "rising": EVENT_REPLAY_BASE + 2,
+              "three": EVENT_REPLAY_BASE + 3}     # (the contest: built from its record, any season)
 EXHIBITION_TACTICS = (20, 17)        # pace and three-point rate: run and gun
 PER_CONF = {"starters_g": 2, "starters_f": 3, "reserves_g": 2, "reserves_f": 3, "wild": 2}
 
@@ -436,75 +438,256 @@ def _game(league, st, rng) -> str:
 # --------------------------------------------------------------------------
 # Three-Point Contest
 # --------------------------------------------------------------------------
-def shoot_round(p, rng: random.Random, final: bool = False) -> dict:
-    """One round: five racks (one all money balls) and two deep shots. Each ball is
-    the points it scored (0 = miss); a rack's last ball is the money ball."""
+# The NBA's format (as of the 2025 contest): five racks round the arc, corner to
+# corner (corner, wing, top of the key, wing, corner). Each rack holds four 1-point
+# balls and a 2-point money ball (the last one); one rack, the shooter's choice, is
+# all money balls. Between the wings and the top stand two deep shots, one ball each,
+# six feet behind the line, worth 3. 27 balls, 40 points at most, 70 seconds; a ball
+# counts if it is out of his hands before the buzzer. The course is shot in order:
+# rack 1, rack 2, deep shot, rack 3, deep shot, rack 4, rack 5.
+RACK_SPOTS = ("corner", "wing", "top of the key", "wing", "corner")
+COURSE = (("rack", 0), ("rack", 1), ("deep", 0), ("rack", 2), ("deep", 1), ("rack", 3), ("rack", 4))
+ROUND_SECONDS = 70.0
+SHOOTOFF_SECONDS = 30.0          # a tie is settled by a 30-second shoot-off on the same course
+MAX_POINTS = 40
+# Time on the course (seconds): to the first release, between balls of a rack (the
+# shooter's own rhythm, about this), and from one station's last release to the
+# next one's first (a run of 15-25 feet and a ball to pick up).
+FIRST_RELEASE = 1.4
+BALL_GAP = 1.95
+MIN_GAP = 1.55                   # the quickest anyone gets a ball up (the viewer relies on it too)
+MOVE_GAP = {("rack", "rack"): 4.0, ("rack", "deep"): 3.2, ("deep", "rack"): 3.2}
+
+
+def ball_value(station: tuple[str, int], ball: int, money_rack: int) -> int:
+    kind, k = station
+    if kind == "deep":
+        return 3
+    return 2 if (k == money_rack or ball == 4) else 1
+
+
+def money_rack_choice(p) -> int:
+    """The rack a shooter fills with money balls: his own favourite, the same every year
+    (most pick the last corner, as the pros do; some their best spot)."""
+    return random.Random(f"money rack|{p.id}|{p.name}").choices(range(5), weights=(16, 12, 10, 14, 48))[0]
+
+
+def tempo(p) -> float:
+    """His own rhythm on the racks (seconds per ball, against the usual): some fire
+    quickly, some take their time and get caught by the clock."""
+    return random.Random(f"tempo|{p.id}|{p.name}").uniform(-0.15, 0.22)
+
+
+def contest_skill(p, pct: Optional[float] = None) -> float:
+    """A shooter's chance on an ordinary rack ball: from his three-point rating and, when
+    there is one, his real 3P% this season (shrunk toward average). Catch-and-shoot from a
+    rack with nobody near is easier than a game three: a 37% shooter makes about 55%,
+    the best about two in three."""
+    from_rating = 0.33 + 0.018 * p.attributes.three_point
+    if pct is None:
+        return from_rating
+    return 0.5 * from_rating + 0.5 * (0.585 + 1.5 * (pct - 0.37))
+
+
+def shoot_round(p, rng: random.Random, final: bool = False, pct: Optional[float] = None,
+                seconds: float = ROUND_SECONDS, money_rack: Optional[int] = None) -> dict:
+    """One trip round the course, ball by ball. Each ball is the points it scored (0: a
+    miss, or never shot before the buzzer); a rack's last ball is the money ball.
+
+    Make chances: his skill (``contest_skill``) and form on the day, a little lower for
+    the first ball at a new spot and for the money balls, about 18 points lower from the
+    deep spots, and falling as his arms tire over the 27 balls (less with stamina). A
+    final adds a touch for composure. Running behind the clock, he hurries: quicker
+    releases, worse ones. ``t`` is each release (tenths of a second into the round), ``m``
+    whether it went in."""
     a = p.attributes
-    base = 0.24 + 0.022 * a.three_point + (0.005 * (a.composure - 10) if final else 0)
-    money_rack = rng.randrange(5)
-    racks, deep = [], []
-    shots = 0
-    for r in range(5):
-        rack = []
-        for b in range(5):
-            tired = 0.004 * shots                         # the 70 seconds take their toll
-            value = 2 if (r == money_rack or b == 4) else 1
-            rack.append(value if rng.random() < max(0.05, base - tired) else 0)
-            shots += 1
-        racks.append(rack)
-        if r in (1, 2):                                   # deep balls between racks 2-3 and 3-4
-            deep.append(3 if rng.random() < max(0.03, base - 0.15 - 0.004 * shots) else 0)
-            shots += 1
+    base = contest_skill(p, pct) + rng.gauss(0, 0.035)               # hot or cold tonight
+    if final:
+        base += 0.004 * (a.composure - 10)
+    tire = 0.0026 * (1.3 - 0.03 * a.stamina)
+    rhythm = BALL_GAP + tempo(p) + rng.gauss(0, 0.1)
+    if money_rack is None:
+        money_rack = money_rack_choice(p)
+    racks = [[0] * 5 for _ in range(5)]
+    deep = [0, 0]
+    stations = [(st, b) for st in COURSE for b in range(5 if st[0] == "rack" else 1)]
+
+    def time_left_needed(i: int) -> float:       # at normal pace, from ball i's release to the last
+        need, prev = 0.0, stations[i][0]
+        for st, b in stations[i + 1:]:
+            need += rhythm if b else MOVE_GAP[(prev[0], st[0])]
+            prev = st
+        return need
+
+    t, times, made_s, shots = 0.0, [], [], 0
+    prev = None
+    for i, (st, b) in enumerate(stations):
+        if prev is None:
+            gap = FIRST_RELEASE
+        elif b:
+            gap = rhythm + rng.gauss(0, 0.1)
+        else:
+            gap = MOVE_GAP[(prev[0], st[0])] + rng.gauss(0, 0.15)
+        hurry = t + gap + time_left_needed(i) > seconds - 0.3
+        if hurry:
+            gap *= 0.85
+        gap = max(MIN_GAP if b else 2.4, gap) if prev is not None else gap
+        t = round(t + gap, 1)
+        if t > seconds:                            # the buzzer: the rest stay on the racks
+            break
+        value = ball_value(st, b, money_rack)
+        chance = base - tire * shots - (0.03 if b == 0 else 0) - (0.05 if hurry else 0)
+        if st[0] == "deep":
+            chance -= 0.18
+        elif value == 2:
+            chance -= 0.01
+        made = rng.random() < max(0.04, min(0.92, chance))
+        if made:
+            if st[0] == "deep":
+                deep[st[1]] = 3
+            else:
+                racks[st[1]][b] = value
+        times.append(int(round(t * 10)))
+        made_s.append("1" if made else "0")
+        shots += 1
+        prev = st
     return {"racks": racks, "deep": deep, "money_rack": money_rack,
-            "points": sum(map(sum, racks)) + sum(deep)}
+            "points": sum(map(sum, racks)) + sum(deep), "t": times, "m": "".join(made_s)}
 
 
-def _shootoff(league, ids, rng, final):
-    """Tied shooters each shoot one more rack until one is ahead; returns them ordered."""
-    rounds = []
-    while True:
-        res = {}
-        for pid in ids:
-            p = league.players[pid]
-            base = 0.24 + 0.022 * p.attributes.three_point
-            res[pid] = sum((2 if b == 4 else 1) for b in range(5) if rng.random() < base)
-        rounds.append(res)
-        best = max(res.values())
-        if sum(1 for v in res.values() if v == best) == 1 or len(rounds) >= 6:
-            return sorted(ids, key=lambda x: -res[x]), rounds
+def expand_round(rec: dict) -> dict:
+    """A stored round (``{"mr": money rack, "t": [...], "m": "1011..."}``) back to racks,
+    deep shots and points."""
+    mr = rec["mr"]
+    racks, deep = [[0] * 5 for _ in range(5)], [0, 0]
+    stations = [(st, b) for st in COURSE for b in range(5 if st[0] == "rack" else 1)]
+    for (st, b), m in zip(stations, rec["m"]):
+        if m == "1":
+            if st[0] == "deep":
+                deep[st[1]] = 3
+            else:
+                racks[st[1]][b] = ball_value(st, b, mr)
+    return {"racks": racks, "deep": deep, "money_rack": mr, "points": sum(map(sum, racks)) + sum(deep)}
+
+
+def shots_of(rec: dict) -> list[dict]:
+    """Every ball a stored round shot: station, ball, value, release time (s), made."""
+    stations = [(st, b) for st in COURSE for b in range(5 if st[0] == "rack" else 1)]
+    return [{"kind": st[0], "spot": st[1], "ball": b, "value": ball_value(st, b, rec["mr"]),
+             "t": t / 10, "made": m == "1"}
+            for (st, b), t, m in zip(stations, rec["t"], rec["m"])]
+
+
+def _season_pct(league, pid, totals) -> Optional[float]:
+    t = totals.get(pid)
+    if not t or not t.get("tpa"):
+        return None
+    return (t["tpm"] + 0.36 * 100) / (t["tpa"] + 100)
+
+
+def run_contest(league: League, field: list[int], rng: random.Random, totals: Optional[dict] = None) -> dict:
+    """The whole contest, shot by shot: round 1 for everyone (the top seed shoots last),
+    the best three to the final (worst first-round score shoots first), 30-second
+    shoot-offs for a tie at the cut or for the title. Returns the results the All-Star
+    screen shows and ``record``, everything needed to watch it again."""
+    totals = totals or {}
+    pct = {pid: _season_pct(league, pid, totals) for pid in field}
+    players = league.players
+
+    def info(pid):
+        p = players[pid]
+        return {"p": pid, "name": p.name, "team": league.teams[p.team_id].abbreviation if p.team_id in league.teams else "FA",
+                "num": p.jersey_number, "pos": p.position.value, "ca": p.current_ability}
+
+    record = {"v": 1, "field": [info(pid) for pid in field], "rounds": []}
+
+    def shoot(stage: str, ids: list[int], final: bool, seconds: float) -> dict[int, dict]:
+        res = {pid: shoot_round(players[pid], rng, final=final, pct=pct[pid], seconds=seconds) for pid in ids}
+        record["rounds"].append({"stage": stage, "seconds": seconds, "shooters": [
+            {"p": pid, "mr": res[pid]["money_rack"], "t": res[pid]["t"], "m": res[pid]["m"]} for pid in ids]})
+        return res
+
+    def shootoff(stage: str, ids: list[int], final: bool):
+        rounds = []
+        while True:
+            res = shoot(stage, ids, final, SHOOTOFF_SECONDS)
+            pts = {pid: r["points"] for pid, r in res.items()}
+            rounds.append(pts)
+            best = max(pts.values())
+            if sum(1 for v in pts.values() if v == best) == 1 or len(rounds) >= 5:
+                # (five ties running: the better first try takes it, then the order they shot in)
+                ranked = sorted(ids, key=lambda x: (-pts[x], -rounds[0][x], ids.index(x)))
+                return ranked, rounds
+
+    order1 = list(reversed(field))
+    first = {pid: _summary(r) for pid, r in shoot("first", order1, False, ROUND_SECONDS).items()}
+    order = sorted(field, key=lambda x: (-first[x]["points"], field.index(x)))
+    finalists = order[:3]
+    cut = first[order[min(2, len(order) - 1)]]["points"]
+    tied = [pid for pid in order if first[pid]["points"] == cut]
+    shootoffs = []
+    if len(tied) > 1 and len(order) > 3 and first[order[3]]["points"] == cut:
+        above = [pid for pid in order if first[pid]["points"] > cut]
+        ranked, rounds = shootoff("first-shootoff", tied, False)
+        finalists = above + ranked[:3 - len(above)]
+        shootoffs.append({"stage": "first round", "players": tied, "rounds": rounds})
+    final_order = sorted(finalists, key=lambda x: (first[x]["points"], -field.index(x)))
+    final = {pid: _summary(r) for pid, r in shoot("final", final_order, True, ROUND_SECONDS).items()}
+    forder = sorted(final_order, key=lambda x: (-final[x]["points"], final_order.index(x)))
+    top = final[forder[0]]["points"]
+    tied = [pid for pid in forder if final[pid]["points"] == top]
+    if len(tied) > 1:
+        ranked, rounds = shootoff("final-shootoff", tied, True)
+        forder = ranked + [pid for pid in forder if pid not in ranked]
+        shootoffs.append({"stage": "final", "players": tied, "rounds": rounds})
+    record["winner"] = forder[0]
+    return {"first": first, "final": final, "finalists": finalists, "final_order": forder,
+            "winner": forder[0], "shootoffs": shootoffs, "record": record}
+
+
+def _summary(r: dict) -> dict:
+    return {"racks": r["racks"], "deep": r["deep"], "money_rack": r["money_rack"], "points": r["points"],
+            "shots": len(r["t"]), "time": r["t"][-1] / 10 if r["t"] else 0.0}
 
 
 def _three(league, st, rng) -> str:
     c = st.get("three")
     if not c or len(c["field"]) < 4:
         return ""
-    first = {pid: shoot_round(league.players[pid], rng) for pid in c["field"]}
-    order = sorted(first, key=lambda x: -first[x]["points"])
-    finalists = order[:3]
-    cut = first[order[2]]["points"]
-    tied = [pid for pid in order if first[pid]["points"] == cut]
-    shootoffs = []
-    if len(tied) > 1 and len(order) > 3 and first[order[3]]["points"] == cut:
-        above = [pid for pid in order if first[pid]["points"] > cut]
-        ranked, rounds = _shootoff(league, tied, rng, False)
-        finalists = above + ranked[:3 - len(above)]
-        shootoffs.append({"stage": "first round", "players": tied, "rounds": rounds})
-    final = {pid: shoot_round(league.players[pid], rng, final=True) for pid in finalists}
-    forder = sorted(final, key=lambda x: -final[x]["points"])
-    top = final[forder[0]]["points"]
-    tied = [pid for pid in forder if final[pid]["points"] == top]
-    if len(tied) > 1:
-        ranked, rounds = _shootoff(league, tied, rng, True)
-        forder = ranked + [pid for pid in forder if pid not in ranked]
-        shootoffs.append({"stage": "final", "players": tied, "rounds": rounds})
+    totals, _, _ = _season(league)
+    res = run_contest(league, c["field"], rng, totals)
+    first, final, forder = res["first"], res["final"], res["final_order"]
     c.update({"first": {str(k): v for k, v in first.items()}, "final": {str(k): v for k, v in final.items()},
-              "finalists": finalists, "winner": forder[0], "shootoffs": shootoffs})
+              "finalists": res["finalists"], "winner": res["winner"], "shootoffs": res["shootoffs"],
+              "record": res["record"]})
+    order = sorted(first, key=lambda x: -first[x]["points"])
     w = league.players[forder[0]]
     line = (f"Three-Point Contest: {w.name} wins with {final[w.id]['points']} in the final "
             f"(" + ", ".join(f"{league.players[pid].name} {final[pid]['points']}" for pid in forder[1:]) + ").")
     body = [line, "First round: " + ", ".join(f"{league.players[pid].name} {first[pid]['points']}" for pid in order)]
-    _news(league, "allstar", f"{w.name} wins the Three-Point Contest", body)
+    _news(league, "allstar", f"{w.name} wins the Three-Point Contest", body, watch_url=contest_url(league.season))
     return line
+
+
+def contest_url(season: int) -> str:
+    return f"/api/replay/{REPLAY_IDS['three']}?season={season}"
+
+
+def contest_record(league: League, season: Optional[int] = None) -> Optional[dict]:
+    """A season's Three-Point Contest, shot by shot (None: not held yet, or played before
+    contests were recorded)."""
+    if season is None or season == league.season:
+        st = league.all_star
+        if st and st.get("season") == league.season:
+            rec = (st.get("three") or {}).get("record")
+            if rec:
+                return rec
+        if season is not None:
+            return None
+    for h in league.history:
+        if h.get("season") == season and h.get("all_star"):
+            return h["all_star"].get("three_point_record")
+    return None
 
 
 _RUN = {"returns1": _returns, "returns2": _returns, "returns3": _returns, "starters": _starters,
@@ -560,6 +743,8 @@ def season_summary(league: League) -> Optional[dict]:
         w = st["three"]["winner"]
         out["three_point_champion"] = w
         out["three_point_champion_name"] = league.players[w].name
+        if st["three"].get("record"):                  # shot by shot (about 2 KB): watchable later
+            out["three_point_record"] = st["three"]["record"]
     r = st.get("rising", {}).get("result")
     if r:
         out["rising_stars_mvp"] = r["mvp"]
@@ -693,7 +878,8 @@ def view(league: League) -> dict:
         c = st["three"]
         out["three"] = {"field": [row(p) for p in c["field"]], "winner": c.get("winner"),
                         "first": c.get("first"), "final": c.get("final"), "finalists": c.get("finalists"),
-                        "shootoffs": c.get("shootoffs", [])}
+                        "shootoffs": c.get("shootoffs", []),
+                        "watch_url": contest_url(league.season) if c.get("record") else None}
     if st.get("game"):
         out["game"] = st["game"]
     out["past"] = _past(league)
@@ -709,5 +895,6 @@ def _past(league: League) -> list[dict]:
                         "three_point_champion": a.get("three_point_champion"),
                         "three_point_champion_name": a.get("three_point_champion_name"),
                         "rising_stars_mvp": a.get("rising_stars_mvp"),
-                        "rising_stars_mvp_name": a.get("rising_stars_mvp_name")})
+                        "rising_stars_mvp_name": a.get("rising_stars_mvp_name"),
+                        "three_point_watch_url": contest_url(h["season"]) if a.get("three_point_record") else None})
     return out

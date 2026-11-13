@@ -7,6 +7,7 @@
     python -m hoopsim play   [--team ABBR] [--load save.db]   # manage a team yourself
     python -m hoopsim watch  [--home ABBR --away ABBR] [--possessions 40]   # spatial prototype in a browser
     python -m hoopsim watch --full [--quarter 4]   # a full spatial game (or one quarter of it)
+    python -m hoopsim watch --contest [--load save.db] [--season 2025]   # a Three-Point Contest
     python -m hoopsim web    [--load save.db] [--port 8000]   # play as GM in your browser
 """
 from __future__ import annotations
@@ -275,6 +276,8 @@ def cmd_watch(args) -> None:
 
     anim = "embed" if getattr(args, "animated", False) else None      # 3D: carry the animated players in the page
     league = load_league(args.load) if args.load else generate_league(seed=args.seed)
+    if getattr(args, "contest", False):
+        return _watch_contest(args, league, anim)
     by_abbr = {t.abbreviation.lower(): t.id for t in league.teams.values()}
     ids = sorted(league.teams)
     home, away = ids[0], ids[1]
@@ -315,6 +318,39 @@ def cmd_watch(args) -> None:
     path = write_html(viewer_data(game), args.out, animation=anim)
     print(f"{a.abbreviation} {game.score['away']} @ {h.abbreviation} {game.score['home']} "
           f"after {args.possessions} half-court possessions -> {path.resolve()}")
+    if not args.no_open:
+        webbrowser.open(Path(path).resolve().as_uri())
+
+
+def _watch_contest(args, league, anim) -> None:
+    """A Three-Point Contest page: the saved league's (this season's, or --season's), or
+    else one shot now with the league's eight best shooters (by rating, and 3P% if the
+    season has started), on --seed."""
+    import webbrowser
+    from pathlib import Path
+
+    from . import allstar
+    from .spatial.contest import page_data
+    from .spatial.export import write_html
+
+    record = allstar.contest_record(league, args.season) if args.load else None
+    season = args.season or league.season
+    if record is None:
+        if args.load and args.season:
+            raise SystemExit(f"no recorded Three-Point Contest for {args.season} in that save")
+        from .stats import season_totals
+        totals = season_totals(league)
+        def shooter(p):
+            t = totals.get(p.id) or {}
+            pct = allstar._season_pct(league, p.id, totals) if t.get("tpa") else None
+            return allstar.contest_skill(p, pct)
+        field = sorted((p for p in league.players.values() if p.team_id is not None and not p.retired),
+                       key=lambda p: -shooter(p))[:8]
+        record = allstar.run_contest(league, [p.id for p in field], random.Random(args.seed), totals)["record"]
+        print("(no contest recorded in this league yet: shot one now with its eight best shooters)")
+    path = write_html(page_data(record, season), args.out, animation=anim)
+    w = next(r for r in record["field"] if r["p"] == record["winner"])
+    print(f"Three-Point Contest {season}: {w['name']} ({w['team']}) wins -> {path.resolve()}")
     if not args.no_open:
         webbrowser.open(Path(path).resolve().as_uri())
 
@@ -375,6 +411,9 @@ def main() -> None:
     watch.add_argument("--animated", action="store_true",
                        help="embed the 3D view's animated players in the page (about 1.7 MB more)")
     watch.add_argument("--quarter", type=int, help="with --full: export just this period (5 = first overtime)")
+    watch.add_argument("--contest", action="store_true",
+                       help="the Three-Point Contest: a saved league's (--load), or one shot now by the best shooters")
+    watch.add_argument("--season", type=int, help="with --contest --load: that season's contest (default: this one)")
 
     web = sub.add_parser("web", help="play as general manager in your browser")
     web.add_argument("--load", help="open a saved game")

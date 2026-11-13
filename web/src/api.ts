@@ -172,4 +172,6 @@ export interface InboxItem {
   player_id?: number;
   game_ids?: number[];
   awards_season?: number;
+  replay_id?: number;        // an All-Star exhibition's recording
+  watch_url?: string;        // something to watch in the viewer (the Three-Point Contest)
 }

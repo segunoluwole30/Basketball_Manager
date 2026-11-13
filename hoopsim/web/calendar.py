@@ -109,7 +109,22 @@ def calendar_day(session, day: int) -> dict:
     base = season_start(lg.season)
     return {"day": int(day), "date": (base + timedelta(days=int(day))).isoformat(),
             "marks": _label_days(lg).get(int(day), []),
-            "games": [session._game_view(g) for g in games]}
+            "games": [session._game_view(g) for g in games], "watch": _weekend_watch(lg, int(day))}
+
+
+def _weekend_watch(lg, day: int) -> list[dict]:
+    """All-Star Weekend events on this day that can be watched: the Three-Point Contest
+    (from its shot-by-shot record) and the recorded exhibitions."""
+    from .. import allstar
+    ev = allstar.event_days(lg)
+    out = []
+    if ev.get("rising") == day and allstar.REPLAY_IDS["rising"] in lg.replays:
+        out.append({"label": "Rising Stars", "url": f"/api/replay/{allstar.REPLAY_IDS['rising']}"})
+    if ev.get("three") == day and allstar.contest_record(lg, lg.season):
+        out.append({"label": "Three-Point Contest", "url": allstar.contest_url(lg.season)})
+    if ev.get("game") == day and allstar.REPLAY_IDS["game"] in lg.replays:
+        out.append({"label": "All-Star Game", "url": f"/api/replay/{allstar.REPLAY_IDS['game']}"})
+    return out
 
 
 def sim_to(session, day: int) -> dict:
