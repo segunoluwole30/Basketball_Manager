@@ -211,7 +211,7 @@ head only), and each player leans toward one of them by an amount picked from hi
 `face` entry in a stored `look` overrides it). The mocap has no collarbone movement, so the
 viewer lifts the collarbone with a raised arm, which keeps the shoulder from pinching.
 
-The files (`spatial/assets/player.glb`, 1.18 MB, or `player_light.glb`, 0.71 MB, plus three.js r160's `GLTFLoader`,
+The files (`spatial/assets/player.glb`, 1.21 MB, or `player_light.glb`, 0.73 MB, plus three.js r160's `GLTFLoader`,
 `BufferGeometryUtils` and `SkeletonUtils` in `spatial/vendor/`, 0.15 MB, unmodified) are
 served by the web app at `/viewer-assets/` and fetched only the first time 3D is shown,
 and only the model the chosen level needs; nothing is added to the page itself. If they
