@@ -1224,12 +1224,22 @@ class GameSession:
                         row["look"] = dict(found[0].look)
         return data
 
-    def replay_page(self, game_id: int, live: bool = False) -> str:
+    def replay_page(self, game_id: int, live: bool = False, season: Optional[int] = None) -> str:
         """The match viewer for a recorded game (spatial engine, the user's team).
-        ``live``: spoiler-free (the box score appears at the final buzzer)."""
+        ``live``: spoiler-free (the box score appears at the final buzzer). The
+        Three-Point Contest (``allstar.REPLAY_IDS["three"]``) is built from its record,
+        this season's or ``season``'s, whatever the match engine."""
         from ..spatial.export import PLAYER_ASSETS_URL, build_html
         from ..spatial.season_game import replay_data
         lg = self._lg()
+        if int(game_id) == allstar.REPLAY_IDS["three"]:
+            from ..spatial.contest import page_data
+            record = allstar.contest_record(lg, season)
+            if record is None:
+                raise UserError("no record of that Three-Point Contest (it hasn't been held yet, or it was "
+                                "played before contests were recorded shot by shot)", 404)
+            data = page_data(record, season if season is not None else lg.season)
+            return build_html(self._viewer_builds(data), animation=PLAYER_ASSETS_URL)
         if int(game_id) >= allstar.EVENT_REPLAY_BASE:          # an All-Star Weekend exhibition
             data = allstar.replay(lg, int(game_id))
             if data is None:

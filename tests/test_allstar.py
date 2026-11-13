@@ -87,6 +87,13 @@ class AllStarTests(unittest.TestCase):
         cut = sorted((r["points"] for r in first.values()), reverse=True)[2]
         for pid in c["finalists"]:
             self.assertGreaterEqual(first[str(pid)]["points"], cut)
+        # shot by shot: the record behind the results, and a Watch link in the news
+        rec = c["record"]
+        self.assertEqual(rec["winner"], c["winner"])
+        for s in rec["rounds"][0]["shooters"]:
+            self.assertEqual(allstar.expand_round(s)["points"], first[str(s["p"])]["points"])
+        item = next(m for m in self.lg.inbox if m["title"].endswith("wins the Three-Point Contest"))
+        self.assertEqual(item["watch_url"], allstar.contest_url(self.lg.season))
 
     def test_shooting_rating_matters(self):
         lg = self.lg

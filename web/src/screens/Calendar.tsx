@@ -127,7 +127,7 @@ function CalendarBody({ data, team, setTeam, me }: { data: CalData; team: number
 
 function DayPanel({ day, data, me, onClose }: { day: number; data: CalData; me: number | null; onClose: () => void }) {
   const { act, busy } = useGame();
-  const f = useFetch<{ day: number; date: string; marks: string[]; games: GameView[] }>(`/api/calendar/day/${day}`);
+  const f = useFetch<{ day: number; date: string; marks: string[]; games: GameView[]; watch?: { label: string; url: string }[] }>(`/api/calendar/day/${day}`);
   const [box, setBox] = useState<number | null>(null);
   // "Go to this day" plays every day before it and stops at its start: its games, yours
   // included, are left to play (Next day), coach (Play live) or watch.
@@ -143,6 +143,10 @@ function DayPanel({ day, data, me, onClose }: { day: number; data: CalData; me: 
         {(d) => (
           <>
             {d.marks.map((m) => <p key={m} className="cal-mark-big">{m}</p>)}
+            {!!d.watch?.length && (
+              <p className="row gap wrap">{d.watch.map((w) => (
+                <a key={w.url} className="btn btn-small" href={w.url} target="_blank" rel="noopener">Watch: {w.label}</a>))}</p>
+            )}
             {!d.games.length && <Empty>No games.</Empty>}
             <ul className="games">
               {d.games.map((g) => {

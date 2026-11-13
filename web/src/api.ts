@@ -167,4 +167,6 @@ export interface InboxItem {
   offer?: { team_id: number; you_give: number[]; you_get: number[] };
   player_id?: number;
   game_ids?: number[];
+  replay_id?: number;        // an All-Star exhibition's recording
+  watch_url?: string;        // something to watch in the viewer (the Three-Point Contest)
 }

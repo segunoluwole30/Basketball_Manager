@@ -57,6 +57,9 @@ export function Inbox({ items }: { items: InboxItem[] }) {
                 <div className="inbox-body">
                   {m.body.map((line, i) => <p key={i}>{line}</p>)}
                   {m.kind === "offer" && <OfferItem m={m} />}
+                  {(m.watch_url || m.replay_id) && (
+                    <p><a className="btn btn-small" href={m.watch_url ?? `/api/replay/${m.replay_id}`} target="_blank" rel="noopener">Watch</a></p>
+                  )}
                   {m.kind === "results" && m.game_ids?.length ? (
                     <div className="row gap wrap">{m.game_ids.slice(-6).map((g) => <button key={g} className="btn btn-small btn-ghost" onClick={() => setBox(g)}>Box score #{g}</button>)}</div>
                   ) : null}

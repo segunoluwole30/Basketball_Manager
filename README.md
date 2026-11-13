@@ -1816,7 +1816,7 @@ weekend. Everything happens on its date as you sim:
 | 14 | **Rising Stars** teams and the **Three-Point Contest** field |
 | 3 | Injury replacements by the commissioner (a reserve moves into an injured starter's spot; injured shooters are replaced by the next in line) |
 | 2 (Fri) | **Rising Stars**: Rookies against Sophomores (a new league without both draws two teams of young players) |
-| 1 (Sat) | **Three-Point Contest**: five racks of five (the last ball of each rack is a 2-point money ball, one rack is all money balls) and two 3-point deep shots: 40 points at most. Eight shooters, the top three reach the final, ties go to a shoot-off. |
+| 1 (Sat) | **Three-Point Contest**, shot ball by ball (see below): five racks of five and two 3-point deep shots, 40 points at most in 70 seconds. Eight shooters, the top three reach the final, ties go to a 30-second shoot-off. **Watch** it in the match viewer. |
 | 0 (Sun) | **All-Star Game**: East against West, with its MVP |
 
 * **How players are chosen.**
@@ -1837,7 +1837,63 @@ weekend. Everything happens on its date as you sim:
   screen. `python -m hoopsim season` prints them with the awards.
 * **Calendar** marks the announcements and the weekend's events.
 * **API:** `GET /api/allstar`. Exhibition replays are served at `/api/replay/10000001` (the
-  game) and `/api/replay/10000002` (Rising Stars).
+  game) and `/api/replay/10000002` (Rising Stars); the Three-Point Contest at
+  `/api/replay/10000003?season=YYYY`.
+
+### The Three-Point Contest (`allstar.run_contest`, viewer: contest mode)
+
+**Format** (the NBA's, as of the 2025 contest). Five racks round the arc, corner to
+corner: corner, wing, top of the key, wing, corner. Each holds four 1-point balls and a
+2-point money ball (the last); one rack, the shooter's pick, is all money balls. Two
+"deep shots", a single ball each six feet behind the line, stand between the wings and the
+top, worth 3. The course is shot in order: rack 1, rack 2, deep shot, rack 3, deep shot,
+rack 4, rack 5: 27 balls, 16 + 4×2 + 5×2 + 2×3 = **40 points** at most, in **70 seconds**
+(a ball counts if it left his hands before the buzzer). Round 1: all eight, the top seed
+shooting last; the best three go to the final, lowest first-round score first. A tie for
+the last final place or for the title goes to a **30-second shoot-off** on the same course
+(again until someone is ahead).
+
+**Each ball.** A rack ball's make chance is the shooter's skill: half from his
+three-point rating (0.33 + 0.018 × rating), half from his real 3P% this season shrunk
+toward average (a 37% shooter rated 17 makes about 60% from a rack, nobody near him). Then: his
+form on the night (± about 3.5 points), a little lower for the first ball at a new spot
+(-3) and for money balls (-1), 18 points lower from the deep spots, falling as his arms
+tire over the 27 balls (about -6 by the end, less with stamina), and a touch of composure
+in the final. Time: about 1.4 s to the first release, his own rhythm between balls (about
+1.8-2.2 s; nobody quicker than 1.55), 3-4 s to the next station. Running behind the clock
+he hurries: quicker releases, 5 points worse. Each shooter always picks the same money
+rack (most the last corner).
+
+**Calibration** (fields rated like an All-Star field, many contests): round-one scores
+average about 22, 5th to 95th percentile about 15 to 30; winners average about 26-27, 10th
+to 90th percentile about 22 to 31, like the real contests of recent years (2019-2025
+winners scored 24-31). Shooters finish with a few seconds left, around 60-65 s.
+
+**The record.** Every ball is kept: per round and shooter, the money rack, each release
+(tenths of a second) and whether it went in, plus the field's names and teams (about
+2-3 KB a season). It lives in `league.all_star["three"]["record"]` and, once the season
+is over, in the season's history (`all_star.three_point_record`), so past contests can
+be watched too. Saves from before this have only the results: the All-Star screen still
+shows them, but there is no Watch link (the old simulation's random numbers can't be
+replayed).
+
+**Watching.** `hoopsim/spatial/contest.py` turns a record into viewer data, the same
+every time: one "possession" per shooter's round, ten frames a second, the shooter
+walking the arc and each ball going from the rack to his hands and up to the rim. The
+viewer's contest mode (`G.contest`) shows that end of the floor in 2D; the racks with the
+balls still on them (money balls striped, deep balls gold); a contest board in place of
+the scoreboard (round and shooter, his score out of 40, the 70-second clock, every ball on
+the course: made, missed, still to shoot); the standings round by round (no spoilers:
+later shooters show "–"); and the champion at the end. In 3D: racks and deep-shot stands
+with their balls, the animated player's catch and jump shot, the shot trail (green or
+red), the arena boards with the shooter and the score to beat. Play/pause, speed, Prev and
+Next shooter, and buttons to jump to the final or a shoot-off.
+
+* **Web:** **Watch** on the Three-Point Contest panel (League → All-Star), next to past
+  champions under past weekends, on the news item, and on the contest's calendar day.
+* **CLI:** `python -m hoopsim watch --contest --load my.db [--season 2025]` exports a saved
+  contest; without a recorded one (or without `--load`) it shoots one now with the
+  league's eight best shooters on `--seed`.
 
 ## Real leagues and the editor
 
