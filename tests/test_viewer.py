@@ -172,7 +172,7 @@ class AnimatedPlayersTests(unittest.TestCase):
         # fetched from the 3D switch only: no load at start-up, none from the 2D path
         self.assertEqual(page.count("loadPlayerRig(threeUrl)"), 2)   # definition + the one call, in loadBodies
         self.assertEqual(page.count("loadBodies();"), 2)           # on first showing 3D, and on picking Animated
-        self.assertIn('if (mode === "3d" && bodyPref !== "simple" && rigState === "idle") loadBodies();', page)
+        self.assertIn('if (mode === "3d" && !wantsSimple() && rigState === "idle") loadBodies();', page)
 
     def test_embed_option_carries_the_files(self):
         plain = build_html(self.data)
@@ -304,6 +304,75 @@ class AnimatedPlayersTests(unittest.TestCase):
         self.assertEqual((row["ht"], row["wt"], row["ws"]),
                          (known.physique.height_cm, known.physique.weight_kg, known.physique.wingspan_cm))
         self.assertNotIn("ht", out["away"]["players"][0])          # not in the league: sized by position
+
+    def test_player_ids_in_page_data(self):
+        """viewer_data lists each player's league id (half-court and full games), and leaves
+        what the legacy fingerprint hashes (the possessions) alone."""
+        from hoopsim.spatial.export import viewer_data
+        from hoopsim.spatial.fullgame import FullGame
+        league = generate_league(seed=5)
+        g = HalfCourtGame(league, 1, 2, random.Random(5))
+        g.play(2)
+        d = viewer_data(g)
+        self.assertEqual(d["possessions"], g.to_dict()["possessions"])
+        for side in ("home", "away"):
+            rows = d[side]["players"]
+            self.assertEqual(len(rows), 5)
+            for row in rows:
+                self.assertEqual(league.players[row["id"]].name, row["name"])
+        fg = FullGame(league, 1, 2, random.Random(1), record=True)
+        fg.run()
+        for kw in ({}, {"period": 2}):
+            d = viewer_data(fg, **kw)
+            for side in ("home", "away"):
+                ids = [row["id"] for row in d[side]["players"]]
+                self.assertEqual(ids, [s.p.id for s in fg.sides[side].roster])
+        self.assertNotIn('"id":', json.dumps(g.to_dict()["home"]))   # to_dict itself unchanged
+
+    def test_web_builds_by_id_with_name_fallback(self):
+        try:
+            from hoopsim.web.session import GameSession
+        except ImportError:
+            self.skipTest("web extras not installed")
+        import tempfile
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        session = GameSession(saves_dir=tmp.name)
+        session.new_game(seed=3, num_teams=4)
+        a, b = list(session.league.players.values())[:2]
+        b.first_name, b.last_name = a.first_name, a.last_name      # two players, one name
+        b.physique.height_cm = a.physique.height_cm + 7
+        a.look = {"hair": "bald"}
+        # by id: the right one, whatever the name and number in the replay say
+        data = {"home": {"players": [{"id": b.id, "num": a.jersey_number, "name": "Old Name", "pos": "PG", "ca": 90}]},
+                "away": {"players": [{"id": 999999, "num": 1, "name": a.name, "pos": "C", "ca": 90}]}}
+        out = session._viewer_builds(data)
+        self.assertEqual(out["home"]["players"][0]["ht"], b.physique.height_cm)
+        self.assertNotIn("look", out["home"]["players"][0])
+        self.assertNotIn("ht", out["away"]["players"][0])        # an id not in the league: no guessing by name
+        # an old replay (no ids): name, then number
+        data = {"home": {"players": [{"num": a.jersey_number, "name": a.name, "pos": "PG", "ca": 90}]}, "away": {}}
+        row = session._viewer_builds(data)["home"]["players"][0]
+        self.assertEqual(row["ht"], a.physique.height_cm)
+        self.assertEqual(row["look"], {"hair": "bald"})
+
+    def test_auto_fallback_is_not_permanent(self):
+        src = self.template
+        # an automatic drop to simple bodies is kept for a week, on the same renderer and screen
+        self.assertIn('const AUTO_SIMPLE_KEY = "hoopsim-bodies-auto", AUTO_SIMPLE_DAYS = 7;', src)
+        self.assertIn("age < AUTO_SIMPLE_DAYS * 864e5 && rec.gl === sig.gl && rec.screen === sig.screen", src)
+        self.assertIn("UNMASKED_RENDERER_WEBGL", src)
+        fall = src.split("function fallBackToSimple() {", 1)[1].split("\n  }\n", 1)[0]
+        self.assertNotIn('"hoopsim-bodies"', fall)              # the hand-made choice is not touched
+        self.assertNotIn("setBodyPref", fall)
+        # a choice by hand is kept for good, and replaces the automatic one
+        pref = src.split("function setBodyPref(v) {", 1)[1].split("\n  }\n", 1)[0]
+        self.assertIn('localStorage.setItem("hoopsim-bodies", v); localStorage.removeItem(AUTO_SIMPLE_KEY);', pref)
+        # every storage access for the players' setting can throw
+        lines = [ln for ln in src.splitlines() if "localStorage" in ln and ("hoopsim-bodies" in ln or "AUTO_SIMPLE_KEY" in ln)]
+        self.assertEqual(len(lines), 5)                          # read, set by hand, read/drop/write the fallback
+        for ln in lines:
+            self.assertIn("try", ln, ln)
 
     def test_licences_recorded(self):
         notes = (PLAYER_ASSETS["player.glb"].parent / "LICENSES.md").read_text(encoding="utf-8")

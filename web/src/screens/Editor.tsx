@@ -110,6 +110,7 @@ function PlayerEditor({ id, onSaved }: { id: number; onSaved?: () => void }) {
           if (Object.keys(ch).length) diff[b] = ch;
         }
         if (s.contract && orig.contract && JSON.stringify(s.contract) !== JSON.stringify(orig.contract)) diff.contract = s.contract;
+        if (JSON.stringify(s.look ?? null) !== JSON.stringify(orig.look ?? null)) diff.look = s.look ?? null;
         if (s.heal) diff.heal = true;
         const dirty = Object.keys(diff).length > 0;
         const save = async () => {
@@ -190,6 +191,9 @@ function PlayerEditor({ id, onSaved }: { id: number; onSaved?: () => void }) {
                 </div>
               ))}
             </div>
+            <h3>Look in 3D <span className="muted small">(parts left on "From name" are picked from his name)</span></h3>
+            <LookEditor look={s.look ?? null} limits={L.look} changed={JSON.stringify(s.look ?? null) !== JSON.stringify(orig.look ?? null)}
+              onChange={(v) => set("look", v)} />
             {s.contract && (
               <>
                 <h3>Contract</h3>
@@ -223,5 +227,72 @@ function TeamOrFree({ value, onChange }: { value: number | null; onChange: (v: n
       <option value="">Free agent</option>
       {teams.map((t: any) => <option key={t.id} value={t.id}>{t.name}</option>)}
     </select>
+  );
+}
+
+// The 3D viewer's look for a player (see lookOf in hoopsim/spatial/viewer.html). Each part
+// can be left to the viewer ("From name": it is picked from his name) or set here.
+type Look = Record<string, any>;
+const LOOK_LABELS: Record<string, string> = {
+  short: "Short", fade: "Fade", bald: "Bald", afro: "Afro", locs: "Locs", flattop: "Flat top", bun: "Bun",
+  L: "Left", R: "Right", both: "Both", white: "White", black: "Black", team: "Team colour",
+};
+const AUTO = "__auto", NONE = "__none", CUSTOM = "__custom";
+
+function LookEditor({ look, limits, changed, onChange }: {
+  look: Look | null; limits: { hair: string[]; sides: string[]; colours: string[] }; changed: boolean;
+  onChange: (v: Look | null) => void;
+}) {
+  const cur: Look = look ?? {};
+  const has = (k: string) => Object.prototype.hasOwnProperty.call(cur, k);
+  const put = (k: string, v: any, set: boolean) => {
+    const next: Look = { ...cur };
+    if (set) next[k] = v; else delete next[k];
+    onChange(Object.keys(next).length ? next : null);
+  };
+  const choice = (k: string, options: [string, string][], toValue: (o: string) => any, fromValue: (v: any) => string) => (
+    <select value={has(k) ? fromValue(cur[k]) : AUTO} aria-label={`Look: ${k}`}
+      onChange={(e) => put(k, toValue(e.target.value), e.target.value !== AUTO)}>
+      <option value={AUTO}>From name</option>
+      {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+    </select>
+  );
+  const colour = (k: string, allowNone = false) => {
+    const v = has(k) ? cur[k] : undefined;
+    const custom = typeof v === "string" && v.startsWith("#");
+    return (
+      <span className="row gap">
+        <select value={!has(k) ? AUTO : v === null ? NONE : custom ? CUSTOM : v} aria-label={`Look: ${k}`}
+          onChange={(e) => {
+            const o = e.target.value;
+            put(k, o === NONE ? null : o === CUSTOM ? (custom ? v : "#c8372d") : o, o !== AUTO);
+          }}>
+          <option value={AUTO}>From name</option>
+          {allowNone && <option value={NONE}>None</option>}
+          {limits.colours.map((c) => <option key={c} value={c}>{LOOK_LABELS[c] ?? c}</option>)}
+          <option value={CUSTOM}>Custom…</option>
+        </select>
+        {custom && <input type="color" value={v} aria-label={`Look: ${k} colour`} onChange={(e) => put(k, e.target.value, true)} />}
+      </span>
+    );
+  };
+  const sides: [string, string][] = [[NONE, "None"], ...limits.sides.map((x): [string, string] => [x, LOOK_LABELS[x] ?? x])];
+  const side = (k: string) => choice(k, sides, (o) => (o === NONE ? null : o), (v) => (v === null ? NONE : v));
+  return (
+    <div className={`editor-fields editor-look ${changed ? "changed" : ""}`}>
+      <label>Hair {choice("hair", limits.hair.map((h): [string, string] => [h, LOOK_LABELS[h] ?? h]), (o) => o, (v) => v)}</label>
+      <label>Hair colour {colour("hairColor")}</label>
+      <label>Beard {choice("beard", [["yes", "Beard"], ["no", "Clean-shaven"]], (o) => o === "yes", (v) => (v ? "yes" : "no"))}</label>
+      <label>Headband {colour("band", true)}</label>
+      <label>Arm sleeve {side("sleeve")}</label>
+      <label>Leg sleeves {side("leg")}</label>
+      <label>Wristbands {side("wrist")}</label>
+      <label>Sleeves and bands {colour("gear")}</label>
+      <label>Shoes {colour("shoes")}</label>
+      <label>&nbsp;
+        <button type="button" className="btn btn-small" disabled={!look} onClick={() => onChange(null)}
+          title="Clear the stored look: every part is picked from his name again">Use default</button>
+      </label>
+    </div>
   );
 }

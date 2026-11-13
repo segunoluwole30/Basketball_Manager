@@ -55,7 +55,8 @@ def finish_spatial(fg: FullGame, rng: random.Random, record: bool) -> GameSim:
     sim = fg.result
     replay = None
     if record:
-        replay = zlib.compress(json.dumps(fg.to_dict(), separators=(",", ":")).encode(), 9)
+        from .export import viewer_data
+        replay = zlib.compress(json.dumps(viewer_data(fg), separators=(",", ":")).encode(), 9)
     return GameSim(sim.result, sim.box_score, sim.play_by_play, list(sim.injuries), replay)
 
 

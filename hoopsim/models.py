@@ -259,6 +259,10 @@ class Player:
     draft_pick: Optional[int] = None   # overall pick; None = undrafted
     career: list[dict] = field(default_factory=list)  # one stat line per season (see stats.py)
     tendencies: Optional[Tendencies] = None             # derived from attributes if not given
+    # How he looks in the 3D viewer, as set in the editor (hair, hairColor, beard, band,
+    # sleeve, leg, wrist, gear, shoes; any part left out is picked from his name).
+    # None: all of it picked from his name. Checked by editor.clean_look.
+    look: Optional[dict] = None
 
     def __post_init__(self) -> None:
         if self.tendencies is None:
@@ -322,6 +326,7 @@ class Player:
             "draft_pick": self.draft_pick,
             "career": self.career,
             "tendencies": self.tendencies.to_dict(),
+            **({"look": dict(self.look)} if self.look else {}),
         }
 
     @classmethod
@@ -348,6 +353,7 @@ class Player:
             draft_pick=d.get("draft_pick"),
             career=list(d.get("career", [])),
             tendencies=Tendencies.from_dict(d["tendencies"]) if d.get("tendencies") else None,
+            look=dict(d["look"]) if isinstance(d.get("look"), dict) and d["look"] else None,
         )
 
 

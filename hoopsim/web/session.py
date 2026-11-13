@@ -1125,20 +1125,30 @@ class GameSession:
 
     def _viewer_builds(self, data: dict) -> dict:
         """Give the viewer each player's real build (height and wingspan in cm, weight in kg)
-        for its 3D bodies. Recordings only name the players, so they are looked up in the
-        league by name (and number, where two share a name); anyone no longer in the league
-        is left for the viewer to size by position."""
+        and the look set for him in the editor, for its 3D bodies (recordings are unchanged:
+        this is looked up when the page is served). Players are found by their league id;
+        replays saved before ids were recorded only name them, so those are found by name
+        (and number, where two share a name). Anyone no longer in the league is left for
+        the viewer to size by position and dress by name."""
+        lg = self._lg()
         by_name: dict[str, list] = {}
-        for p in self._lg().players.values():
+        for p in lg.players.values():
             by_name.setdefault(p.name, []).append(p)
         for side in ("home", "away"):
             for row in (data.get(side) or {}).get("players", []):
-                found = by_name.get(row.get("name"), [])
-                if len(found) > 1:
-                    found = [p for p in found if p.jersey_number == row.get("num")] or found
+                pid = row.get("id")
+                if isinstance(pid, int) and not isinstance(pid, bool):
+                    p = lg.players.get(pid)
+                    found = [p] if p is not None else []
+                else:
+                    found = by_name.get(row.get("name"), [])
+                    if len(found) > 1:
+                        found = [p for p in found if p.jersey_number == row.get("num")] or found
                 if found:
                     ph = found[0].physique
                     row.update(ht=ph.height_cm, wt=ph.weight_kg, ws=ph.wingspan_cm)
+                    if found[0].look:
+                        row["look"] = dict(found[0].look)
         return data
 
     def replay_page(self, game_id: int, live: bool = False) -> str:
