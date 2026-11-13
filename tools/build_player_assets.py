@@ -63,6 +63,9 @@ CLIPS = {
     "contest":      ("13_10", 470, 670, "shot", dict(marks=dict(release=545), desc="reach up on tiptoe (one hand)")),
     "block":        ("14_07", 1700, 1800, "shot", dict(marks=dict(gather=1708, release=1744, land=1780), desc="jump up to grab")),
     "rebound":      ("14_07", 1560, 1676, "shot", dict(marks=dict(gather=1578, release=1624, land=1660), ball="both", desc="jump up to grab")),
+    # hand-keyed on mocap: the jump is captured, the left arm is brought down for a one-hand finish
+    "dunk":         ("14_07", 1560, 1676, "shot", dict(marks=dict(gather=1578, release=1624, land=1660), ball="R", pose="dunk",
+                                                       desc="jump up to grab, left arm lowered by hand")),
     "steal":        ("15_06", 110, 290, "shot", dict(marks=dict(release=181), desc="lean forward, reach for")),
     "plant":        ("127_05", 40, 170, "shot", dict(marks=dict(release=110), desc="run to quick stop")),
     "fall":         ("90_18", 78, 215, "shot", dict(marks=dict(release=128), hold=True, desc="fall backwards (rug pull)")),
@@ -257,12 +260,13 @@ class Human:
                     i, x, y, z = line.split(); d[int(i)] = [float(x), float(y), float(z)]
             self.targets[key] = d
 
-    def shape(self, heavy=0.0):
+    def shape(self, heavy=0.0, face=None):
         """Every vertex (body, helpers and joint markers) of the player's body; heavy: 0..1
-        towards MakeHuman's heaviest muscular build."""
+        towards MakeHuman's heaviest muscular build; face: one of FACES for that face alone
+        (the standard body has an even mix of the three)."""
         t = self.targets
-        return (self.base + (t["african"] + t["asian"] + t["caucasian"]) / 3 + t["tall"] + 0.5 * t["ideal"]
-                + (1 - heavy) * 0.75 * t["muscle"] + heavy * t["heavy"])
+        mix = t[face] if face else (t["african"] + t["asian"] + t["caucasian"]) / 3
+        return (self.base + mix + t["tall"] + 0.5 * t["ideal"] + (1 - heavy) * 0.75 * t["muscle"] + heavy * t["heavy"])
 
     def joint(self, verts, name):
         return verts[self.rig["joints"][name]].mean(0)
@@ -489,6 +493,16 @@ def build_clip(name, spec, sk, load):
         line = pos[0] + (pos[-1] - pos[0]) * (np.arange(n + 1) / n)[:, None]
         if opt.get("hold"): line = np.repeat(pos[:1], n + 1, 0)
         pos = pos - line * [1, 0, 1]
+        if opt.get("pose") == "dunk":
+            g0, rel, land = (marks[k] - a for k in ("gather", "release", "land"))
+            for f in range(len(q)):
+                w = float(np.clip((f - g0) / max(1, rel - g0), 0, 1)) * float(np.clip((len(q) - 1 - f) / max(1, len(q) - 1 - land), 0, 1))
+                if w <= 0: continue
+                W, _ = pose_fk(sk, pos[f:f + 1], q[f:f + 1]); W = W[0]
+                aim(sk, W, "LeftArm", [0.45, -0.85, 0.3]); aim(sk, W, "LeftForeArm", [0.25, -0.5, 0.83])
+                aim(sk, W, "RightArm", [-0.12, 0.95, 0.3]); aim(sk, W, "RightForeArm", [-0.05, 0.9, 0.42])
+                q[f] = nlerp(q[f], world_to_local(sk, W), w * w * (3 - 2 * w))
+            q = continuous(q)
         meta["marks"] = {k: round((v - a) / SRC_FPS, 3) for k, v in marks.items()}
         if opt.get("ball"): meta["ball"] = opt["ball"]
         if opt.get("hold"): meta["hold"] = True
@@ -657,6 +671,11 @@ def ellipsoid(mesh, mat, c, r, weights, col=(1, 1, 1), lat0=-90, lat1=90, rows=7
 
 
 SKIN_TRIS = 5200                  # the bare skin left showing, after simplifying
+FACES = ("african", "asian", "caucasian")     # MakeHuman's three face (and head) shapes: morph targets face_a, face_b, face_c
+OUT_LIGHT = OUT.with_name("player_light.glb")
+LIGHT_SKIN_TRIS = 1800            # the light model: for phones and slow devices
+LIGHT_KEEP = {"jersey": 0.3, "shorts": 0.4, "socks": 0.3, "sleeve": 0.4, "leg": 0.4, "wrist": 0.6,
+              "hair": 0.5, "beard": 0.5, "headband": 0.5}
 TORSO = ("Hips", "LowerBack", "Spine", "Spine1", "Neck", "LeftShoulder", "RightShoulder")
 
 
@@ -683,7 +702,7 @@ class Body:
     what the kit hides cut away and the rest simplified. Built once from the standard shape;
     another shape (the heavy build) reuses its triangles, so it can be a morph target."""
 
-    def __init__(self, hu: Human, sk: Skeleton, verts):
+    def __init__(self, hu: Human, sk: Skeleton, verts, skin_tris=SKIN_TRIS):
         import pyfqmr
         self.hu, self.sk = hu, sk
         self.W = hu.weights(); self.dom = self.W.argmax(1)
@@ -757,7 +776,7 @@ class Body:
         tris = tris[~cov[tris].all(1)]
         used = np.unique(tris); remap = np.full(len(P), -1); remap[used] = np.arange(len(used))
         simp = pyfqmr.Simplify(); simp.setMesh(P[used], remap[tris])
-        simp.simplify_mesh(target_count=SKIN_TRIS, aggressiveness=4, preserve_border=True, verbose=False)
+        simp.simplify_mesh(target_count=skin_tris, aggressiveness=4, preserve_border=True, verbose=False)
         self.D, self.F, _ = simp.getMesh()
         self.src = used[nearest(self.D, P[used])]             # the body vertex each kept vertex stands for
         nrm = np.zeros_like(self.D)
@@ -902,7 +921,7 @@ def build_model(sk: Skeleton, body: Body, verts) -> Mesh:
             sel = slab(((dom == wK) | (dom == wF)) & (dist < 0.3), off @ shin, h, 0.05)
             return (an + shin * h, sx_, sy_, dist[sel].max() + pad, dist[sel].max() + pad, [(wF, 1)])
         m.loft("shoes", [shin_ring(h, pad) for h, pad in ((0.24, 0.02), (0.12, 0.035), (-0.02, 0.045))], sides=12, bulk=False)
-        shell0("kit", body.sock & np.isin(dom, [wK, wF]), 0.016, relax=2, col=WHITE)   # the sock
+        shell0("socks", body.sock & np.isin(dom, [wK, wF]), 0.016, relax=2)
         foot = np.isin(dom, [wF, wT]) & (P[:, 1] < an[1] + 0.05)
         fd = np.array([toe[0] - an[0], 0, toe[2] - an[2]]); fd /= np.linalg.norm(fd); side = np.cross((0, 1, 0), fd)
         s_ = (P[foot] - an) @ fd; heel, tip = s_.min() - 0.035, s_.max() + 0.045
@@ -948,6 +967,35 @@ def build_model(sk: Skeleton, body: Body, verts) -> Mesh:
     return m
 
 
+def lighten(meshes, keep):
+    """The same model with fewer triangles: each material named in ``keep`` (by its name or
+    the part before "_") is simplified to that fraction. ``meshes`` are the standard shape
+    and its other shapes, which share triangles; so do the results."""
+    import pyfqmr
+    base = meshes[0]; V = [np.array(m.v) for m in meshes]; out = [Mesh() for _ in meshes]
+    for mat, tris in base.tri.items():
+        t = np.array(tris); used = np.unique(t); remap = np.full(len(base.v), -1); remap[used] = np.arange(len(used))
+        frac = keep.get(mat, keep.get(mat.split("_")[0], 1.0))
+        if frac < 1 and len(t) > 80:
+            simp = pyfqmr.Simplify(); simp.setMesh(V[0][used], remap[t])
+            simp.simplify_mesh(target_count=int(len(t) * frac), aggressiveness=4, preserve_border=True, verbose=False)
+            D, F, _ = simp.getMesh(); near = used[nearest(D, V[0][used])]
+        else:
+            D, F, near = V[0][used], remap[t], used
+        uv = np.array([base.uv[i] for i in near], dtype=np.float64)
+        if mat == "jersey": uv[:, 0] %= 1.0                    # (put back across the seam below)
+        for k, o in enumerate(out):
+            pos = D + (V[k][near] - V[0][near]); ids = {}
+            def vert(i, shift=0):
+                if (i, shift) not in ids:
+                    ids[(i, shift)] = o.vert(pos[i], list(zip(base.j[near[i]], base.w[near[i]])), (uv[i, 0] + shift, uv[i, 1]), base.col[near[i]])
+                return ids[(i, shift)]
+            for f in F:
+                wrap = mat == "jersey" and np.ptp(uv[f, 0]) > 0.5
+                o.face(mat, *[vert(i, 1 if wrap and uv[i, 0] < 0.5 else 0) for i in f])
+    return out
+
+
 # ---------------------------------------------------------------- glTF
 class Glb:
     def __init__(self):
@@ -968,7 +1016,8 @@ class Glb:
         return len(self.acc) - 1
 
 
-def write_glb(path, sk, mesh, clips, extras, heavy=None):
+def write_glb(path, sk, mesh, clips, extras, morphs=()):
+    """morphs: [(name, per-vertex offsets, sparse)], the mesh's morph targets in order."""
     g = Glb(); F, U8, U16, I16 = 5126, 5121, 5123, 5122
     v, nrm = mesh.arrays()
     nodes = []
@@ -990,11 +1039,18 @@ def write_glb(path, sk, mesh, clips, extras, heavy=None):
                               U8, "VEC4", 34962, normalized=True),
              "JOINTS_0": g.add(np.array(mesh.j, dtype=np.uint8), U8, "VEC4", 34962),
              "WEIGHTS_0": g.add(np.array(mesh.w, dtype=np.float32), F, "VEC4", 34962)}
-    # one morph target, "bulk": the same mesh in MakeHuman's heaviest muscular build (the viewer
-    # sets it per player from his weight; a negative weight slims him)
-    bulk = None
-    if heavy is not None:
-        bulk = g.add((heavy.arrays()[0] - v).astype(np.float32), F, "VEC3", minmax=True)
+    targets = []
+    for _, delta, sparse in morphs:
+        delta = np.asarray(delta, dtype=np.float32)
+        if not sparse:
+            targets.append({"POSITION": g.add(delta, F, "VEC3", minmax=True)}); continue
+        rows = np.nonzero(np.abs(delta).max(1) > 1e-4)[0]     # only the vertices that move are stored
+        ia = g.add(rows.astype(np.uint16), U16, "SCALAR"); va = g.add(delta[rows], F, "VEC3")
+        g.acc.append({"componentType": F, "count": len(delta), "type": "VEC3",
+                      "min": [float(x) for x in delta.min(0)], "max": [float(x) for x in delta.max(0)],
+                      "sparse": {"count": len(rows), "indices": {"bufferView": g.acc[ia]["bufferView"], "componentType": U16},
+                                 "values": {"bufferView": g.acc[va]["bufferView"]}}})
+        targets.append({"POSITION": len(g.acc) - 1})
     mats, prims = [], []
     base = ["skin", "jersey", "shorts", "kit"]                # then the optional parts: hair styles, beard, accessories, shoes
     for name in base + [n for n in mesh.tri if n not in base]:
@@ -1002,7 +1058,7 @@ def write_glb(path, sk, mesh, clips, extras, heavy=None):
         idx = g.add(np.array(mesh.tri[name], dtype=np.uint16).reshape(-1), U16, "SCALAR", 34963)
         mats.append({"name": name, "pbrMetallicRoughness": {"baseColorFactor": [1, 1, 1, 1], "metallicFactor": 0, "roughnessFactor": 0.9}})
         prims.append({"attributes": attrs, "indices": idx, "material": len(mats) - 1})
-        if bulk is not None: prims[-1]["targets"] = [{"POSITION": bulk}]
+        if targets: prims[-1]["targets"] = targets
     nodes.append({"name": "Body", "mesh": 0, "skin": 0})
     nodes.append({"name": "Player", "children": [0, len(KEEP)]})
     anims = []
@@ -1020,7 +1076,7 @@ def write_glb(path, sk, mesh, clips, extras, heavy=None):
                                   "Motion: CMU Graphics Lab Motion Capture Database (mocap.cs.cmu.edu)"},
            "scene": 0, "scenes": [{"nodes": [len(KEEP) + 1]}], "nodes": nodes,
            "meshes": [dict({"name": "Body", "primitives": prims},
-                           **({"weights": [0.0], "extras": {"targetNames": ["bulk"]}} if bulk is not None else {}))],
+                           **({"weights": [0.0] * len(targets), "extras": {"targetNames": [n for n, _, _ in morphs]}} if targets else {}))],
            "materials": mats,
            "skins": [{"joints": list(range(len(KEEP))), "inverseBindMatrices": ibm, "skeleton": 0}],
            "animations": anims, "buffers": [{"byteLength": len(g.bin)}], "bufferViews": g.views, "accessors": g.acc,
@@ -1066,16 +1122,31 @@ def main(argv=None):
             if "side" in mm: mm["side"] = -mm["side"]
             clips[name + "_m"] = (t, mp.astype(np.float32), mq, mm)
     body = Body(hu, sk, verts)
-    mesh, heavy = build_model(sk, body, verts), build_model(sk, body, hu.shape(heavy=1.0))
+    shapes = [verts, hu.shape(heavy=1.0)] + [hu.shape(face=f) for f in FACES]
+    mesh, heavy, *faces = [build_model(sk, body, sh) for sh in shapes]
     waist = lambda sh: np.ptp(body.feet(sh)[body.is_torso & (np.abs(body.P0[:, 1] - sk.hip_height - 0.45) < 0.08), 0])
     bulk_girth = float(waist(hu.shape(heavy=1.0)) / waist(verts))             # how much thicker the heavy shape is
     L = lambda a, b: float(np.linalg.norm(sk.bindP[sk.idx[a]] - sk.bindP[sk.idx[b]]))
     arm = L("LeftArm", "LeftForeArm") + L("LeftForeArm", "LeftHand") + 0.62         # shoulder to fingertip
     span = 2 * float(sk.bindP[sk.idx["LeftArm"]][0]) + 2 * arm                     # with the arms straight out
-    extras = {"version": 3, "height": HEIGHT, "fps": FPS, "clips": {n: c[3] for n, c in clips.items()},
-              "parts": [n for n in mesh.tri if n not in ("skin", "jersey", "shorts", "kit")],
+    BASE = ("skin", "jersey", "shorts", "kit")
+    extras = {"version": 4, "height": HEIGHT, "fps": FPS, "clips": {n: c[3] for n, c in clips.items()},
+              "parts": [n for n in mesh.tri if n not in BASE], "detail": "full",
               "body": {"bulk_girth": round(bulk_girth, 3), "span": round(span, 3), "arm": round(arm, 3)}}
-    size = write_glb(Path(args.out), sk, mesh, clips, extras, heavy)
+    # morph targets. bulk: MakeHuman's heaviest muscular build (the viewer sets it per player
+    # from his weight; a negative weight slims him). face_a/b/c: each of its three face shapes
+    # against the even mix the model has: the head only, stored sparsely.
+    v0 = mesh.arrays()[0]
+    on_head = np.clip(np.array([sum(w for j, w in zip(js, ws) if KEEP[j] in ("Head", "Neck1")) for js, ws in zip(mesh.j, mesh.w)]), 0, 1)
+    morphs = [("bulk", heavy.arrays()[0] - v0, False)]
+    morphs += [("face_" + "abc"[k], (f.arrays()[0] - v0) * on_head[:, None], True) for k, f in enumerate(faces)]
+    size = write_glb(Path(args.out), sk, mesh, clips, extras, morphs)
+    # the light model: the same player with about 40% of the triangles and only the bulk shape
+    lbody = Body(hu, sk, verts, LIGHT_SKIN_TRIS)
+    lmesh, lheavy = lighten([build_model(sk, lbody, verts), build_model(sk, lbody, hu.shape(heavy=1.0))], LIGHT_KEEP)
+    lsize = write_glb(Path(args.out).with_name(OUT_LIGHT.name), sk, lmesh, clips, dict(extras, detail="light"),
+                      [("bulk", lheavy.arrays()[0] - lmesh.arrays()[0], False)])
+    print(f"{OUT_LIGHT.name}: {lsize / 1024:.0f} KB, {len(lmesh.v)} vertices, {sum(len(t) for t in lmesh.tri.values())} triangles")
     tris = sum(len(t) for t in mesh.tri.values())
     print(f"{args.out}: {size / 1024:.0f} KB, {len(mesh.v)} vertices, {tris} triangles, {len(KEEP)} joints, {len(clips)} clips")
     for n, c in clips.items():

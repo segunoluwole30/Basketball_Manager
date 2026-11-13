@@ -132,7 +132,7 @@ in; it changes ends with a quick dip once the ball is well over half court), **F
 from the last keeps the camera moving instead of cutting. Drag to turn, scroll to zoom,
 double-click to go back to the preset (the camera stays over the floor, out of the seats
 and under the roof). Keys in 3D: **1–4** pick a camera, **C** steps through them, **L**
-steps through the labels, **B** switches the players between Animated and Simple (see
+steps through the labels, **B** steps the players through Animated, Light and Simple (see
 *Animated players* below). Camera, labels and players are remembered. Add `?debug` to the page's
 address to reach the 3D view from the console as `window.hoopsim3D`, with frame timing
 and a seek helper. Without it, nothing is added to `window`. The court sits in an arena: team benches
@@ -158,10 +158,12 @@ to `export.build_html` for a 2D-only page), so replays and live games work offli
 **Animated players** (3D). In the browser interface the 3D view's players are one rigged
 human model (about 12,000 triangles as drawn, 23 joints), cloned per player with three.js's
 `SkeletonUtils`, tinted in team colours with the number on the jersey, and driven by
-motion-capture clips through an `AnimationMixer`. **Players: Animated | Simple** (key **B**,
-remembered) switches back to the simple bodies. The action cues below pick the clips:
+motion-capture clips through an `AnimationMixer`. **Players: Animated | Light | Simple**
+(key **B**, remembered): Light is the same animated player with about 40% of the triangles
+(its own file, `player_light.glb`), Simple the old low-poly bodies. The action cues below
+pick the clips:
 jump shot (gather, then release on the frame the ball leaves), free throw, layup, floater,
-hook, dunk and alley-oop (he carries the ball to the rim), chest and overhead pass, catch,
+hook, a one-hand dunk and the alley-oop (he carries the ball to the rim), chest and overhead pass, catch,
 contest (hand up), block, steal reach, rebound jump, screen, charge fall. Everything else is
 read off the frames: idle and defensive stance, walk/jog/sprint, dribbling standing and on
 the move (the ball bounces under the hand), defensive slides and backpedalling while facing
@@ -202,15 +204,22 @@ the kit is tucked in so it cannot show through. The shorts' legs, shoes and the 
 hair styles are generated and fitted by `tools/build_player_assets.py`.
 No real player's likeness is used.
 
-The files (`spatial/assets/player.glb`, 1.07 MB, plus three.js r160's `GLTFLoader`,
+Faces differ too: the model carries MakeHuman's three face shapes as morph targets (the
+head only), and each player leans toward one of them by an amount picked from his name (a
+`face` entry in a stored `look` overrides it). The mocap has no collarbone movement, so the
+viewer lifts the collarbone with a raised arm, which keeps the shoulder from pinching.
+
+The files (`spatial/assets/player.glb`, 1.17 MB, or `player_light.glb`, 0.72 MB, plus three.js r160's `GLTFLoader`,
 `BufferGeometryUtils` and `SkeletonUtils` in `spatial/vendor/`, 0.15 MB, unmodified) are
-served by the web app at `/viewer-assets/` and fetched only the first time 3D is shown;
-nothing is added to the page itself. If they fail to load, the view says so and keeps the
-simple bodies; if the device can't hold about 18 frames a second with them, it switches to
-Simple by itself (unless you picked Animated by hand). Exported pages
+served by the web app at `/viewer-assets/` and fetched only the first time 3D is shown,
+and only the model the chosen level needs; nothing is added to the page itself. If they
+fail to load, the view says so and keeps the simple bodies. Left to itself the viewer
+starts phones on Light, and if the device can't hold about 18 frames a second (judged
+over three seconds) it steps down a level, Animated to Light to Simple; a level you pick
+by hand stays. Exported pages
 (`python -m hoopsim watch`) keep the simple bodies and stay self-contained; add
 `--animated` (or `export.build_html(..., animation="embed")`) to carry the players inside
-the page, about 1.6 MB more. The motion is from the CMU Graphics Lab Motion Capture
+the page, about 1.7 MB more (the full model only: no Light there). The motion is from the CMU Graphics Lab Motion Capture
 Database (free for any use); `tools/build_player_assets.py` builds the model and cuts and
 retargets the clips. Sources, licences and the clip-by-clip list are in
 `spatial/assets/LICENSES.md`. Measured cost: about 0.6 ms of CPU per frame for ten animated
