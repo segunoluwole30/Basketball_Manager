@@ -1851,8 +1851,10 @@ How ratings are derived:
   steal, block and rebound percentages, defensive box plus/minus, size, dunk share.
   These z-scores are then scaled to the spread of generated leagues.
   * **Shot load.** The engines give shots to the best scorers, so usage rate is added to
-    the scoring ratings (half for threes). A 30%-usage star out-shoots a 15%-usage
-    spot-up shooter with the same percentages.
+    the scoring ratings (0.65 of its z-score, half that for threes). A 30%-usage star
+    out-shoots a 15%-usage spot-up shooter with the same percentages. The same ratings
+    also set how well he shoots, so the rest of the volume goes through the pass-first
+    tendency (2 points less per unit of load); see "Efficiency of the next tier".
   * **A soft top for scoring.** Other z-scores stop at ±2.8, but the scoring ones bend
     toward 3.6 past 2.0 (`soft_top`, the same curve as the engine's usage ceiling). With
     the hard clamp about 60 players had the same top scoring z-score; now the best
@@ -1876,12 +1878,15 @@ How ratings are derived:
 * **Level:** overall ability comes from impact (shrunk box plus/minus and minutes,
   with salary as a prior when there are few minutes). It is mapped onto the ability
   distribution of a generated league. A real league plays like a generated one (median
-  rostered ability 93, 90th percentile ~125), so the engines stay calibrated.
+  rostered ability 93, 90th percentile ~125), so the engines stay calibrated. The level
+  lands on the ratings other than the four scoring ones, which come from shooting and
+  shot load alone.
 * **Other attributes:**
   * potential from age;
   * shot tendencies as above; the passing (pass-first) tendency from assists for his
     share of the ball (assist rate over usage rate), so a star who scores and passes
-    isn't held back as a pass-first player; cutting from assisted shots at the rim;
+    isn't held back as a pass-first player, less 2 points per unit of shot load;
+    cutting from assisted shots at the rim;
   * injury proneness partly from games missed;
   * physique from the roster's height and weight;
   * salary rules approximately 2026-27 (cap $165M, tax $201M, minimum $1.27M, MLE
@@ -1903,7 +1908,9 @@ the engine's and is fixed (see "Star scoring" under the match engine; the table 
 from before it). With foul drawing, the soft top for scoring and the pass-first tendency
 (see "Foul drawing and the top scorers") the correlation is 0.885 and the top-60 bias
 +0.3; team wins against 2025-26 correlate 0.70 (mean miss 8.2) when 2025-26 wins are
-estimated from the players' win shares. (The minutes shape, which gave about 130 players 30+
+estimated from the players' win shares. With the efficiency fix (see "Efficiency of the
+next tier", six seasons) the correlation is 0.894, the bias −0.24 and team wins 0.75
+(mean miss 7.5). (The minutes shape, which gave about 130 players 30+
 minutes, is fixed: see "Minutes" below.)
 
 **Minutes** (`hoopsim/lineup.py` `plan_rotation`). The coach shares out the 240 minutes by
@@ -2331,7 +2338,7 @@ games and 15+ minutes; "top 10" are the real top 10 scorers):
 free-throw % 0.788 → 0.795 (the ball handlers who now draw more fouls shoot them better
 than the strong bigs who drew them before). The spatial engine is untouched.
 
-**Gaps that remain:**
+**Gaps that remain** (the first is narrowed in "Efficiency of the next tier" below):
 * **The next tier scores too efficiently.** The real 11th-30th scorers now get to the line
   as often as in life (6.2 a game), but their field-goal efficiency was already too high
   (eFG 0.569 against 0.544), so they score 1.7 points too many and the 28+ and 22+ counts
@@ -2345,6 +2352,68 @@ than the strong bigs who drew them before). The spatial engine is untouched.
 * Free throws for the top 10 are 6.7 a game against 7.8: the builder takes out the part
   of a star's free-throw rate that his usage explains, and in the engine his share is a
   little lower than his real usage.
+
+### Efficiency of the next tier
+
+The real 11th-30th scorers shot an eFG of 0.570 in the simulation against 0.544 in life,
+and the 31st-60th 0.563 against 0.545, while the top 10 (0.568 against 0.571) and the
+role players were about right.
+
+**Why.** In the NBA efficiency doesn't rise with usage: by real usage rate, eFG goes from
+0.59 (under 14%) to about 0.54 (over 26%). In the simulation it went the other way, 0.54
+to 0.57. Three things in the builder put a player's role into his shooting ratings, and
+the statistical engine turns every point of a shooting rating into more shots *and*
+about 0.6% more makes:
+* **The impact level.** Ratings are shifted to land on the ability that box plus/minus
+  gives, and the shift moved the shooting ratings with the rest. A high-impact player
+  was rated a better shooter than his percentages. Lowering the shot load did little
+  for that reason: the shift put the shooting points back.
+* **The shot load** (usage added to the scoring ratings) at full weight. Together with
+  the soft top, the 11th-30th scorers sat at 17-19 in every zone, a notch below the top
+  10, so their percentages came out like the top 10's.
+* **Volume inside the accuracy stats.** Finishing counted free throws per 36 minutes (now
+  the foul-drawing rating's job) and close range counted its attempts (the shot load's).
+
+**What changed (builder only):**
+* The four scoring ratings no longer take the impact shift: it goes to the other
+  ratings, so ability is unchanged.
+* The shot load is 0.65 (threes 0.33), down from 1.0 (0.5).
+* Finishing and close range are accuracy only (and dunks for finishing).
+* The volume the ratings no longer carry goes through the pass-first tendency: 2 points
+  less per unit of load (the z-score of log usage), so a 30%-usage scorer is about 4
+  points less pass-first than before and takes about 12% more of the shot weight.
+
+Tried and left out: lowering only the three-point load (gave volume to low-usage
+spot-up shooters), a softer top, and a clamp-aware shot-tendency fit (no change: the
+tendencies weren't the limit).
+
+**Real league against 2025-26** (statistical engine, six seasons, seeds 0-5; players with
+30+ games and 15+ minutes; tiers are real scoring ranks):
+
+| | 2025-26 | before | after |
+|---|---|---|---|
+| eFG, top 10 | 0.571 | 0.568 | 0.559 |
+| eFG, 11th-30th | 0.544 | 0.570 | 0.560 |
+| eFG, 31st-60th | 0.545 | 0.563 | 0.552 |
+| eFG, 61st-120th | 0.543 | 0.547 | 0.541 |
+| league eFG | 0.546 | 0.553 | 0.546 |
+| points per game: top 10 / 11th-30th | 28.8 / 24.0 | 26.0 / 25.6 | 26.6 / 25.1 |
+| players with 28+ / 22+ / 20+ | 5 / 26 / 44 | 7-13 / 34-36 / 40-47 | 8-10 / 27-32 / 39-42 |
+| points per game, correlation | | 0.885 | 0.894 |
+| top-60 scorers, points bias | | +0.19 | −0.24 |
+| top 10 assist men: assists per game | 8.3 | 7.6 | 7.45 |
+| team wins (from win shares), correlation / mean miss | | 0.71 / 8.25 | 0.75 / 7.5 |
+| team points per game | | 114.6 | 113.4-114.0 |
+
+Generated leagues don't use the builder and are unchanged; so is `python -m
+hoopsim.calibrate` (17/17). The engines are untouched.
+
+**Still open:** the 11th-30th scorers are 0.016 too efficient and the top 10 0.012 too
+little, and the 28+ count is 8-10 against 5. The rest of the gap is the engine's: the
+same ratings set a player's share of the shots and his accuracy, so a high-usage scorer
+with ordinary percentages can't be both. The pass-first tendency carries part of the
+volume, but it also steers assists (+5% of a passer's weight a point), which is why the
+assist men lose a little; a larger step cost more assists.
 
 ## Season loop (`hoopsim/season.py`)
 

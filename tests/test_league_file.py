@@ -467,3 +467,41 @@ class BuilderRatingTests(unittest.TestCase):
         self.assertGreater(tend(30, 16), 14)                  # a pass-first point guard
         self.assertLess(tend(30, 33), tend(30, 16))           # a star who scores and passes
         self.assertLess(tend(10, 30), 8)                      # a scorer
+
+    def test_scoring_ratings_do_not_take_the_impact_level(self):
+        # Two players with the same stats but different impact (ability target): the
+        # level goes into the other ratings, so the better one doesn't shoot better.
+        from hoopsim.models import ABILITY_ATTRIBUTES, Attributes, Position, compute_ability
+        z = dict.fromkeys(ABILITY_ATTRIBUTES, 0.0)
+        z.update(finishing=1.0, three_point=0.5)
+        spread = {n: (10.0, 3.0) for n in ABILITY_ATTRIBUTES}
+        lo = self.b.make_attributes(z, spread, Position.SG, 90)
+        hi = self.b.make_attributes(z, spread, Position.SG, 120)
+        for k in self.b.LOAD:
+            self.assertEqual(lo[k], hi[k])
+        self.assertGreater(hi["perimeter_defense"], lo["perimeter_defense"])
+        for target, a in ((90, lo), (120, hi)):
+            self.assertAlmostEqual(compute_ability(Attributes(**a), Position.SG), target, delta=2)
+
+    def test_scoring_accuracy_features_leave_out_volume(self):
+        # Free throws are foul drawing's and volume is the shot load's: finishing and
+        # close range only see how often the shots go in.
+        f = self.b.raw_features
+        base, line = self.player(), self.player()
+        line["stats"]["tot"]["fta"] *= 2
+        self.assertEqual(f(base)["finishing"], f(line)["finishing"])
+        many = self.player()
+        a, m = many["stats"]["zones"]["03_10"]
+        many["stats"]["zones"]["03_10"] = (2 * a, 2 * m)
+        self.assertAlmostEqual(f(base)["close_range"], f(many)["close_range"], delta=0.05)   # less shrunk only
+
+    def test_shot_load_also_lowers_the_pass_first_tendency(self):
+        a = dict.fromkeys(("finishing", "close_range", "mid_range", "three_point", "free_throw", "passing",
+                           "ball_handling", "vision", "speed", "strength", "basketball_iq"), 10)
+
+        def tend(load):
+            return self.b._tendencies({"stats": self.stats(), "position": "SF", "_load": load}, a)["passing"]
+        step = self.b.LOAD_PASSING
+        self.assertEqual(tend(0.0) - tend(2.0), round(2 * step))
+        self.assertEqual(tend(-1.0) - tend(0.0), round(step))
+        self.assertEqual(tend(50.0), 1)                        # clamped to the scale
