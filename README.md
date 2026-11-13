@@ -182,7 +182,11 @@ arm down. A defender contesting a shot points his raised hand at the ball the sa
 in the same manner: over the last third of a second it carries the ball up over the rim and
 down through it, holds the near edge of the rim for a moment, then lets go; in the air he
 drifts towards the rim until it is within his reach, and hangs briefly at the top. The
-first steps of a drive or cut give way to a shot that starts right after them. Clips cross-fade; a shooter turns to
+first steps of a drive or cut give way to a shot that starts right after them. A hook
+shot (taken standing, out of the post) is a one-hand shot's small hop turned side-on, left
+shoulder to the rim, with the arms posed by the viewer: the right arm sweeps nearly straight
+from out at his side up over his head, releases just past the top and follows through, and
+the left arm is held up between him and the rim. Clips cross-fade; a shooter turns to
 the rim, a passer to his receiver, a defender to his man. Movement is smoothed for the animated players. The replay moves players at ten positions
 a second and lets them reach full speed in a fifth of a second; drawn exactly, starts,
 stops and cuts look robotic. The drawn player follows his recorded position as a body

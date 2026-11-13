@@ -56,8 +56,8 @@ below into `.mocap-cache/` (gitignored).
 | `dribble_run` | 102_05 | basketball: running straight (with the ball) | one stride, looped |
 | `jumper` | 124_05 | basketball jump shot | also plays for fadeaways and heaves |
 | `free_throw` | 124_04 | basketball free throw | |
-| `layup` | 124_06 | basketball lay up | also plays, turned side-on, for hook shots |
-| `floater` | 124_03 | basketball shoot | one hand, small hop |
+| `layup` | 124_06 | basketball lay up | |
+| `floater` | 124_03 | basketball shoot | one hand, small hop; also plays, turned side-on with the arms posed by the viewer, for hook shots |
 | `pass` | 15_12 | basketball: dribble, lay-up shot, pass | the chest pass |
 | `lob_pass` | 15_12 | basketball: dribble, lay-up shot, pass | the overhead pass; also plays for inbounds |
 | `catch` (and the held-ball pose) | 34_01 | football: throw, catch (subject B) | a two-hand catch at the chest |
@@ -75,8 +75,8 @@ below into `.mocap-cache/` (gitignored).
 Not motion-captured as such (no free clip was found): the dunk, the hook shot, the screen
 and the block are the nearest captured motion adapted as noted above. The viewer also lifts
 the collarbone with a raised arm, which the mocap does not record, and re-poses a blocker's
-or contester's arm so the hand goes to the ball, and a dunker's so it goes to the rim (our
-own code, no further source).
+or contester's arm so the hand goes to the ball, a dunker's so it goes to the rim, and both arms of a
+hook shot (our own code, no further source).
 
 ## Not included
 

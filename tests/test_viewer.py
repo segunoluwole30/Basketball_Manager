@@ -456,6 +456,18 @@ console.log(JSON.stringify({ out, same: JSON.stringify(a) === JSON.stringify(b),
         self.assertIn("m = Math.min(3, Math.max(0, d - SLAM_NEAR * r.k)) * w / d;", src)   # the drift, at most 3 ft
         self.assertIn("r.model.position.x = px; r.model.position.z = pz;", src)
 
+    def test_hook_shot(self):
+        """A hook: the one-hand shot's hop, side-on, with the arms posed by the viewer."""
+        src = self.template
+        view = src[src.index("function createView3D"):]
+        self.assertIn('hook: ["floater", "release", 0, { face: "rim", yaw: -1.25, reach: 8.4, sweep: true }],', src)
+        self.assertEqual(src.count("function hookArm(fg, rimX) {"), 1)
+        # the shooting arm: from his side away from the rim, over the top by the release, then on
+        self.assertIn("const phi = t < 0 ? -0.35 + 2.1 * Math.pow(u, 1.5) : Math.min(2.6, 1.75 + 3.5 * t);", src)
+        self.assertIn('armTo(fg, "Left", v4, w * 0.8);', src)             # the guard arm
+        # before the ball is placed in his hand
+        self.assertLess(view.index("anim.hookArm(f, rimX);"), view.index("anim.ballInHand(holderFig, gripPos, dta)"))
+
     def test_light_model(self):
         """The same player with far fewer triangles: same skeleton, clips and parts."""
         full, light = (read_glb(PLAYER_ASSETS[n])[4] for n in ("player.glb", "player_light.glb"))
