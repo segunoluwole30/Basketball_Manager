@@ -1,4 +1,4 @@
-"""The season loop: regular season -> playoffs -> awards -> offseason -> next season.
+"""The season loop: regular season -> awards -> playoffs -> Finals MVP -> offseason -> next season.
 
     league = generate_league(seed=1)
     for _ in range(10):
@@ -12,6 +12,7 @@ from datetime import date, timedelta
 from typing import Optional
 
 from . import allstar
+from . import awards as season_awards
 from .contracts import (
     resign_ai_phase, resign_chance, resign_user_phase, resolve_options, team_option_questions,
 )
@@ -28,7 +29,7 @@ from .market import (
 )
 from .models import League, Phase
 from .playoffs import play_playoffs, start_playoffs, team_records
-from .stats import awards, career_line, game_score, season_totals, update_morale
+from .stats import career_line, game_score, season_totals, update_morale
 
 SEASON_START = (10, 20)     # month, day
 FREE_AGENT_POOL_PER_TEAM = 3
@@ -70,7 +71,8 @@ def play_regular_season(league: League, rng: random.Random,
     Returns notable events (trades at the deadline). ``manager`` answers trade
     offers made to the user's team. Days without games are stepped over here;
     ``play_regular_day`` plays one calendar day, games or not (the web app's
-    "Next day")."""
+    "Next day"). When the last day has been played, the season's awards are
+    announced (``awards.announce``)."""
     if league.phase is not Phase.REGULAR_SEASON:
         raise ValueError(f"not in the regular season ({league.phase.value})")
     remaining = sorted({g.day for g in league.games.values()
@@ -100,6 +102,8 @@ def play_regular_day(league: League, rng: random.Random, day: int, manager=None)
             events += [f"Deadline {line}" for line in ai_trades(league, rng, attempts=200, max_trades=3)]
             events += [f"Deadline {line}" for line in ai_offers_to_user(league, rng, manager)]
     league.current_date = season_start(league.season) + timedelta(days=day)
+    if regular_season_over(league):
+        season_awards.announce(league)                 # awards night, before the playoffs (idempotent)
     return events
 
 
@@ -107,7 +111,9 @@ def play_regular_day(league: League, rng: random.Random, day: int, manager=None)
 # End of season
 # --------------------------------------------------------------------------
 def finish_season(league: League) -> dict:
-    """Awards, career stat lines and a history entry. Moves the league to the offseason."""
+    """Finals MVP, career stat lines (with the season's honours) and a history entry.
+    Moves the league to the offseason. The regular-season awards were named when the
+    regular season ended (``league.awards``); a save from before that are named now."""
     if league.phase is not Phase.PLAYOFFS or not league.playoffs:
         raise ValueError("play the playoffs first")
     finals = max(league.playoffs, key=lambda s: s.round)
@@ -115,7 +121,8 @@ def finish_season(league: League) -> dict:
         raise ValueError("the playoffs aren't finished")
     reg = season_totals(league)
     po = season_totals(league, playoff=True)
-    award_ids = awards(league, reg)
+    named = season_awards.ensure(league)
+    award_ids = season_awards.winners(named)
 
     finals_ids = set(finals.game_ids)
     finals_totals: dict[int, dict] = {}
@@ -135,9 +142,11 @@ def finish_season(league: League) -> dict:
     finals_mvp = max(finals_totals, key=lambda pid: game_score(finals_totals[pid]), default=None)
 
     honours = allstar.career_flags(league)
-    for key, pid in {**award_ids, "finals_mvp": finals_mvp}.items():     # awards join the career line too
-        if pid is not None:
-            honours.setdefault(pid, {})[key] = True
+    for pid, flags in season_awards.career_flags(named).items():         # awards join the career line too
+        honours.setdefault(pid, {}).update(flags)
+    if finals_mvp is not None:
+        honours.setdefault(finals_mvp, {})["finals_mvp"] = True
+    named["finals_mvp"] = finals_mvp
     for playoff, totals in ((False, reg), (True, po)):
         for pid, t in totals.items():
             p = league.players[pid]
@@ -160,6 +169,7 @@ def finish_season(league: League) -> dict:
         "standings": [[tid, w, l] for tid, (w, l, _) in sorted(rec.items(), key=lambda kv: -kv[1][0])],
         "playoffs": [s.to_dict() for s in league.playoffs],
         "all_star": allstar.season_summary(league),
+        "season_awards": {k: v for k, v in named.items() if k != "seen"},
     }
     league.history.append(summary)
     # Box scores are summarised now; keep only results to keep save files small.
@@ -179,8 +189,13 @@ def regular_season_over(league: League) -> bool:
     return all(g.played for g in league.games.values() if g.season == league.season and not g.playoff)
 
 
-def play_full_season(league: League, rng: random.Random, manager=None) -> dict:
+def play_full_season(league: League, rng: random.Random, manager=None, on_awards=None) -> dict:
+    """Regular season, awards, playoffs, Finals MVP. ``on_awards(awards)`` is called
+    when the awards are announced, before the playoffs (the terminal prints them)."""
     events = play_regular_season(league, rng, manager=manager)
+    named = season_awards.ensure(league)
+    if on_awards is not None and named is not None:
+        on_awards(named)
     start_playoffs(league)
     play_playoffs(league, rng)
     summary = finish_season(league)

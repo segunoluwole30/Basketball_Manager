@@ -141,6 +141,8 @@ def start_playoffs(league: League) -> None:
         raise ValueError(f"can't start playoffs during {league.phase.value}")
     if any(not g.played for g in league.games.values() if g.season == league.season and not g.playoff):
         raise ValueError("regular season isn't finished")
+    from .awards import ensure
+    ensure(league)                       # the season's awards come before the playoffs
     league.playoffs = []
     conferences = sorted({t.conference for t in league.teams.values()})
     for conf in conferences:

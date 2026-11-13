@@ -13,6 +13,7 @@ import { Calendar } from "./screens/Calendar";
 import { Editor } from "./screens/Editor";
 import { Tactics } from "./screens/Tactics";
 import { Transfers } from "./screens/Transfers";
+import { AwardsView } from "./screens/Awards";
 
 const NAV = [
   { key: "home", label: "Home", icon: "⌂" },
@@ -210,6 +211,17 @@ export default function App() {
           </div>
           <iframe src={live} title="Live game" />
         </div>
+      )}
+      {state.awards && !state.awards.seen && !live && (
+        // Awards night: the regular season has just ended.
+        <Modal wide title={`Awards night: the ${state.awards.season}-${String((state.awards.season + 1) % 100).padStart(2, "0")} season`}
+          onClose={() => act(() => api.post("/api/awards/seen"))}>
+          <AwardsView compact initialSeason={state.awards.season} />
+          <div className="row gap modal-foot">
+            <button className="btn btn-primary" disabled={busy} onClick={() => act(() => api.post("/api/awards/seen"))}>Continue</button>
+            <button className="btn" disabled={busy} onClick={async () => { await act(() => api.post("/api/awards/seen")); go(`league?tab=awards&season=${state.awards!.season}`); }}>Open in League → Awards</button>
+          </div>
+        </Modal>
       )}
       {(menu === "save" || menu === "load") && (
         <Modal title={menu === "save" ? "Save game" : "Load game"} onClose={() => setMenu(null)}>

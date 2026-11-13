@@ -130,6 +130,8 @@ export interface GameState {
   unread?: number;
   offseason_step?: string | null;
   offseason_kind?: string | null;
+  /** This season's awards, once announced (end of the regular season). */
+  awards?: { season: number; seen: boolean } | null;
 }
 
 export interface GameView {
@@ -167,4 +169,5 @@ export interface InboxItem {
   offer?: { team_id: number; you_give: number[]; you_get: number[] };
   player_id?: number;
   game_ids?: number[];
+  awards_season?: number;
 }

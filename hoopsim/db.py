@@ -88,6 +88,7 @@ def save_league(league: League, path: str | Path) -> None:
                 "inbox": json.dumps(league.inbox),
                 "info": json.dumps(league.info),
                 "all_star": json.dumps(league.all_star),
+                "awards": json.dumps(league.awards),
             }
             conn.executemany("INSERT INTO meta VALUES (?, ?)", meta.items())
             conn.executemany(
@@ -141,6 +142,7 @@ def load_league(path: str | Path) -> League:
             inbox=json.loads(meta.get("inbox", "[]")),
             info=json.loads(meta.get("info", "{}")),
             all_star=_int_keys(json.loads(meta.get("all_star", "null"))),
+            awards=json.loads(meta.get("awards", "null")),
         )
         for (data,) in conn.execute("SELECT data FROM teams ORDER BY id"):
             league.add_team(Team.from_dict(json.loads(data)))

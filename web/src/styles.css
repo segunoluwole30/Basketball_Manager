@@ -533,3 +533,27 @@ ul.plain li { padding: 3px 0; }
 .fit-stars .muted { color: var(--border); }
 .options-row { display: flex; flex-wrap: wrap; gap: 10px 16px; margin: 4px 0; }
 .option-pick { display: flex; flex-direction: column; gap: 3px; font-size: 13px; min-width: 180px; }
+
+/* ---------- awards ---------- */
+.awards-bar { margin-bottom: 10px; }
+.award-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.award-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; box-shadow: var(--shadow); min-width: 0; }
+.award-mine { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent), var(--shadow); }
+.award-pending { background: var(--panel-2); }
+.award-name { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); margin-bottom: 6px; }
+.award-short { display: inline-block; min-width: 38px; padding: 0 5px; border-radius: 3px; background: var(--accent-soft); color: var(--accent); text-align: center; margin-right: 4px; }
+.award-winner { display: flex; gap: 10px; align-items: center; font-size: 15px; font-weight: 600; margin-bottom: 8px; }
+.award-trophy { font-size: 24px; line-height: 1; }
+.finalists { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.finalists li { display: grid; grid-template-columns: minmax(0, 1fr) 70px 38px; gap: 8px; align-items: center; font-size: 13px; padding: 1px 4px; border-radius: 3px; }
+.finalists li.finalist-mine { background: var(--row-me); box-shadow: inset 3px 0 0 var(--accent); font-weight: 600; }
+.finalist-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vote-bar { display: block; height: 8px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+.vote-fill { display: block; height: 100%; background: var(--accent); }
+.vote-pct { text-align: right; font-variant-numeric: tabular-nums; }
+.tier-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.award-tier h3 { margin: 0 0 4px; font-size: 13px; }
+.tier-list { list-style: none; margin: 0; padding: 0; }
+.tier-list li { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding: 3px 4px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.tier-list li.row-me { box-shadow: inset 3px 0 0 var(--accent); }
+.modal-foot { margin-top: 12px; flex-wrap: wrap; }

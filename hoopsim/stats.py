@@ -86,43 +86,10 @@ def _team_win_pct(league: League) -> dict[int, float]:
 
 
 def awards(league: League, totals: dict[int, dict]) -> dict[str, Optional[int]]:
-    """MVP, DPOY, ROY, 6MOY and MIP for the current season (player ids)."""
-    n_games = league.rules.games_per_season
-    pct = _team_win_pct(league)
-    qualified = {pid: t for pid, t in totals.items()
-                 if t["gp"] >= 0.65 * n_games and pid in league.players}
-
-    def best(pool: dict[int, dict], key) -> Optional[int]:
-        return max(pool, key=key) if pool else None
-
-    mvp = best(qualified, lambda pid: game_score(qualified[pid]) * (0.7 + 0.6 * pct.get(qualified[pid]["team_id"], 0.5)))
-
-    def defence(pid: int) -> float:
-        t, p = qualified[pid], league.players[pid]
-        a = p.attributes
-        rating = (a.perimeter_defense + a.interior_defense + a.stealing + a.blocking) / 4
-        return (per_game(t, "stl") + 1.2 * per_game(t, "blk") + 0.1 * per_game(t, "drb")
-                + 0.25 * rating + 2 * pct.get(t["team_id"], 0.5))
-
-    dpoy = best(qualified, defence)
-    rookies = {pid: t for pid, t in qualified.items()
-               if league.players[pid].draft_year == league.season}
-    roy = best(rookies, lambda pid: game_score(rookies[pid]))
-    bench = {pid: t for pid, t in qualified.items() if t["gs"] < 0.3 * t["gp"]}
-    sixth = best(bench, lambda pid: game_score(bench[pid]))
-
-    def improvement(pid: int) -> float:
-        prev = [c for c in league.players[pid].career
-                if c["season"] == league.season - 1 and not c["playoffs"] and c["gp"] >= 20]
-        if not prev:
-            return -1e9
-        prev_line = prev[-1]
-        prev_gs = game_score({**prev_line, "seconds": 0})
-        return game_score(qualified[pid]) - prev_gs
-
-    mip_pid = best(qualified, improvement)
-    mip = mip_pid if mip_pid is not None and improvement(mip_pid) > -1e8 else None
-    return {"mvp": mvp, "dpoy": dpoy, "roy": roy, "sixth_man": sixth, "mip": mip}
+    """MVP, DPOY, ROY, 6MOY and MIP winners (player ids) for the current season.
+    The full vote, finalists and All-NBA teams are in ``awards.compute``."""
+    from .awards import compute, winners
+    return winners(compute(league, totals))
 
 
 def leaders(league: League, totals: dict[int, dict], key: str, n: int = 3) -> list[tuple[int, float]]:

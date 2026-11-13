@@ -1,11 +1,12 @@
 import { AllStar } from "./AllStar";
+import { AwardsView } from "./Awards";
 import { useState } from "react";
 import { GameView } from "../api";
 import { useFetch, useGame } from "../context";
 import { Empty, ErrorBox, Fetched, Loading, Modal, Panel, PlayerName, pct, shortDate, Table, Tabs } from "../components/ui";
 import { TeamPicker } from "./Squad";
 
-type Tab = "standings" | "leaders" | "schedule" | "results" | "playoffs" | "allstar" | "history";
+type Tab = "standings" | "leaders" | "schedule" | "results" | "playoffs" | "awards" | "allstar" | "history";
 
 export function BoxScoreModal({ id, onClose }: { id: number; onClose: () => void }) {
   const f = useFetch<any>(`/api/game/${id}`);
@@ -273,20 +274,25 @@ function Bracket({ onBox }: { onBox: (id: number) => void }) {
   );
 }
 
-function History() {
+function History({ onAwards }: { onAwards: (season: number) => void }) {
   const f = useFetch<any>("/api/history");
   return (
     <Fetched f={f} what="Loading history">
       {(d) => !d.seasons.length ? <Empty>No completed seasons yet. Champions and awards appear here.</Empty> : (
         <div className="history">
           {d.seasons.map((s: any) => (
-            <Panel key={s.season} title={`${s.season}-${String((s.season + 1) % 100).padStart(2, "0")}`}>
+            <Panel key={s.season} title={`${s.season}-${String((s.season + 1) % 100).padStart(2, "0")}`}
+              actions={<button className="btn btn-small" onClick={() => onAwards(s.season)}>All awards</button>}>
               <p><b>{s.champion?.name}</b> beat {s.runner_up?.name} {s.finals} in the Finals.</p>
               <div className="awards">
                 {s.awards.map((a: any) => (
                   <div key={a.award}><span className="muted small">{a.award}</span><br />{a.player_id != null ? <PlayerName p={{ id: a.player_id, name: a.name }} /> : "–"}</div>
                 ))}
               </div>
+              {s.all_nba_first?.length > 0 && (
+                <p className="small"><span className="muted">All-NBA First Team:</span> {s.all_nba_first.map((p: any, i: number) => (
+                  <span key={p.id}>{i ? ", " : ""}<PlayerName p={p} /></span>))}</p>
+              )}
               <details>
                 <summary className="small">Final standings</summary>
                 <ol className="small">{s.standings.map((r: any) => <li key={r.team?.id}>{r.team?.name} {r.w}-{r.l}</li>)}</ol>
@@ -304,6 +310,7 @@ function History() {
 
 export function League({ params }: { params: URLSearchParams; go: (r: string) => void }) {
   const [tab, setTab] = useState<Tab>((params.get("tab") as Tab) || "standings");
+  const [awardSeason, setAwardSeason] = useState<number | undefined>(params.get("season") ? +params.get("season")! : undefined);
   const [box, setBox] = useState<number | null>(null);
   return (
     <div>
@@ -312,7 +319,7 @@ export function League({ params }: { params: URLSearchParams; go: (r: string) =>
         <Tabs value={tab} onChange={setTab} tabs={[
           { key: "standings", label: "Standings" }, { key: "leaders", label: "Leaders" },
           { key: "schedule", label: "Schedule" }, { key: "results", label: "Scores" },
-          { key: "playoffs", label: "Playoffs" }, { key: "allstar", label: "All-Star" },
+          { key: "playoffs", label: "Playoffs" }, { key: "awards", label: "Awards" }, { key: "allstar", label: "All-Star" },
           { key: "history", label: "History" }]} />
       </div>
       {tab === "standings" && <Standings />}
@@ -321,7 +328,8 @@ export function League({ params }: { params: URLSearchParams; go: (r: string) =>
       {tab === "results" && <Results onBox={setBox} />}
       {tab === "playoffs" && <Bracket onBox={setBox} />}
       {tab === "allstar" && <AllStar />}
-      {tab === "history" && <History />}
+      {tab === "awards" && <AwardsView key={awardSeason ?? "now"} initialSeason={awardSeason} />}
+      {tab === "history" && <History onAwards={(s) => { setAwardSeason(s); setTab("awards"); }} />}
       {box != null && <BoxScoreModal id={box} onClose={() => setBox(null)} />}
     </div>
   );

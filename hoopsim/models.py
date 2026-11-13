@@ -749,6 +749,7 @@ class League:
     # Where the league came from and whether it was edited: {"source": ..., "edited": [...]}
     info: dict = field(default_factory=dict)
     all_star: Optional[dict] = None                         # this season's All-Star Weekend (allstar.py)
+    awards: Optional[dict] = None                           # the season's awards, named when the regular season ends (awards.py)
 
     # -- id allocation ------------------------------------------------------
     def next_player_id(self) -> int:

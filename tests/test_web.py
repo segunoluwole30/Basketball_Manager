@@ -13,6 +13,7 @@ except ImportError:                                    # pragma: no cover
     HAVE_WEB = False
 
 from hoopsim.generate import generate_schedule
+from hoopsim.season import regular_season_over
 from hoopsim.web.session import GameSession
 
 FORBIDDEN = ("potential_ability", "hidden", "consistency", "injury_proneness", "work_ethic",
@@ -225,6 +226,95 @@ class WebApiTests(unittest.TestCase):
         self.assertIsNotNone(self.get("/api/offseason")["last_report"])
         self.assertEqual(self.session.league.validate(), [])
         self.assertEqual(self.post("/api/sim", {"mode": "day"})["days"], 1)          # next season runs
+
+    def _to_season_end(self):
+        for _ in range(30):                               # offers pause the sim
+            r = self.post("/api/sim", {"mode": "end"})
+            for item in self.get("/api/inbox")["items"]:
+                if item["kind"] == "offer" and item["status"] == "open":
+                    self.post(f"/api/offers/{item['id']}", {"accept": False})
+            if r["state"]["stage"] == "season_over":
+                return r["state"]
+        self.fail("the regular season didn't end")
+
+    def test_awards_night(self):
+        me = self.new_game()
+        lg = self.session.league
+        none = self.get("/api/awards")
+        self.assertFalse(none["available"])
+        self.assertIsNone(self.get("/api/state")["awards"])
+        state = self._to_season_end()
+        self.assertEqual(state["awards"], {"season": lg.season, "seen": False})
+        self.assertFalse(lg.playoffs)                                   # before the playoffs
+        d = self.get("/api/awards")
+        self.assert_no_secrets(d)
+        self.assertTrue(d["available"] and d["full"] and d["current"])
+        self.assertEqual([a["key"] for a in d["single"]], ["mvp", "dpoy", "roy", "sixth_man", "mip"])
+        mvp = d["single"][0]
+        self.assertEqual(mvp["winner"], mvp["finalists"][0]["id"])
+        shares = [f["share"] for f in mvp["finalists"]]
+        self.assertEqual(shares, sorted(shares, reverse=True))
+        all_nba = next(t for t in d["teams"] if t["key"] == "all_nba")
+        self.assertEqual([len(t["players"]) for t in all_nba["tiers"]], [5, 5, 5])
+        rows = [r for a in d["single"] for r in a["finalists"]] + [
+            r for t in d["teams"] for tier in t["tiers"] for r in tier["players"]]
+        self.assertTrue(all(r["mine"] == (r["team_id"] == me) for r in rows))
+        self.assertIsNone(d["finals_mvp"])
+        news = [m for m in self.get("/api/inbox")["items"] if m["kind"] == "awards"]
+        self.assertEqual(len(news), 1 + sum(a["winner"] is not None for a in d["single"]))  # + the teams
+        self.assertTrue(all(m["awards_season"] == lg.season for m in news))
+        card = self.get(f"/api/player/{mvp['winner']}")
+        self.assertIn("MVP", card["awards_now"])
+        self.assertEqual(self.post("/api/awards/seen")["awards"]["seen"], True)
+        path = str(Path(self.tmp.name) / "awards.db")
+        self.post("/api/save", {"path": path})
+        self.post("/api/load", {"path": path})
+        self.assertEqual(self.get("/api/state")["awards"]["seen"], True)
+        self.assertEqual(self.get("/api/awards")["single"], d["single"])
+        # The playoffs, the Finals MVP and the history.
+        self.post("/api/playoffs/start")
+        self.post("/api/playoffs/sim", {"mode": "all"})
+        after = self.get("/api/awards")
+        self.assertEqual(after["seasons"], [lg.season])
+        self.assertFalse(after["current"])
+        self.assertIsNotNone(after["finals_mvp"])
+        self.assertEqual(after["single"], d["single"])
+        h = self.get("/api/history")["seasons"][0]
+        self.assertEqual([p["id"] for p in h["all_nba_first"]], [p["id"] for p in all_nba["tiers"][0]["players"]])
+        self.assertEqual(self.get(f"/api/player/{mvp['winner']}")["awards_now"], [])
+        self.assertGreaterEqual(self.get(f"/api/player/{mvp['winner']}")["honours"]["mvp"], 1)
+
+    def test_awards_for_old_saves(self):
+        self.new_game()
+        lg = self.session.league
+        self._to_season_end()
+        expected = self.get("/api/awards")["single"]
+        lg.awards = None                                                # a save from before awards night
+        lg.inbox = [m for m in lg.inbox if m["kind"] != "awards"]
+        path = str(Path(self.tmp.name) / "old.db")
+        self.post("/api/save", {"path": path})
+        state = self.post("/api/load", {"path": path})
+        self.assertEqual(state["awards"], {"season": lg.season - 0, "seen": False})
+        self.assertEqual(self.get("/api/awards")["single"], expected)
+        # A history entry from before the full vote was kept: winners only.
+        lg = self.session.league
+        some = next(iter(lg.players.values()))
+        lg.history.insert(0, {"season": lg.season - 1, "champion": min(lg.teams), "runner_up": max(lg.teams),
+                              "finals": "4-2", "awards": {"mvp": some.id, "finals_mvp": some.id, "dpoy": None},
+                              "award_names": {"mvp": some.name, "finals_mvp": some.name, "dpoy": None},
+                              "standings": [], "playoffs": []})
+        some.career.append({"season": lg.season - 1, "playoffs": False, "team_id": some.team_id, "team": "XYZ",
+                            "gp": 70, "gs": 70, "min": 2300.0, "pts": 1800, "fgm": 600, "fga": 1200, "tpm": 100,
+                            "tpa": 300, "ftm": 500, "fta": 600, "orb": 50, "drb": 400, "ast": 300, "stl": 70,
+                            "blk": 30, "tov": 150, "pf": 150, "plus_minus": 200, "mvp": True, "all_nba": 1})
+        old = self.get(f"/api/awards?season={lg.season - 1}")
+        self.assertFalse(old["full"])
+        self.assertEqual(old["single"][0]["winner"], some.id)
+        self.assertEqual(old["single"][0]["finalists"][0]["ppg"], round(1800 / 70, 1))
+        self.assertEqual(old["teams"][0]["tiers"][0]["players"][0]["id"], some.id)
+        self.assertEqual(old["finals_mvp"]["id"], some.id)
+        self.assertEqual(len(self.get("/api/history")["seasons"]), 1)
+        self.assertIn("no awards", self.client.get("/api/awards?season=1900").json()["detail"])
 
     def test_auto_rest_of_summer(self):
         self.new_game()
@@ -601,6 +691,19 @@ class WebMatchEngineTests(unittest.TestCase):
         self.assertEqual(lg.teams[me].tactics.pace, saved_pace)            # match tactics only
         self.assertTrue(all(g.played == (g.day <= nxt.day) for g in lg.games.values()))
         self.post("/api/sim", {"mode": "day"})                               # back to normal
+
+    def test_live_last_game_names_the_awards(self):
+        self._spatial_team(games=2)
+        lg = self.session.league
+        for _ in range(4):
+            if self.session.state()["stage"] == "season_over":
+                break
+            r = self.post("/api/live/start")
+            if r["started"]:
+                self.post("/api/live/finish")
+        self.assertTrue(regular_season_over(lg))
+        self.assertIsNotNone(self.session.state()["awards"])
+        self.assertTrue(any(m["kind"] == "awards" for m in lg.inbox))
 
     def test_live_shouts_plays_and_end_of_game(self):
         self._spatial_team()

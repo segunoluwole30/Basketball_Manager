@@ -69,7 +69,7 @@ def _position(v, where) -> Position:
 CAREER_NUMBERS = ("gp", "gs", "min", "pts", "fgm", "fga", "tpm", "tpa", "ftm", "fta",
                   "orb", "drb", "ast", "stl", "blk", "tov", "pf", "plus_minus")
 CAREER_HONOURS = ("all_star", "asg_mvp", "three_point_champion", "rising_stars_mvp", "mvp", "dpoy", "roy",
-                  "sixth_man", "mip", "clutch_poy", "finals_mvp", "all_nba", "all_defense")
+                  "sixth_man", "mip", "clutch_poy", "finals_mvp", "all_nba", "all_defense", "all_rookie")
 
 
 def _career(lines, by_abbr: dict, season: int, where: str) -> list[dict]:

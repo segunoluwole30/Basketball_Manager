@@ -300,6 +300,14 @@ def create_app(session: Optional[GameSession] = None) -> FastAPI:
     def history():
         return run(game.history)
 
+    @app.get("/api/awards")
+    def awards(season: Optional[int] = None):
+        return run(game.awards, season)
+
+    @app.post("/api/awards/seen")
+    def awards_seen():
+        return run(game.awards_seen)
+
     @app.get("/api/playoffs")
     def playoffs():
         return run(game.playoffs)
