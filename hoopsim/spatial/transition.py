@@ -183,7 +183,7 @@ class OpenCourt:
         self.early = False
         ep = game.p.early_offense
         if not self.push and ep > 0 and how in ("score", "drb", "steal") and self.clock >= 24:
-            pace = game.teams[side].tactics.pace
+            pace = game.p.pace(game.teams[side].tactics.pace)
             self.early = rng.random() < ep * max(0.3, 1.0 + 0.1 * (pace - 10))
         self.lanes = self.assign_lanes()
         self.roles: dict[int, tuple] = {}
@@ -213,10 +213,10 @@ class OpenCourt:
     def decide_push(self) -> bool:
         t = self.t
         base = {"steal": t.push_after_steal, "drb": t.push_after_drb}.get(self.how, t.push_after_score)
-        pace = self.g.teams[self.side].tactics.pace
+        pace = self.g.p.pace(self.g.teams[self.side].tactics.pace)
         logit = math.log(base / (1 - base)) + t.pace_effect * (pace - 10)
         style = offense_style(self.g.teams[self.side].tactics)
-        logit += style.push_after_make if self.how == "score" else style.push   # the system: run or walk
+        logit += self.g.p.system_tempo * (style.push_after_make if self.how == "score" else style.push)   # the system: run or walk
         # Already ahead of the defence: anyone would run.
         if self.how != "score":
             h = self.holder
@@ -939,7 +939,7 @@ class DeadBallInbound(OpenCourt):
         r.start["shot_clock"] = self.shot_base - max(0.0, self.now - self.shot_from)
         r.start["guards"] = list(range(len(self.offense)))  # the set defence keeps its matchups
         # Into the offence against a set defence, as in a half-court start: fast-paced teams sooner.
-        pace = self.g.teams[self.side].tactics.pace
+        pace = self.g.p.pace(self.g.teams[self.side].tactics.pace)
         r.start["mode"] = "setup"
         r.start["decide_in"] = self.rng.uniform(*self.t.inbound_decide) * max(0.5, 1 - 0.03 * (pace - 10))
         r.advantage = "inbound"

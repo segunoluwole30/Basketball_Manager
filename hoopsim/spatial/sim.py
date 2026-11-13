@@ -379,7 +379,7 @@ class HalfCourtGame:
         self.catch_time = -9.0
         self.orb_time = -9.0
         # Fast-paced teams get into their offence sooner.
-        pace = self.teams[side].tactics.pace
+        pace = self.p.pace(self.teams[side].tactics.pace)
         self.next_decision = rng.uniform(0.8, 2.0) * max(0.5, 1 - 0.03 * (pace - 10))
         self.passes = 0
         self.scramble = 0.0                    # how far behind the defence's rotations are
@@ -400,7 +400,8 @@ class HalfCourtGame:
             spots[4] = FIVE_OUT_C
         else:
             spots[4] = POST_BLOCK if self.can_post(self.offense[4]) else DUNKER
-        if focus == "inside" and self.can_post(self.offense[3]):
+        if focus == "inside" and self.can_post(self.offense[3]) and (
+                self.p.inside_pair >= 1 or rng.random() < self.p.inside_pair):
             spots[3] = (-POST_BLOCK[0], POST_BLOCK[1])          # both bigs inside: three out, two in
         elif not five_out and self.p.four_high > 0 and rng.random() < self.p.four_high:
             spots[:4] = FOUR_HIGH                               # four out, all above the break
@@ -708,7 +709,13 @@ class HalfCourtGame:
 
     def style_bias(self, h: Agent, kind: str, action: tuple) -> float:
         """How much this player (and his coach's tactics) prefer an option, in points.
-        Added to the learned value when choosing; it changes choices, not outcomes."""
+        Added to the learned value when choosing; it changes choices, not outcomes.
+        With ``team_bias_span`` the coach's part (sliders, offensive focus and the
+        coaching system's nudges together) is bent past that many points (see
+        ``team_style``); ``system_bias`` then leaves the system's nudges to it."""
+        if self.p.team_bias_span > 0:
+            player, team = self.team_style(h, kind, action)
+            return player + self.p.bend(team + self.system_style(kind, action), self.p.team_bias_span)
         tend = h.p.tendencies
         tac = self.teams[self.side].tactics
         focus = tac.offensive_focus.value
@@ -730,8 +737,58 @@ class HalfCourtGame:
             feed_post = 0.03 if focus == "inside" and self.can_post(mate) and C.dist_to_rim(mate.pos) < 11 else 0.0
             return 0.8 * k * (tend.passing - 10) + feed_post
         if kind in ("hold", "reset"):
-            return -0.012 * (tac.pace - 10)                     # fast teams take earlier shots
+            return -0.012 * (self.p.pace(tac.pace) - 10)        # fast teams take earlier shots
         return 0.0
+
+    def team_style(self, h: Agent, kind: str, action: tuple) -> tuple[float, float]:
+        """``style_bias`` split in two: (the player's tendencies, his coach's sliders and
+        offensive focus)."""
+        tend = h.p.tendencies
+        tac = self.teams[self.side].tactics
+        focus = tac.offensive_focus.value
+        k = self.t.tendency_weight
+        if kind == "shoot":
+            zone = action[1]
+            if zone == THREE_ZONE:
+                return (k * (tend.three_point - 10),
+                        0.008 * (tac.three_point_rate - 10) + {"perimeter": 0.03, "inside": -0.03}.get(focus, 0.0))
+            if zone == MID_ZONE:
+                return k * (tend.mid_range - 10), 0.0
+            return 0.0, 0.02 if focus == "inside" else 0.0
+        if kind in ("drive", "continue"):
+            return k * (tend.drive - 10), 0.02 if focus == "inside" else 0.0
+        if kind == "post":
+            return k * (tend.post_up - 10), {"inside": 0.04, "perimeter": -0.03}.get(focus, 0.0)
+        if kind == "pass":
+            mate = action[1]
+            feed_post = 0.03 if focus == "inside" and self.can_post(mate) and C.dist_to_rim(mate.pos) < 11 else 0.0
+            return 0.8 * k * (tend.passing - 10), feed_post
+        if kind in ("hold", "reset"):
+            return 0.0, -0.012 * (self.p.pace(tac.pace) - 10)
+        return 0.0, 0.0
+
+    def system_style(self, kind: str, action: tuple) -> float:
+        """The coaching system's standing nudges to an option (``Style.bias``), without
+        the star's ball (``system_bias``)."""
+        bias = offense_style(self.teams[self.side].tactics).bias
+        if not bias:
+            return 0.0
+        b = 0.0
+        if kind == "shoot":
+            zone = action[1]
+            b += bias.get("three" if zone == THREE_ZONE else "mid" if zone == MID_ZONE else "inside", 0.0)
+        elif kind in ("drive", "pnr", "post"):
+            b += bias.get(kind, 0.0)
+        elif kind == "pass":
+            b += bias.get("pass", 0.0)
+            if "feed" in bias and action[1].slot >= 3 and C.dist_to_rim(action[1].pos) < 11:
+                b += bias["feed"]
+        if self.shot_clock > 10:
+            if kind in ("hold", "reset"):
+                b += self.p.system_tempo * bias.get("hold", 0.0)
+            elif kind in ("shoot", "drive", "pnr"):
+                b += self.p.system_tempo * bias.get("early", 0.0)
+        return b
 
     def patience_bias(self, h: Agent, kind: str, feats: list[float]) -> float:
         """Shot selection against a set defence: with time on the shot clock an ordinary
@@ -761,7 +818,7 @@ class HalfCourtGame:
             return 0.0                                   # his man is beaten: go
         elif kind == "hold":
             f *= p.patience_hold                         # ... and don't stand on it: move the ball
-        pace = self.teams[self.side].tactics.pace
+        pace = p.pace(self.teams[self.side].tactics.pace)
         return -p.patience * f * max(0.3, 1.0 - 0.06 * (pace - 10))
 
     def maybe_cut(self, a: Agent, d: Agent) -> None:
@@ -1399,6 +1456,8 @@ class HalfCourtGame:
         rate = (self.p.dribble_turnover_per_sec
                 * math.exp(0.15 * (on.a("stealing") - 10) - 0.15 * (h.a("ball_handling") - 10))
                 * (3.5 - dd) / 2.5 * (1.6 if self.scheme == "press" else 1.0))
+        if self.mode == "post":
+            rate *= self.p.post_strip            # backing down, the ball is behind his body
         if self.rng.random() < rate * self.t.dt:
             self.credit(h, "tov")
             self.stats["tov"] += 1
@@ -1970,7 +2029,7 @@ class HalfCourtGame:
             if dd > 8:
                 continue
             attr = "defensive_rebounding" if a in self.defense else "offensive_rebounding"
-            w = math.exp(0.25 * (a.a(attr) - 10) + (a.p.physique.height_cm - 203) / 24) / (1 + dd * dd / 6)
+            w = math.exp(self.p.rebound_rating * (a.a(attr) - 10) + (a.p.physique.height_cm - 203) / 24) / (1 + dd * dd / 6)
             if a in self.defense:
                 w *= self.p.defensive_rebound_edge * f.data.get("edge", 1.0)
             candidates.append((w, a))
@@ -2252,6 +2311,13 @@ class HalfCourtGame:
         tactics = self.teams[self.side].tactics
         st = offense_style(tactics)
         b = self.option_bias(h, kind, action, tactics) if tactics.scoring_options else 0.0
+        if self.p.team_bias_span > 0:                   # the nudges are in style_bias, bent
+            if st.star_ball:
+                if kind == "pass" and action[1] is self.star(self.side):
+                    b += st.star_ball
+                if h is self.star(self.side) and kind in ("shoot", "drive", "post", "pnr"):
+                    b += 0.5 * st.star_ball
+            return b
         if not st.bias and not st.star_ball:
             return b
         bias = st.bias
@@ -2271,9 +2337,9 @@ class HalfCourtGame:
             b += 0.5 * st.star_ball
         if self.shot_clock > 10:
             if kind in ("hold", "reset"):
-                b += bias.get("hold", 0.0)
+                b += self.p.system_tempo * bias.get("hold", 0.0)
             elif kind in ("shoot", "drive", "pnr"):
-                b += bias.get("early", 0.0)
+                b += self.p.system_tempo * bias.get("early", 0.0)
         return b
 
     def option_bias(self, h: Agent, kind: str, action: tuple, tactics) -> float:
