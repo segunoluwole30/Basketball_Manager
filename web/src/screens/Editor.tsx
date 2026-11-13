@@ -240,7 +240,7 @@ const LOOK_LABELS: Record<string, string> = {
 const AUTO = "__auto", NONE = "__none", CUSTOM = "__custom";
 
 function LookEditor({ look, limits, changed, onChange }: {
-  look: Look | null; limits: { hair: string[]; sides: string[]; colours: string[] }; changed: boolean;
+  look: Look | null; limits: { hair: string[]; sides: string[]; colours: string[]; faces?: number }; changed: boolean;
   onChange: (v: Look | null) => void;
 }) {
   const cur: Look = look ?? {};
@@ -276,6 +276,31 @@ function LookEditor({ look, limits, changed, onChange }: {
       </span>
     );
   };
+  // Face: how far toward each of the model's face shapes (weights 0-1, as the viewer and
+  // editor.py's clean_look read them). Here: one shape and how strongly; a blend set some
+  // other way (a league file) shows as "Custom blend" and is kept until changed.
+  const nFaces = limits.faces ?? 3;
+  const faceNow: number[] | null = has("face") && Array.isArray(cur.face) ? cur.face : null;
+  const lead = faceNow ? faceNow.reduce((best, v, i) => (v > faceNow[best] ? i : best), 0) : -1;
+  const single = !!faceNow && faceNow.every((v, i) => i === lead || v === 0);
+  const strength = faceNow ? faceNow[lead] : 0.7;
+  const oneFace = (i: number, s: number) => Array.from({ length: nFaces }, (_, j) => (j === i ? Math.round(s * 100) / 100 : 0));
+  const face = (
+    <span className="row gap">
+      <select value={!faceNow ? AUTO : single ? String(lead) : CUSTOM} aria-label="Look: face"
+        onChange={(e) => {
+          const o = e.target.value;
+          if (o === AUTO) put("face", null, false);
+          else if (o !== CUSTOM) put("face", oneFace(+o, single ? strength : 0.7), true);
+        }}>
+        <option value={AUTO}>From name</option>
+        {Array.from({ length: nFaces }, (_, i) => <option key={i} value={String(i)}>{`Shape ${"ABC"[i] ?? i + 1}`}</option>)}
+        {faceNow && !single && <option value={CUSTOM}>Custom blend</option>}
+      </select>
+      {faceNow && single && <input type="range" min={0.2} max={1} step={0.05} value={strength} aria-label="Look: face strength"
+        title={`How strongly: ${Math.round(strength * 100)}%`} onChange={(e) => put("face", oneFace(lead, +e.target.value), true)} />}
+    </span>
+  );
   const sides: [string, string][] = [[NONE, "None"], ...limits.sides.map((x): [string, string] => [x, LOOK_LABELS[x] ?? x])];
   const side = (k: string) => choice(k, sides, (o) => (o === NONE ? null : o), (v) => (v === null ? NONE : v));
   return (
@@ -289,6 +314,7 @@ function LookEditor({ look, limits, changed, onChange }: {
       <label>Wristbands {side("wrist")}</label>
       <label>Sleeves and bands {colour("gear")}</label>
       <label>Shoes {colour("shoes")}</label>
+      <label>Face {face}</label>
       <label>&nbsp;
         <button type="button" className="btn btn-small" disabled={!look} onClick={() => onChange(null)}
           title="Clear the stored look: every part is picked from his name again">Use default</button>

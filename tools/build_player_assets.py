@@ -469,6 +469,9 @@ def build_clip(name, spec, sk, load):
         if name == "backpedal": yaw = np.arctan2(-travel[0], -travel[2])
         pos, q = turn(pos, q, yaw_mat(-yaw))
         travel = yaw_mat(-yaw) @ travel
+        # the clip's natural speed: how fast the body travels (ft/s) when the cycle plays at
+        # its own rate, measured from the root's travel over one cycle before it is put in
+        # place. The viewer plays the cycle at the rate that makes this match the replay.
         meta["speed"] = 0.0 if opt.get("still") else float(np.hypot(travel[0], travel[2]))
         if opt.get("lateral"): meta["side"] = float(np.sign(travel[0]))     # +1: towards the model's left (+X)
     elif kind == "loop":                                     # a held pose: there and back
@@ -528,6 +531,9 @@ def build_clip(name, spec, sk, load):
     else:
         times = idxs / SRC_FPS; dur = float(times[-1])
     meta["duration"] = round(float(dur), 4)
+    if meta.get("speed"):
+        meta["speed"] = round(meta["speed"], 3)
+        meta["stride"] = round(meta["speed"] * meta["duration"], 3)          # feet covered per cycle
     # how high the hands get at the key moment (for lifting a jump to the ball)
     if "marks" in meta and "release" in meta["marks"]:
         f = min(len(pos) - 1, int(round(meta["marks"]["release"] * FPS)))
@@ -1173,9 +1179,10 @@ def main(argv=None):
     arm = L("LeftArm", "LeftForeArm") + L("LeftForeArm", "LeftHand") + 0.62         # shoulder to fingertip
     span = 2 * float(sk.bindP[sk.idx["LeftArm"]][0]) + 2 * arm                     # with the arms straight out
     BASE = ("skin", "jersey", "shorts", "kit")
-    extras = {"version": 4, "height": HEIGHT, "fps": FPS, "clips": {n: c[3] for n, c in clips.items()},
+    extras = {"version": 5, "height": HEIGHT, "fps": FPS, "clips": {n: c[3] for n, c in clips.items()},
               "parts": [n for n in mesh.tri if n not in BASE], "detail": "full",
-              "body": {"bulk_girth": round(bulk_girth, 3), "span": round(span, 3), "arm": round(arm, 3)}}
+              "body": {"bulk_girth": round(bulk_girth, 3), "span": round(span, 3), "arm": round(arm, 3),
+                       "ankle": round(float(sk.ankle), 3)}}       # the ankle joint's height with the foot flat (planted feet)
     # morph targets. bulk: MakeHuman's heaviest muscular build (the viewer sets it per player
     # from his weight; a negative weight slims him). face_a/b/c: each of its three face shapes
     # against the even mix the model has: the head only, stored sparsely.

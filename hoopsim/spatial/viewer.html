@@ -910,15 +910,17 @@ window.GAME = /*GAME_DATA*/null;
 
   // Each player's look in 3D: hair (style and colour), beard, headband, arm and leg sleeves,
   // wristbands, shoes. The page may carry it (look: {hair, hairColor, beard, band, sleeve, leg,
-  // wrist, gear, shoes}: the web app sends what the editor set); any part it leaves out is
+  // wrist, gear, shoes, face}: the web app sends what the editor set); any part it leaves out is
   // picked from his name, the same every time, with hair colours that suit his skin tone.
   // hair: one of HAIR_STYLES; beard: true/false; sleeve, leg, wrist: "L", "R", "both" or
   // null; band: a colour or null; gear (sleeves and bands): a colour. Colours: "white",
-  // "black", "team" or #rrggbb. (hoopsim/editor.py LOOK_* checks the same sets.)
+  // "black", "team" or #rrggbb; face: three weights, 0-1. (hoopsim/editor.py LOOK_* checks the same sets.)
   const HAIR_STYLES = [["short", 28], ["fade", 26], ["bald", 10], ["afro", 9], ["locs", 12], ["flattop", 6], ["bun", 9]];
   // the model's hair parts each style is made of (bald: none)
   const HAIR_PARTS = { short: ["cap"], fade: ["fade"], afro: ["afro"], flattop: ["cap", "flattop"], locs: ["cap", "locs"], bun: ["cap", "bun"] };
   const HAIR_DARK = ["#0d0b0a", "#0d0b0a", "#1c130d"], HAIR_ANY = ["#0d0b0a", "#1c130d", "#3a2416", "#6a4a2c", "#a8854e", "#7d3a1c"];
+  const FACE_LEAN = { dark: [40, 30, 30], mid: [33, 34, 33], light: [30, 30, 40] };   // odds of each face shape leading
+  const validFace = (f) => Array.isArray(f) && f.length === 3 && f.every((v) => typeof v === "number" && v >= 0 && v <= 1);
   function lookOf(pl, tone) {
     const L = pl.look && typeof pl.look === "object" ? pl.look : {};
     const mix = (x) => { x = Math.imul(x ^ (x >>> 15), 0x2c1b3c6d); x = Math.imul(x ^ (x >>> 12), 0x297a2d39); return (x ^ (x >>> 15)) >>> 0; };
@@ -936,13 +938,19 @@ window.GAME = /*GAME_DATA*/null;
       leg: has("leg") ? L.leg : roll("leg") < 0.18 ? (roll("lb") < 0.35 ? "both" : side("ls")) : null,
       wrist: has("wrist") ? L.wrist : roll("wrist") < 0.3 ? (roll("wb") < 0.3 ? "both" : side("ws")) : null,
       gear: has("gear") ? L.gear : ["black", "white", "team"][mix(hash(pl.name + "gc")) % 3],
-      // face: how far toward each of the model's three face shapes (the model itself is their even mix)
-      face: has("face") ? L.face : (() => {
-        const lean = tone === 0 || tone === 3 || tone === 5 ? [70, 15, 15] : light ? [10, 35, 55] : [35, 30, 35];
+      // face: how far toward each of the model's three face shapes, 0-1 each (the model itself
+      // is their even mix). Set in the editor, or from his name: every shape is common for
+      // every skin tone (FACE_LEAN only nudges the odds), and how much of a second and a
+      // third shape is mixed in varies by player, so faces don't fall into three types.
+      face: validFace(L.face) ? L.face.map(Number) : (() => {
+        const lean = FACE_LEAN[tone === 0 || tone === 3 || tone === 5 ? "dark" : light ? "light" : "mid"];
         const first = +weighted([[0, lean[0]], [1, lean[1]], [2, lean[2]]], roll("face")), f = [0, 0, 0];
-        f[first] = 0.45 + 0.55 * roll("fa");
-        f[(first + 1 + (mix(hash(pl.name + "fo")) % 2)) % 3] = 0.3 * roll("fb");
-        return f;
+        const swap = mix(hash(pl.name + "fo")) % 2;
+        f[first] = 0.35 + 0.65 * roll("fa");
+        f[(first + 1 + swap) % 3] = f[first] * 0.75 * roll("fb");
+        f[(first + 2 - swap) % 3] = f[first] * 0.35 * roll("fc");
+        const total = f[0] + f[1] + f[2];                         // (no further than a face the shapes span)
+        return total > 1 ? f.map((v) => v / total) : f;
       })(),
       shoes: has("shoes") ? L.shoes : weighted([["black", 34], ["white", 34], ["team", 20], ["#b0b4bb", 6], ["#c8372d", 6]], roll("shoes")),
     };
@@ -976,6 +984,11 @@ window.GAME = /*GAME_DATA*/null;
     rebound: ["rebound", "release", 0, { face: "rim", reach: "ball" }],
     rebound_jump: ["rebound", "release", 0, { face: "rim", reach: "ball", noBall: true }],
   };
+  const STEP_RATE = 0.8, STEP_MAX = 1.7;      // a gait's easy cadence, and its fastest, as a share of the clip's own
+  // planted feet: a foot counts as down within FOOT_ON ft of the floor (and until FOOT_OFF).
+  // If holding it would stretch the leg more than FOOT_REACH ft from the clip, it takes a
+  // step (FOOT_STEP seconds, FOOT_LIFT ft high) to where the clip has it.
+  const FOOT_ON = 0.15, FOOT_OFF = 0.24, FOOT_REACH = 0.75, FOOT_EASE = 0.06, FOOT_STEP = 0.14, FOOT_LIFT = 0.28;
   const POSE_CUES = { screen: "screen", post_up: "stance" };      // a stance he keeps while he stands there
   const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
   const smooth01 = (x) => { x = clamp01(x); return x * x * (3 - 2 * x); };
@@ -989,7 +1002,8 @@ window.GAME = /*GAME_DATA*/null;
     const slideTo = { 1: CL.slide.side > 0 ? "slide" : "slide_m", [-1]: CL.slide.side > 0 ? "slide_m" : "slide" };
     const kit = new THREE.MeshLambertMaterial({ vertexColors: true });
     const v1 = new THREE.Vector3(), v2 = new THREE.Vector3(), v3 = new THREE.Vector3(), v4 = new THREE.Vector3();
-    const q1 = new THREE.Quaternion(), AXIS_Z = new THREE.Vector3(0, 0, 1);
+    const q1 = new THREE.Quaternion(), q2 = new THREE.Quaternion(), q3 = new THREE.Quaternion(), qF = new THREE.Quaternion(), qK = new THREE.Quaternion();
+    const vA = new THREE.Vector3(), vH = new THREE.Vector3(), vK = new THREE.Vector3(), vT = new THREE.Vector3(), AXIS_Z = new THREE.Vector3(0, 0, 1);
 
     function attach(fg, pl, H, skin) {
       const model = rig.clone(rig.gltf.scene), body = rig.meta.body, ph = fg.build;
@@ -1029,9 +1043,70 @@ window.GAME = /*GAME_DATA*/null;
       fg.body.add(model);
       fg.rig = { model, jersey, bones, mixer: new THREE.AnimationMixer(model), acts: {}, w: {}, k: H / H0,
                  phase: (hash(fg.key || pl.name) % 100) / 100, free: hash(pl.name) % 7, carry: [], active: [],
-                 ax: 0, az: 0, anchored: false, hand: new THREE.Vector3(), grip: 0, armRest: {} };
+                 ax: 0, az: 0, anchored: false, hand: new THREE.Vector3(), grip: 0, armRest: {}, feet: {},
+                 adjusted: ["LeftArm", "RightArm", "LeftUpLeg", "RightUpLeg", "LeftLeg", "RightLeg", "LeftFoot", "RightFoot"].map((n) => bones[n]).filter(Boolean) };
       for (const sd of ["Left", "Right"]) if (bones[sd + "ForeArm"]) fg.rig.armRest[sd] = bones[sd + "ForeArm"].position.clone().normalize();
       return fg.rig;
+    }
+    // The mixer only writes a bone when its animated value changes, so a bone the viewer turns
+    // after it (a raised arm, a planted leg) would be turned again each frame while the value
+    // holds (paused, or a still pose). Bring such a bone back to the clip's own pose first.
+    function clipPose(b) {
+      const u = b.userData;
+      if (u.mine && b.quaternion.equals(u.mine)) b.quaternion.copy(u.clip);
+      else (u.clip || (u.clip = new THREE.Quaternion())).copy(b.quaternion);
+    }
+    const adjustedPose = (b) => { (b.userData.mine || (b.userData.mine = new THREE.Quaternion())).copy(b.quaternion); };
+    // turn a bone by a rotation given in world space
+    function turnWorld(b, qWorld) {
+      b.parent.getWorldQuaternion(q2);
+      b.quaternion.premultiply(q2).premultiply(qWorld).premultiply(q2.invert());
+    }
+    // Planted feet. A foot that is down is held where it landed while the clip (whose stride
+    // never matches the replay exactly) and a turning body would drag it along the floor:
+    // the leg is re-posed to reach that spot (hip and knee, two-bone IK; the foot keeps its own
+    // tilt). It is let go when the clip lifts it, or when holding it would over-stretch the
+    // leg, and then eases back to the clip. Called once the player is placed and turned.
+    function plantFeet(fg, dta, fresh) {
+      const r = fg.rig, k = r.k, floor = ((rig.meta.body && rig.meta.body.ankle) || 0.33) * k;
+      fg.root.updateMatrixWorld(true);
+      for (const sd of ["Left", "Right"]) {
+        const hip = r.bones[sd + "UpLeg"], knee = r.bones[sd + "Leg"], foot = r.bones[sd + "Foot"];
+        const f = r.feet[sd] || (r.feet[sd] = { on: false, x: 0, z: 0, ox: 0, oz: 0, wait: 0 });
+        const other = r.feet[sd === "Left" ? "Right" : "Left"];
+        vA.setFromMatrixPosition(foot.matrixWorld);
+        if (fresh || !env.plant()) { f.on = false; f.ox = f.oz = 0; f.wait = 0; }
+        const down = vA.y < floor + (f.on ? FOOT_OFF : FOOT_ON) * k;
+        f.wait = Math.max(0, f.wait - dta);
+        if (f.on) {
+          const far = Math.hypot(f.x - vA.x, f.z - vA.z) / (FOOT_REACH * k);
+          if (!down) f.on = false;                                   // the clip lifts it
+          else if (far > 1 && !(other && other.wait > 0)) { f.on = false; f.wait = FOOT_STEP; }   // too far: step (one foot at a time)
+          else if (far > 1.6) { f.x = vA.x + (f.x - vA.x) * 1.6 / far; f.z = vA.z + (f.z - vA.z) * 1.6 / far; }   // (both at once: this one drags)
+        } else if (down && f.wait <= 0 && dta > 0 && env.plant()) { f.on = true; f.x = vA.x + f.ox; f.z = vA.z + f.oz; }
+        if (f.on) { f.ox = f.x - vA.x; f.oz = f.z - vA.z; }
+        else { const e = Math.exp(-dta / FOOT_EASE); f.ox *= e; f.oz *= e; }
+        f.down = down;
+        const up = f.wait > 0 ? FOOT_LIFT * k * Math.pow(Math.sin(Math.PI * (1 - f.wait / FOOT_STEP)), 0.6) : 0;
+        if (f.ox * f.ox + f.oz * f.oz < 1e-6 && up <= 0) continue;
+        // two-bone IK: bend the knee so the ankle is the right distance from the hip, then swing the thigh
+        vH.setFromMatrixPosition(hip.matrixWorld); vK.setFromMatrixPosition(knee.matrixWorld);
+        vT.set(vA.x + f.ox, vA.y + up, vA.z + f.oz);
+        const l1 = vK.distanceTo(vH), l2 = vA.distanceTo(vK);
+        const d = Math.max(Math.abs(l1 - l2) * 1.02 + 0.01, Math.min((l1 + l2) * 0.999, vT.distanceTo(vH)));
+        v1.subVectors(vH, vK); v2.subVectors(vA, vK);
+        const bend = v1.angleTo(v2) - Math.acos(Math.max(-1, Math.min(1, (l1 * l1 + l2 * l2 - d * d) / (2 * l1 * l2))));
+        v3.crossVectors(v2, v1);
+        if (v3.lengthSq() < 1e-6) v3.set(Math.cos(fg.heading), 0, -Math.sin(fg.heading)); else v3.normalize();   // a straight leg bends forwards
+        foot.getWorldQuaternion(qF); knee.getWorldQuaternion(qK);
+        q1.setFromAxisAngle(v3, bend);
+        turnWorld(knee, q1);
+        v2.applyQuaternion(q1).add(vK).sub(vH).normalize();     // hip to the ankle, after the bend
+        q3.setFromUnitVectors(v2, v1.subVectors(vT, vH).normalize());
+        turnWorld(hip, q3);
+        foot.quaternion.copy(qK.premultiply(q1).premultiply(q3).invert().multiply(qF));
+        adjustedPose(hip); adjustedPose(knee); adjustedPose(foot);
+      }
     }
     function action(r, name) {
       let a = r.acts[name];
@@ -1115,7 +1190,7 @@ window.GAME = /*GAME_DATA*/null;
       const fout = c.hold ? 1 : smooth01((c.dur - tl) / Math.min(0.28, c.dur / 3));
       return Math.min(fin, fout) * (c.w || 1);
     }
-    function reset(fg) { const r = fg.rig; r.carry = []; r.active = []; r.w = {}; r.grip = 0; r.anchored = false; }
+    function reset(fg) { const r = fg.rig; r.carry = []; r.active = []; r.w = {}; r.grip = 0; r.anchored = false; r.feet = {}; }
     // The possession moved on without a cut: clips still running play out on their own clock.
     function carryOver(fg) {
       const r = fg.rig;
@@ -1169,35 +1244,47 @@ window.GAME = /*GAME_DATA*/null;
         else if (sp <= b) { const k = (sp - a) / (b - a); tgt.walk = (tgt.walk || 0) + m * (1 - k); tgt.jog = m * k; }
         else { const k = clamp01((sp - b) / (c - b)); tgt.jog = m * (1 - k); tgt.sprint = m * k; }
       };
-      const go = clamp01((sp - 0.8) / 1.8);
+      // How much of a moving clip: below the speed its cycle covers at an easy cadence
+      // (STEP_RATE of its own), it is mixed with the standing pose, which shortens the stride
+      // instead of slowing the legs down: small quick steps, as people take. v: the natural
+      // speed (ft/s, measured in the build) of the gait he would use.
+      const steps = (v) => clamp01(sp / (v * STEP_RATE)) * smooth01((sp - 0.3) / 0.6);
+      const vRun = Math.max(CL.walk.speed, Math.min(sp, CL.sprint.speed));
       if (dribbling) {
         const a = CL.dribble_walk.speed, b = CL.dribble_run.speed * 0.8;
-        if (sp <= a) { tgt.dribble_idle = 1 - clamp01((sp - 0.8) / 2.4); tgt.dribble_walk = 1 - tgt.dribble_idle; }
+        if (sp <= a) { tgt.dribble_walk = steps(a); tgt.dribble_idle = 1 - tgt.dribble_walk; }
         else { const k = clamp01((sp - a) / (b - a)); tgt.dribble_walk = 1 - k; tgt.dribble_run = k; }
       } else if (isHolder) {
+        const go = steps(vRun);
         tgt.hold = 1 - go; if (go > 0) run(go);
       } else if (!q.off && sp < 7.5) {                             // on defence: stance, slides, backpedal
+        const f2 = fwd * fwd, l2 = 1 - f2;
+        const go = steps(l2 * CL.slide.speed + f2 * (fwd > 0 ? vRun : CL.backpedal.speed));
         tgt.stance = 1 - go;
         if (go > 0) {
-          const f2 = fwd * fwd, l2 = 1 - f2;
           if (l2 > 0.02) tgt[slideTo[lat > 0 ? 1 : -1]] = go * l2;
           if (fwd > 0) run(go * f2); else tgt.backpedal = go * f2;
         }
       } else {
         const still = pose && sp < 3.5 ? pose.clip : q.off ? "idle" : "stance";
+        const go = steps(vRun);
         tgt[still] = 1 - go; if (go > 0) run(go);
       }
       // ease the weights (at once after a cut), then leave room for the one-shots
-      const kk = fresh ? 1 : 1 - Math.exp(-dtg / 0.13);
-      let sum = 0, rate = 0, mov = 0;
+      const kk = fresh ? 1 : 1 - Math.exp(-dtg / 0.09);
+      let sum = 0, mov = 0, stride = 0, cycle = 0;
       for (const name in tgt) if (r.w[name] === undefined) r.w[name] = 0;
       for (const name in r.w) {
         r.w[name] += ((tgt[name] || 0) - r.w[name]) * kk;
         if (r.w[name] < 0.003 && !tgt[name]) { delete r.w[name]; const a = r.acts[name]; if (a) a.enabled = false; continue; }
         sum += r.w[name];
-        if (CL[name].speed > 0) { mov += r.w[name]; rate += r.w[name] * Math.max(0.55, Math.min(1.5, sp / CL[name].speed)) / CL[name].duration; }
+        if (CL[name].speed > 0) { mov += r.w[name]; stride += r.w[name] * CL[name].speed * CL[name].duration; cycle += r.w[name] * CL[name].duration; }
       }
-      if (mov > 0) r.phase = (r.phase + rate / mov * dta) % 1;
+      // The cycle runs at the rate that makes the stride cover the ground he covers: the blend's
+      // stride (feet per cycle: each clip's natural speed x its length, by weight; standing
+      // poses add none) against his speed in the replay. Capped, so a blend that is still
+      // easing in doesn't whirr.
+      if (mov > 0 && stride > 1e-4) r.phase = (r.phase + Math.min(sp * sum / stride, STEP_MAX * mov / cycle) * dta) % 1;
       r.free += dta;
       const room = (1 - used) / (sum || 1);
       for (const name of Object.keys(r.acts)) if (W[name] === undefined && r.w[name] === undefined) r.acts[name].enabled = false;
@@ -1209,6 +1296,7 @@ window.GAME = /*GAME_DATA*/null;
       }
       for (const name in W) { const a = action(r, name); a.enabled = true; a.weight = W[name]; a.time = T[name]; }
       r.mixer.update(0);
+      for (const b of r.adjusted) clipPose(b);
       // The mocap has no collarbone movement, so a raised arm pinched the shoulder. Lift the
       // collarbone with the arm (up to about 30 degrees) and turn the arm back by as much,
       // so the arm itself points exactly where the clip put it.
@@ -1219,6 +1307,7 @@ window.GAME = /*GAME_DATA*/null;
         const angle = sign * Math.min(0.55, 0.5 * Math.max(0, Math.asin(Math.max(-1, Math.min(1, up)))));
         sh.quaternion.setFromAxisAngle(AXIS_Z, angle);
         arm.quaternion.premultiply(q1.copy(sh.quaternion).invert());
+        adjustedPose(arm);
       }
       r.model.position.y = lift;
       r.ballCue = ballCue; r.dribbling = dribbling && !ballCue;
@@ -1258,7 +1347,7 @@ window.GAME = /*GAME_DATA*/null;
     }
     // is the shot released at this frame a dunk (so: no arc to trail)?
     const dunkAt = (p, f) => cues(p).some((l) => l.some((c) => c.slam && Math.abs(c.slam - 0.32 - f * env.dt) < 0.3));
-    return { attach, update, ballInHand, cues, reset, carryOver, dunkAt, detail: rig.meta.detail || "full", clips: CL, names: Object.keys(clips) };
+    return { attach, update, plantFeet, ballInHand, cues, reset, carryOver, dunkAt, detail: rig.meta.detail || "full", clips: CL, names: Object.keys(clips) };
   }
 
   // ---- the arena round the 3D court: stands, crowd, benches, boards, roof. Built the first
@@ -2195,7 +2284,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     }
 
     // ---- animated bodies: the rig arrives after the view is up (or never: simple bodies stay)
-    let anim = null, bodyMode = "simple", bodyAuto = false, onSlow = null;
+    let anim = null, bodyMode = "simple", bodyAuto = false, onSlow = null, footLock = true;
     let animP = null, over = 0, grip = 0, slowT = 0, slowN = 0;
     const gripPos = new THREE.Vector3();
     function setRig(rig) {
@@ -2203,7 +2292,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
         const fg = figures[key];
         if (fg.rig) { fg.body.remove(fg.rig.model); fg.rig.jersey.map.dispose(); fg.rig.jersey.dispose(); fg.rig = null; }
       }
-      anim = createAnimator(THREE, rig, { dt, jerseyTexture, teamMat, tint, shadows: !small, flights });
+      anim = createAnimator(THREE, rig, { dt, jerseyTexture, teamMat, tint, shadows: !small, flights, plant: () => footLock });
       animP = null; dirty = 3;
     }
     // "animated" needs the rig; auto: drop to simple bodies if this device can't keep up
@@ -2284,6 +2373,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
           motion += Math.abs(d);
         }
         fg.body.rotation.y = fg.heading;
+        if (useRig) anim.plantFeet(fg, dta, fg.fresh);              // (he is where he will be drawn: hold the feet that are down)
         if (!useRig) {
           // stride: legs and arms swing with speed, a little bob
           const amp = Math.min(1, sp / 14) * 0.75;
@@ -2382,6 +2472,10 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
                                          name: q.pl.name, look: fg.look, feet: +fg.H.toFixed(2), girth: +fg.build.girth.toFixed(2), reach: +fg.build.reach.toFixed(3),
                                          clips: r ? Object.keys(r.acts).filter((k) => r.acts[k].enabled).map((k) => k + ":" + r.acts[k].weight.toFixed(2)) : [] }; }) : [] }),
              cues: (p) => (anim ? anim.cues(p) : null),
+             plantFeet: (on) => { footLock = !!on; dirty = 3; },      // (for comparing with and without, under ?debug)
+             feet: () => Object.values(figures).filter((fg) => fg.rig && fg.root.visible).map((fg) => ({ key: fg.key, ...Object.fromEntries(
+               ["Left", "Right"].map((sd) => { const f = fg.rig.feet[sd] || {}, at = fg.rig.bones[sd + "Foot"].getWorldPosition(new THREE.Vector3());
+                 return [sd, { down: !!f.down, held: !!f.on, stepping: f.wait > 0, at: [+at.x.toFixed(3), +at.y.toFixed(3), +at.z.toFixed(3)] }]; })) })),
              orbit: (yaw, pitch, zoom) => { user.yaw = yaw; user.pitch = pitch; user.zoom = zoom; dirty = 3; },
              get preset() { return preset; }, flights, trail: () => ({ visible: trail.visible, alpha: trailAlpha, rgb: trailShown && trailShown.rgb }),
              stats: () => ({ frames: perf.frames, msPerFrame: perf.frames ? perf.ms / perf.frames : 0,

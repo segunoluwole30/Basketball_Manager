@@ -292,6 +292,96 @@ class AnimatedPlayersTests(unittest.TestCase):
         self.assertNotIn("Math.max(0.6, ", view.split("// ---- camera", 1)[0].split("// the ball (true size)", 1)[1])
         self.assertIn("bY = Math.max(BALL_R, bY);", view)          # it rests on the floor at its own radius
 
+    def _look_of(self):
+        """lookOf and what it needs, lifted out of the viewer to run under node (or None)."""
+        import shutil
+        if not shutil.which("node"):
+            return None
+        src = self.template
+        hash_fn = "const hash = " + src.split("const hash = ", 1)[1].split("\n", 1)[0]
+        body = src.split("  const HAIR_STYLES", 1)[1].split("  // What each action cue plays", 1)[0]
+        return hash_fn + "\nconst HAIR_STYLES" + body
+
+    def test_faces_lean_weakly_on_skin_tone(self):
+        """Every face shape is common for every skin tone, and the blend varies by player."""
+        import subprocess
+        src = self.template
+        lean = json.loads(re.sub(r"(\w+):", r'"\1":', src.split("const FACE_LEAN = ", 1)[1].split(";", 1)[0]))
+        self.assertEqual(set(lean), {"dark", "mid", "light"})
+        for odds in lean.values():
+            self.assertEqual(sum(odds), 100)
+            self.assertGreaterEqual(min(odds), 28)                 # no shape rare for any tone
+            self.assertLessEqual(max(odds), 42)                    # a nudge, not a rule
+        js = self._look_of()
+        if js is None:
+            self.skipTest("node not installed")
+        js += """
+const out = {};
+for (let tone = 0; tone < 7; tone++) {
+  const lead = [0, 0, 0], mixes = new Set(); let second = 0, n = 600;
+  for (let i = 0; i < n; i++) {
+    const f = lookOf({ name: "Test Player " + tone + "-" + i * 13 }, tone).face;
+    if (!(f.length === 3 && f.every((v) => v >= 0 && v <= 1) && f[0] + f[1] + f[2] <= 1.0001)) throw new Error("bad face " + f);
+    lead[f.indexOf(Math.max(...f))]++; mixes.add(f.map((v) => v.toFixed(1)).join(","));
+    if ([...f].sort((a, b) => b - a)[1] > 0.15) second++;
+  }
+  out[tone] = { lead: lead.map((c) => c / n), mixes: mixes.size, second: second / n };
+}
+const a = lookOf({ name: "Same Name" }, 3).face, b = lookOf({ name: "Same Name" }, 3).face;
+const stored = lookOf({ name: "Same Name", look: { face: [0, 1, 0] } }, 3).face;
+const junk = ["x", [1, 2, 3], [1, 0], [0.5, "0", 0], null].map((v) => lookOf({ name: "Same Name", look: { face: v } }, 3).face);
+console.log(JSON.stringify({ out, same: JSON.stringify(a) === JSON.stringify(b), stored, junk, a }));
+"""
+        res = json.loads(subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True, timeout=60).stdout)
+        for tone, d in res["out"].items():
+            for share in d["lead"]:
+                self.assertGreater(share, 0.2, (tone, d))          # each shape leads for a real share of players
+                self.assertLess(share, 0.5, (tone, d))
+            self.assertGreater(d["mixes"], 40, (tone, d))          # many blends, not three types
+            self.assertGreater(d["second"], 0.3, (tone, d))        # a second shape is often mixed in
+        self.assertTrue(res["same"])                               # the same every time, from his name
+        self.assertEqual(res["stored"], [0, 1, 0])                 # a face set in the editor wins
+        for face in res["junk"]:
+            self.assertEqual(face, res["a"])                       # anything else: back to the name's
+
+    def test_stored_face_and_the_light_model(self):
+        """The light model has no face shapes: a stored face is simply not applied there."""
+        light = read_glb(PLAYER_ASSETS["player_light.glb"])[4]
+        self.assertEqual(light["meshes"][0]["extras"]["targetNames"], ["bulk"])
+        src = self.template
+        self.assertIn("const shapes = o.morphTargetDictionary, set = (name, v) => { if (shapes && shapes[name] !== undefined)", src)
+        self.assertIn("face: validFace(L.face) ? L.face.map(Number) :", src)
+        from hoopsim.editor import LOOK_FACES, LOOK_KEYS
+        self.assertIn("face", LOOK_KEYS)
+        self.assertEqual(LOOK_FACES, len(re.findall(r"\"face_[abc]\"", src.split("if (Array.isArray(lk.face))", 1)[1].split("\n", 1)[0])))
+
+    def test_clip_speeds_and_footwork(self):
+        """Each moving loop carries its natural speed and stride, measured in the build; the
+        viewer plays the cycle so the stride covers the ground, and holds the feet that are down."""
+        for name in ("player.glb", "player_light.glb"):
+            meta = read_glb(PLAYER_ASSETS[name])[4]["extras"]["hoopsim"]
+            self.assertAlmostEqual(meta["body"]["ankle"], 0.33, delta=0.08)
+            moving = {n: c for n, c in meta["clips"].items() if c.get("speed")}
+            self.assertEqual(set(moving), {"walk", "jog", "sprint", "backpedal", "slide", "slide_m", "dribble_walk", "dribble_run"})
+            for n, c in moving.items():
+                self.assertAlmostEqual(c["stride"], c["speed"] * c["duration"], delta=0.01, msg=n)
+                self.assertTrue(2 < c["speed"] < 25 and 3 < c["stride"] < 15, (n, c))
+            for n in ("idle", "stance", "dribble_idle", "screen"):
+                self.assertFalse(meta["clips"][n].get("speed"), n)   # standing clips add no stride
+                self.assertNotIn("stride", meta["clips"][n])
+        src = self.template
+        # the cycle's rate comes from the blend's stride and the replay's speed, not a clamp per clip
+        self.assertIn("stride += r.w[name] * CL[name].speed * CL[name].duration;", src)
+        self.assertIn("Math.min(sp * sum / stride, STEP_MAX * mov / cycle)", src)
+        self.assertNotIn("Math.max(0.55, Math.min(1.5, sp / CL[name].speed))", src)
+        # planted feet: after he is placed and turned, for the animated and light models alike
+        view = src.split("function createView3D(", 1)[1]
+        self.assertIn("if (useRig) anim.plantFeet(fg, dta, fg.fresh);", view)
+        self.assertLess(view.index("fg.body.rotation.y = fg.heading;"), view.index("anim.plantFeet(fg, dta, fg.fresh);"))
+        self.assertEqual(src.count("function plantFeet(fg, dta, fresh) {"), 1)
+        # bones the viewer turns are brought back to the clip's pose first (the mixer skips unchanged values)
+        self.assertIn("for (const b of r.adjusted) clipPose(b);", src)
+
     def test_light_model(self):
         """The same player with far fewer triangles: same skeleton, clips and parts."""
         full, light = (read_glb(PLAYER_ASSETS[n])[4] for n in ("player.glb", "player_light.glb"))
