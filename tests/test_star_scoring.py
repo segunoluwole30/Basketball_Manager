@@ -88,6 +88,8 @@ class StarInGamesTests(unittest.TestCase):
     def setUpClass(cls):
         lg = generate_league(seed=21, num_teams=4, systems=False)
         cls.lg, cls.star = lg, make_star(lg, 1)
+        for p in lg.players.values():      # the same foul drawing for all: only the share differs
+            p.attributes.drawing_fouls = 10
         cls.on = cls.play(DEFAULT_TUNING)
         cls.off = cls.play(replace(DEFAULT_TUNING, usage_ceiling=0.0, foul_draw=0.0))
 

@@ -1853,6 +1853,19 @@ How ratings are derived:
   * **Shot load.** The engines give shots to the best scorers, so usage rate is added to
     the scoring ratings (half for threes). A 30%-usage star out-shoots a 15%-usage
     spot-up shooter with the same percentages.
+  * **A soft top for scoring.** Other z-scores stop at ±2.8, but the scoring ones bend
+    toward 3.6 past 2.0 (`soft_top`, the same curve as the engine's usage ceiling). With
+    the hard clamp about 60 players had the same top scoring z-score; now the best
+    scorers keep a notch over the next tier (the statistical engine's scoring skill of
+    the real top 10 is 0.4 above the next 20 scorers', from 0.2).
+  * **Foul drawing** (`foul_drawing`). Free-throw attempts against what the player's shot
+    mix would earn at the engine's base rates (a rim attacker is expected to get to the
+    line more than a spot-up shooter), shrunk toward the league by 40 attempts. The
+    engine already gives a high-usage scorer more whistles, so that part comes out too.
+    The rest is put in the engine's units (each point is ×1.105 on his shooting-foul
+    odds) and centred so the shot-weighted rating is the engine's centre: team free
+    throws stay where a generated league has them. Players with few shots lean on their
+    other ratings, as old saves do.
   * **Shares on a log scale.** Rebound and assist rates count on a log scale, so the
     top bigs and playmakers aren't pushed to the rating cap. Part of a player's height
     is taken out of his rebound ratings, because the engines already favour tall
@@ -1866,8 +1879,9 @@ How ratings are derived:
   rostered ability 93, 90th percentile ~125), so the engines stay calibrated.
 * **Other attributes:**
   * potential from age;
-  * shot tendencies as above; passing and cutting tendencies from assist rate and
-    assisted shots;
+  * shot tendencies as above; the passing (pass-first) tendency from assists for his
+    share of the ball (assist rate over usage rate), so a star who scores and passes
+    isn't held back as a pass-first player; cutting from assisted shots at the rim;
   * injury proneness partly from games missed;
   * physique from the roster's height and weight;
   * salary rules approximately 2026-27 (cap $165M, tax $201M, minimum $1.27M, MLE
@@ -1886,7 +1900,10 @@ compared with 2025-26 (players with 30+ games and 15+ minutes):
 
 The best scorers used to average close to 40 points, as in generated leagues; that was
 the engine's and is fixed (see "Star scoring" under the match engine; the table above is
-from before it: now 0.87 and −0.5). (The minutes shape, which gave about 130 players 30+
+from before it). With foul drawing, the soft top for scoring and the pass-first tendency
+(see "Foul drawing and the top scorers") the correlation is 0.885 and the top-60 bias
++0.3; team wins against 2025-26 correlate 0.70 (mean miss 8.2) when 2025-26 wins are
+estimated from the players' win shares. (The minutes shape, which gave about 130 players 30+
 minutes, is fixed: see "Minutes" below.)
 
 **Minutes** (`hoopsim/lineup.py` `plan_rotation`). The coach shares out the 240 minutes by
@@ -1933,7 +1950,8 @@ agents, along with veterans unsigned since last season.
 ### In-game editor (`hoopsim/editor.py`, web: **Editor**)
 Like Football Manager's editor, it shows **true** ratings, with no scouting fog. You
 can change any player's:
-* ratings, hidden ratings and tendencies (1-20 sliders);
+* ratings (including drawing fouls, with the scoring ratings), hidden ratings and
+  tendencies (1-20 sliders);
 * potential (never below current ability);
 * name, birth date, nationality, position(s), height, wingspan, weight and jersey;
 * morale, an injury (heal it), contract (salary, end season, option) and team;
@@ -1981,8 +1999,13 @@ League ── rules: LeagueRules (cap, roster limits, quarter length, shot clock
 ```
 
 **Player**
-- `Attributes`: 20 visible 1–20 ratings (scoring, playmaking, defence,
-  rebounding, physical, mental). 10 is a league-average pro.
+- `Attributes`: 21 visible 1–20 ratings (scoring, playmaking, defence,
+  rebounding, physical, mental). 10 is a league-average pro. `drawing_fouls` (getting
+  to the free-throw line) is the newest: it is shown with the scoring ratings, read by
+  the statistical engine's shooting fouls, and doesn't count toward current ability
+  (`ABILITY_ATTRIBUTES` are the other 20). Saves and league files from before it get
+  one from finishing, strength, close range, ball handling and vertical
+  (`derived_drawing_fouls`).
 - `HiddenAttributes`: consistency, clutch, injury proneness, work ethic,
   professionalism, ambition, loyalty. These feed the engine and development, not the UI.
 - `current_ability` (CA, 1–200) is *derived*: a position-weighted mean of the
@@ -2005,7 +2028,11 @@ That target is PA × an age development curve, which peaks at 27. Ageing vets lo
 physical attributes first. Point guards shoot threes about as well as shooting
 guards, and half of power forwards and a third of centres are drawn as stretch bigs
 (+5 three-point, +1 mid-range, -1 close range on the template; the level shift still
-lands them on their target CA). Salaries follow a steep curve on CA. Rosters are filled
+lands them on their target CA). Foul drawing follows finishing, strength, close range,
+ball handling and vertical, plus a personal spread (sd 2.5): about 10 on average with
+an sd of 3.5, and 14 for a league's 30 best players. It is drawn from its own random
+numbers, so every other rating of a generated league is what it was before the rating
+existed (the same goes for its summer development). Salaries follow a steep curve on CA. Rosters are filled
 by a snake draft with noisy scouting, so there are strong and weak teams without
 absurd gaps. `auto_lineup` (in `lineup.py`) brute-forces the best starting five and
 shares out 240 minutes. The schedule is NBA-shaped (see below).
@@ -2104,7 +2131,7 @@ clock -> turnover? (handler security vs defenders' hands, press/zone)
       -> non-shooting foul? (bonus free throws from the 5th team foul)
       -> shooter (weighted by scoring skill; shares level off past 22%) -> zone: rim / close / mid / three
          (player tendencies x team 3PT rate x offensive focus x defence scheme)
-      -> block? -> shooting foul? (and-ones) -> make? (shooter vs matchup defender
+      -> block? -> shooting foul? (drawing fouls, shot share; and-ones) -> make? (shooter vs matchup defender
          and rim protector, home edge, clutch, form) -> assist
       -> miss: rebound battle (rating + height + crash-the-glass) -> putback or reset
 ```
@@ -2186,7 +2213,8 @@ A star's own shot is nearly always his offence's best-valued option, so he kept 
   the 1st option (×2.5). A needed three or a heave still goes to the shooters.
 * **The go-to scorer draws the fouls.** Shooting-foul odds are multiplied by
   `exp(2.5 × (share − 0.215))`, so a 33% option draws about a third more. Team free
-  throws stay the same.
+  throws stay the same. (On top of this, the `drawing_fouls` rating now sets how often
+  each player gets to the line: see below.)
 
 **What changed (spatial engine, `HalfCourtGame.usage_bias`):** a player's running share of
 his team's shots while he's on the floor costs value on his own shots and on passes to him:
@@ -2218,10 +2246,10 @@ switches both off.
 | top-60 scorers, points bias | +1.1 | −0.5 |
 | players with 28+ / 22+ / 20+ (real: 5 / 26 / 44) | 11-14 / 30-35 / 43-44 | 5-7 / 30-33 / 43-44 |
 
-The builder's "Shot load" stays as it is: weakening it lowered the correlation. A gap
-remains: the real league's very best scorers (28+ in 2025-26) come out about 4 points
-short. Their ratings sit at the cap with the next 30 scorers, and they draw fewer free
-throws than in life (about 6 a game against 9-10).
+The builder's "Shot load" stays as it is: weakening it lowered the correlation. The gap
+this left at the very top (the real league's best scorers came out about 4 points short,
+drawing about 5 free throws a game against 8) is narrowed by foul drawing; see "Foul
+drawing and the top scorers" below.
 
 **Team level** stays put:
 * Statistical calibration is 17/17. Points went from 112.6 to 113.7, free throws from
@@ -2239,6 +2267,84 @@ throws than in life (about 6 a game against 9-10).
   (21.75).
 * Set plays now add about 10% to possession time rather than 16%
   (`tests/test_plays.py`). The usage penalty lengthens a plain offence too.
+
+### Foul drawing and the top scorers
+
+Two things kept the real league's best scorers about 4 points a game short: nothing
+player-specific said who gets to the free-throw line (the best scorers drew about 5 free
+throws a game against 8 in life), and about 60 players shared the top scoring ratings,
+so the engine couldn't tell the league's best scorer from the 30th.
+
+**A foul-drawing rating.** `Attributes.drawing_fouls` (1-20; see "Data model"):
+* **Statistical engine.** Shooting-foul odds are multiplied by
+  `exp(foul_drawing × (rating − foul_drawing_centre))` (0.10 a point; centre 11.85, the
+  shot-weighted average rating, so team free throws stay put), on top of the shot-share
+  term above. It replaces the old strength term (0.05 a point of strength), which the
+  rating now carries. The same factor picks who is fouled in the bonus. The odds are
+  capped at 0.6 a shot, for edited extremes.
+* **Generation**, **development**, **old saves** and the **editor**: see "Generation",
+  "Data model" and "In-game editor". It doesn't count toward current ability, and it is
+  drawn from its own random numbers, so generated leagues are otherwise unchanged.
+* **Builder**: free-throw attempts beyond the shot mix and usage (see "How ratings are
+  derived"). The top 10 scorers of 2025-26 rate 11-18.
+* **Spatial engine: not yet.** Its shooting fouls still follow the shot share only. Using
+  the rating there (the same factor on `shooting_foul`) is a follow-up, once the
+  engine's retraining is done.
+
+**The top of the scoring ratings (builder).** Scoring z-scores bend toward 3.6 instead of
+stopping at 2.8 (`soft_top`), so the elite rate a notch above the next tier (engine
+scoring skill 0.4 above the next 20 scorers', from 0.2). The pass-first tendency is now
+assists for his share of the ball: it used to follow the assist rate alone, so the
+creators who score and pass were treated as pass-first and lost shots (the statistical
+engine takes 3% of a player's shot weight off per point of the tendency). In starting
+lineups the real top 10 used to get a smaller raw share of the shots than the next 20
+(0.29 against 0.31); now they get the same (0.32).
+
+**Real league against 2025-26** (statistical engine, three seasons, players with 30+
+games and 15+ minutes; "top 10" are the real top 10 scorers):
+
+| | 2025-26 | before | after |
+|---|---|---|---|
+| points per game, correlation | | 0.871 | 0.885 |
+| top-60 scorers, points bias | | −0.45 | +0.30 |
+| players with 28+ / 22+ / 20+ | 5 / 26 / 44 | 5-7 / 30-33 / 43-44 | 8-13 / 34-36 / 40-47 |
+| top 10: points per game | 28.8 | 24.8 | 26.0 |
+| top 10 without the three who share a team in 2026-27: points vs real | | −2.4 | −0.9 |
+| top 10: free throws per game (top 5) | 7.8 (8.0) | 5.3 (5.1) | 6.7 (6.9) |
+| top 10: shot plays per 36 minutes | 28.0 | 24.9 | 26.2 |
+| real 11th-30th scorers: points per game | 24.0 | 24.5 | 25.7 |
+| top 10 assist men: assists per game | 8.3 | 8.3 | 7.6 |
+| team free throws per game | 23.5 | 21.1 | 22.1 |
+| team wins vs 2025-26 (from win shares), correlation / mean miss | | 0.66 / 8.4 | 0.70 / 8.2 |
+
+**Generated leagues** (30 teams, seeds 0 / 1 / 2):
+
+| | NBA 2025-26 | before | after |
+|---|---|---|---|
+| top scorer (ppg) | 33.5 | 33.5 / 32.3 / 32.1 | 34.3 / 33.5 / 32.8 |
+| players 28+ / 22+ ppg | 5 / 26 | 3, 4, 1 / 21, 21, 14 | 6, 5, 2 / 19, 23, 19 |
+| top 10 scorers: free throws per game | 7.8 | 5.9 / 6.8 / 4.7 | 7.7 / 7.8 / 7.0 |
+| team points per game | | 112.8 / 115.1 / 111.9 | 112.1 / 114.5 / 112.5 |
+| team free throws per game | | 21.8 / 22.1 / 21.5 | 21.4 / 21.6 / 21.8 |
+
+`python -m hoopsim.calibrate` stays 17/17: points 113.7 → 112.9, free throws 21.9 → 22.1,
+free-throw % 0.788 → 0.795 (the ball handlers who now draw more fouls shoot them better
+than the strong bigs who drew them before). The spatial engine is untouched.
+
+**Gaps that remain:**
+* **The next tier scores too efficiently.** The real 11th-30th scorers now get to the line
+  as often as in life (6.2 a game), but their field-goal efficiency was already too high
+  (eFG 0.569 against 0.544), so they score 1.7 points too many and the 28+ and 22+ counts
+  run high. Weakening the builder's shot load doesn't fix it (it lowers the correlation
+  and leaves their eFG where it is).
+* **The best scorers take too few shots.** 26 shot plays per 36 minutes against 28: their
+  scoring ratings are at 19-20, and the engine's usage ceiling bends a 32% raw share to
+  29%. A later knee (0.245) gave them 0.6 points more but 9-14 players at 28+.
+* **Three of the real top 10 share a team in the 2026-27 rosters** and take shots from each
+  other: about 7 points short each.
+* Free throws for the top 10 are 6.7 a game against 7.8: the builder takes out the part
+  of a star's free-throw rate that his usage explains, and in the engine his share is a
+  little lower than his real usage.
 
 ## Season loop (`hoopsim/season.py`)
 

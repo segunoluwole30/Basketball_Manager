@@ -8,7 +8,7 @@ from __future__ import annotations
 import math
 import random
 
-from .models import ATTR_MAX, ATTR_MIN, Attributes, HiddenAttributes, Player
+from .models import ABILITY_ATTRIBUTES, ATTR_MAX, ATTR_MIN, Attributes, HiddenAttributes, Player
 
 PHYSICAL = ("speed", "strength", "vertical", "stamina")
 MENTAL = ("basketball_iq", "composure")
@@ -44,7 +44,7 @@ def develop(player: Player, age: int, minutes_per_game: float, rng: random.Rando
 
     values = player.attributes.to_dict()
     original = dict(values)
-    for name in values:
+    for name in ABILITY_ATTRIBUTES:
         delta = base
         if name in PHYSICAL and age >= 29:
             delta -= 0.3                               # athleticism goes first
@@ -57,12 +57,20 @@ def develop(player: Player, age: int, minutes_per_game: float, rng: random.Rando
 
     # Never grow past potential: take back this summer's gains until under it.
     while player.current_ability > player.potential_ability:
-        gained = [n for n in values if values[n] > original[n]]
+        gained = [n for n in ABILITY_ATTRIBUTES if values[n] > original[n]]
         if not gained:
             break
         n = rng.choice(gained)
         values[n] -= 1
         player.attributes = Attributes(**values)
+
+    # Foul drawing (not part of ability) follows the same curve, from its own random
+    # numbers, so the other ratings develop exactly as they did before it existed.
+    side = random.Random(f"drawing_fouls|{player.id}|{age}|{original['drawing_fouls']}")
+    delta = base + breakout + side.gauss(0, 0.5)
+    delta *= work * playing * headroom if delta > 0 else pro
+    values["drawing_fouls"] = max(ATTR_MIN, min(ATTR_MAX, values["drawing_fouls"] + _round_random(delta, side)))
+    player.attributes = Attributes(**values)
 
     if age >= 30:   # older bodies break down more
         hidden = player.hidden.to_dict()

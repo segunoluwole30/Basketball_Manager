@@ -411,3 +411,59 @@ class BuilderRatingTests(unittest.TestCase):
         # Rates count on a log scale: doubling assists adds the same at any level.
         p = lambda a: f(self.player(ast=a, mp=1e6))["passing"]  # noqa: E731
         self.assertAlmostEqual(p(40) - p(20), p(20) - p(10), places=3)
+
+    def rated(self, fta_rate=0.25, rim=0.3, usg=18.0, fga=1000.0):
+        """A made-up player for foul_drawing: average ratings, this free-throw rate and rim share."""
+        from hoopsim.models import ABILITY_ATTRIBUTES
+        st = self.stats(usg=usg, fga=fga)
+        st["tot"]["fta"] = fta_rate * fga
+        st["zones"]["00_03"] = (rim * fga, rim * 0.65 * fga)
+        st["zones"]["03_10"] = ((0.47 - rim) * fga, (0.47 - rim) * 0.42 * fga)
+        return {"stats": st, "attributes": dict.fromkeys(ABILITY_ATTRIBUTES, 10)}
+
+    def test_foul_drawing_is_free_throws_beyond_shot_mix_and_usage(self):
+        import math
+        from hoopsim.engine import DEFAULT_TUNING
+        extra = {"line": self.rated(fta_rate=0.45), "rim": self.rated(fta_rate=0.45, rim=0.45),
+                 "star": self.rated(fta_rate=0.45, usg=32), "few": self.rated(fta_rate=0.45, fga=30),
+                 "never": self.rated(fta_rate=0.08)}
+        out = self.b.foul_drawing([self.rated() for _ in range(40)] + list(extra.values()))
+        avg, ratings = out[0], dict(zip(extra, out[40:]))
+        self.assertGreater(ratings["line"], avg + 3)
+        self.assertLess(ratings["rim"], ratings["line"])      # rim attempts explain some of it
+        self.assertLess(ratings["star"], ratings["line"])     # the engine gives a star whistles anyway
+        self.assertLess(ratings["few"], ratings["line"])      # a small sample is shrunk
+        self.assertLess(ratings["never"], avg - 3)
+        # Centred: the shot-weighted rating is about the engine's centre.
+        self.assertAlmostEqual(avg, DEFAULT_TUNING.foul_drawing_centre, delta=1.5)
+        # The engine with those ratings gives the line-drawer about his real rate again.
+        ratio = math.exp(DEFAULT_TUNING.foul_drawing * (ratings["line"] - avg))
+        self.assertAlmostEqual(ratio, (0.45 * 1000 + 40) / (0.25 * 1000 + 40), delta=0.25)
+
+    def test_foul_drawing_without_a_sample_follows_the_ratings(self):
+        from hoopsim.models import Attributes, derived_drawing_fouls
+        rookie = self.rated(fga=0.0)
+        rookie["attributes"].update(finishing=18, strength=17)
+        got = self.b.foul_drawing([self.rated() for _ in range(10)] + [rookie])[-1]
+        self.assertEqual(got, derived_drawing_fouls(Attributes(**rookie["attributes"])))
+
+    def test_scoring_ratings_bend_toward_a_top(self):
+        f = self.b.soft_top
+        knee, top = self.b.SCORING_Z_KNEE, self.b.SCORING_Z_TOP
+        self.assertEqual(f(knee - 1), knee - 1)
+        out = [f(knee + i * 0.25) for i in range(40)]
+        self.assertTrue(all(b > a for a, b in zip(out, out[1:])))   # the order is kept...
+        self.assertLess(max(out), top)                               # ...below the top
+        self.assertAlmostEqual(f(knee + 1e-6), knee, places=5)       # continuous at the knee
+        # The best scorers keep a gap over the next tier (a hard clamp at 2.8 gave none).
+        self.assertGreater(f(6.0) - f(3.5), 0.3)
+
+    def test_pass_first_is_assists_for_his_share_of_the_ball(self):
+        a = dict.fromkeys(("finishing", "close_range", "mid_range", "three_point", "free_throw", "passing",
+                           "ball_handling", "vision", "speed", "strength", "basketball_iq"), 10)
+
+        def tend(ast, usg):
+            return self.b._tendencies({"stats": self.stats(ast=ast, usg=usg), "position": "PG"}, a)["passing"]
+        self.assertGreater(tend(30, 16), 14)                  # a pass-first point guard
+        self.assertLess(tend(30, 33), tend(30, 16))           # a star who scores and passes
+        self.assertLess(tend(10, 30), 8)                      # a scorer

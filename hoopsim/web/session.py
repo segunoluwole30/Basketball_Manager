@@ -356,7 +356,7 @@ class GameSession:
         p = self._find_player(int(pid))
         totals = season_totals(lg)
         row = self.player_row(p, totals)
-        groups = [("Scoring", ["finishing", "close_range", "mid_range", "three_point", "free_throw"]),
+        groups = [("Scoring", ["finishing", "close_range", "mid_range", "three_point", "free_throw", "drawing_fouls"]),
                   ("Playmaking", ["passing", "ball_handling", "vision"]),
                   ("Defence", ["perimeter_defense", "interior_defense", "stealing", "blocking"]),
                   ("Rebounding", ["offensive_rebounding", "defensive_rebounding"]),

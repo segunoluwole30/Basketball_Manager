@@ -109,6 +109,33 @@ class Attributes(_AttributeBlock):
     # Mental
     basketball_iq: int = 10
     composure: int = 10
+    # Scoring, added later (kept last so the order of the others, which generation and
+    # development draw random numbers in, stays the same): getting to the free-throw
+    # line. Shown with the scoring ratings. It doesn't count toward current ability.
+    drawing_fouls: int = 10      # draws shooting fouls (and gets the bonus free throws)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Attributes":
+        """Saves and league files from before ``drawing_fouls`` get one from his
+        other ratings (``derived_drawing_fouls``)."""
+        d = dict(d)
+        if "drawing_fouls" not in d:
+            d["drawing_fouls"] = derived_drawing_fouls(cls(**d))
+        return cls(**d)
+
+
+# Ratings that make up current ability (and that generation and development draw):
+# every attribute except drawing_fouls, in field order.
+ABILITY_ATTRIBUTES = tuple(n for n in Attributes.names() if n != "drawing_fouls")
+
+
+def derived_drawing_fouls(a: Attributes, noise: float = 0.0) -> int:
+    """Foul drawing that follows a player's other ratings: finishers, strong bodies,
+    post scorers and ball handlers who attack get to the line. Used for saves made
+    before the rating existed and (with ``noise``) for generated players."""
+    raw = (10 + 0.3 * (a.finishing - 10) + 0.2 * (a.strength - 10) + 0.15 * (a.close_range - 10)
+           + 0.15 * (a.ball_handling - 10) + 0.1 * (a.vertical - 10))
+    return clamp(raw + 0.5 + noise)
 
 
 @dataclass
@@ -164,7 +191,7 @@ _W = {
     Position.C:  (4, 3, 1, 0.5, 1, 1.5, 0.5, 1.5, 1, 4, 1, 4, 3, 4, 1, 4, 2, 2, 2, 2),
 }
 POSITION_WEIGHTS: dict[Position, dict[str, float]] = {
-    pos: dict(zip(Attributes.names(), w, strict=True)) for pos, w in _W.items()
+    pos: dict(zip(ABILITY_ATTRIBUTES, w, strict=True)) for pos, w in _W.items()
 }
 
 

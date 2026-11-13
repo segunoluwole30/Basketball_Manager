@@ -5,7 +5,7 @@ import { Empty, Fetched, money, Panel } from "../components/ui";
 import { TeamPicker } from "./Squad";
 
 const GROUPS: [string, string[]][] = [
-  ["Scoring", ["finishing", "close_range", "mid_range", "three_point", "free_throw"]],
+  ["Scoring", ["finishing", "close_range", "mid_range", "three_point", "free_throw", "drawing_fouls"]],
   ["Playmaking", ["passing", "ball_handling", "vision"]],
   ["Defence", ["perimeter_defense", "interior_defense", "stealing", "blocking"]],
   ["Rebounding", ["offensive_rebounding", "defensive_rebounding"]],
