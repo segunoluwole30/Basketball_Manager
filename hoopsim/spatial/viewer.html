@@ -984,6 +984,18 @@ window.GAME = /*GAME_DATA*/null;
     rebound: ["rebound", "release", 0, { face: "rim", reach: "ball" }],
     rebound_jump: ["rebound", "release", 0, { face: "rim", reach: "ball", noBall: true }],
   };
+  // Fluid movement (animated players). The replay moves players at ten positions a second and
+  // lets them reach full speed in a fifth of a second; drawn exactly, starts, stops and cuts
+  // look robotic. The drawn player follows his recorded position as a body with limits: he
+  // speeds up by at most MOVE_ACCEL and slows by at most MOVE_BRAKE (ft/s2), easing toward the
+  // speed that closes on where the replay has him (MOVE_CATCH per second, over MOVE_EASE s), and may trail it by MOVE_LAG ft (MOVE_LAG_TIGHT
+  // while he shoots, passes, catches or contests, so hands still meet the ball). He turns at
+  // most TURN_MAX rad/s.
+  const MOVE_ACCEL = 24, MOVE_BRAKE = 32, MOVE_CATCH = 5, MOVE_EASE = 0.1, MOVE_LAG = 1.3, MOVE_LAG_TIGHT = 0.45, TURN_MAX = 9;
+  // Lean: he tips into his acceleration (forward when he speeds up, back when he brakes, into a
+  // turn), LEAN radians per ft/s2 up to LEAN_MAX. Look: his chest and head turn toward the
+  // ball (the man with it: the rim) by up to LOOK_MAX radians, whichever way his legs point.
+  const LEAN = 0.0085, LEAN_MAX = 0.2, LOOK_MAX = 1.15, LOOK_CHEST = 0.28, LOOK_HEAD = 0.5;
   const STEP_RATE = 0.8, STEP_MAX = 1.7;      // a gait's easy cadence, and its fastest, as a share of the clip's own
   // planted feet: a foot counts as down within FOOT_ON ft of the floor (and until FOOT_OFF).
   // If holding it would stretch the leg more than FOOT_REACH ft from the clip, it takes a
@@ -1003,7 +1015,7 @@ window.GAME = /*GAME_DATA*/null;
     const kit = new THREE.MeshLambertMaterial({ vertexColors: true });
     const v1 = new THREE.Vector3(), v2 = new THREE.Vector3(), v3 = new THREE.Vector3(), v4 = new THREE.Vector3();
     const q1 = new THREE.Quaternion(), q2 = new THREE.Quaternion(), q3 = new THREE.Quaternion(), qF = new THREE.Quaternion(), qK = new THREE.Quaternion();
-    const vA = new THREE.Vector3(), vH = new THREE.Vector3(), vK = new THREE.Vector3(), vT = new THREE.Vector3(), AXIS_Z = new THREE.Vector3(0, 0, 1);
+    const vA = new THREE.Vector3(), vH = new THREE.Vector3(), vK = new THREE.Vector3(), vT = new THREE.Vector3(), AXIS_Z = new THREE.Vector3(0, 0, 1), AXIS_Y = new THREE.Vector3(0, 1, 0);
 
     function attach(fg, pl, H, skin) {
       const model = rig.clone(rig.gltf.scene), body = rig.meta.body, ph = fg.build;
@@ -1043,8 +1055,8 @@ window.GAME = /*GAME_DATA*/null;
       fg.body.add(model);
       fg.rig = { model, jersey, bones, mixer: new THREE.AnimationMixer(model), acts: {}, w: {}, k: H / H0,
                  phase: (hash(fg.key || pl.name) % 100) / 100, free: hash(pl.name) % 7, carry: [], active: [],
-                 ax: 0, az: 0, anchored: false, hand: new THREE.Vector3(), grip: 0, armRest: {}, feet: {},
-                 adjusted: ["LeftArm", "RightArm", "LeftUpLeg", "RightUpLeg", "LeftLeg", "RightLeg", "LeftFoot", "RightFoot"].map((n) => bones[n]).filter(Boolean) };
+                 ax: 0, az: 0, anchored: false, hand: new THREE.Vector3(), grip: 0, armRest: {}, feet: {}, busy: 0, pitch: 0, roll: 0, look: 0,
+                 adjusted: ["Spine1", "Head", "LeftArm", "RightArm", "LeftUpLeg", "RightUpLeg", "LeftLeg", "RightLeg", "LeftFoot", "RightFoot"].map((n) => bones[n]).filter(Boolean) };
       for (const sd of ["Left", "Right"]) if (bones[sd + "ForeArm"]) fg.rig.armRest[sd] = bones[sd + "ForeArm"].position.clone().normalize();
       return fg.rig;
     }
@@ -1061,6 +1073,30 @@ window.GAME = /*GAME_DATA*/null;
     function turnWorld(b, qWorld) {
       b.parent.getWorldQuaternion(q2);
       b.quaternion.premultiply(q2).premultiply(qWorld).premultiply(q2.invert());
+    }
+    // Lean and look, once he is placed and turned (before the feet are planted, which then
+    // holds them under the tipped body). acc: his drawn acceleration (world X, Z, ft/s2);
+    // (lx, lz): the point he watches.
+    function carry(fg, acc, lx, lz, dtg, fresh) {
+      const r = fg.rig, h = fg.heading, free = 1 - 0.8 * Math.min(1, r.busy || 0);
+      // acceleration in his own frame: forwards, and to his left
+      const af = acc[0] * Math.sin(h) + acc[1] * Math.cos(h), al = acc[0] * Math.cos(h) - acc[1] * Math.sin(h);
+      const k = fresh ? 1 : 1 - Math.exp(-dtg / 0.18), cap = (v) => Math.max(-LEAN_MAX, Math.min(LEAN_MAX, v));
+      r.pitch += (cap(af * LEAN) * free - r.pitch) * k;
+      r.roll += (cap(al * LEAN) * free - r.roll) * k;
+      r.model.rotation.set(r.pitch, 0, -r.roll);
+      // how far round the point is from where his legs face; past LOOK_MAX he doesn't crane
+      let yaw = wrapAngle(Math.atan2(lx - fg.x, lz - fg.z) - h);
+      yaw = Math.abs(yaw) > 2.4 ? 0 : Math.max(-LOOK_MAX, Math.min(LOOK_MAX, yaw));     // (behind him: eyes front)
+      r.look += (yaw * free - r.look) * (fresh ? 1 : 1 - Math.exp(-dtg / 0.22));
+      if (Math.abs(r.look) < 0.01) return;
+      fg.root.updateMatrixWorld(true);
+      for (const [name, share] of [["Spine1", LOOK_CHEST], ["Head", LOOK_HEAD]]) {
+        const b = r.bones[name];
+        if (!b) continue;
+        turnWorld(b, q1.setFromAxisAngle(AXIS_Y, r.look * share));
+        adjustedPose(b);
+      }
     }
     // Planted feet. A foot that is down is held where it landed while the clip (whose stride
     // never matches the replay exactly) and a turning body would drag it along the floor:
@@ -1190,7 +1226,7 @@ window.GAME = /*GAME_DATA*/null;
       const fout = c.hold ? 1 : smooth01((c.dur - tl) / Math.min(0.28, c.dur / 3));
       return Math.min(fin, fout) * (c.w || 1);
     }
-    function reset(fg) { const r = fg.rig; r.carry = []; r.active = []; r.w = {}; r.grip = 0; r.anchored = false; r.feet = {}; }
+    function reset(fg) { const r = fg.rig; r.carry = []; r.active = []; r.w = {}; r.grip = 0; r.anchored = false; r.feet = {}; r.pitch = r.roll = r.look = 0; }
     // The possession moved on without a cut: clips still running play out on their own clock.
     function carryOver(fg) {
       const r = fg.rig;
@@ -1310,6 +1346,7 @@ window.GAME = /*GAME_DATA*/null;
         adjustedPose(arm);
       }
       r.model.position.y = lift;
+      r.busy = used;                                              // how much of him a one-shot clip has
       r.ballCue = ballCue; r.dribbling = dribbling && !ballCue;
       // a dunk in progress: the ball stays in his hands to the rim, then drops through the net
       r.slam = null;
@@ -1347,7 +1384,7 @@ window.GAME = /*GAME_DATA*/null;
     }
     // is the shot released at this frame a dunk (so: no arc to trail)?
     const dunkAt = (p, f) => cues(p).some((l) => l.some((c) => c.slam && Math.abs(c.slam - 0.32 - f * env.dt) < 0.3));
-    return { attach, update, plantFeet, ballInHand, cues, reset, carryOver, dunkAt, detail: rig.meta.detail || "full", clips: CL, names: Object.keys(clips) };
+    return { attach, update, carry, plantFeet, ballInHand, cues, reset, carryOver, dunkAt, detail: rig.meta.detail || "full", clips: CL, names: Object.keys(clips) };
   }
 
   // ---- the arena round the 3D court: stands, crowd, benches, boards, roof. Built the first
@@ -2284,7 +2321,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     }
 
     // ---- animated bodies: the rig arrives after the view is up (or never: simple bodies stay)
-    let anim = null, bodyMode = "simple", bodyAuto = false, onSlow = null, footLock = true;
+    let anim = null, bodyMode = "simple", bodyAuto = false, onSlow = null, footLock = true, fluid = true;
     let animP = null, over = 0, grip = 0, slowT = 0, slowN = 0;
     const gripPos = new THREE.Vector3();
     function setRig(rig) {
@@ -2332,13 +2369,44 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       for (const q of st.players) {
         const fg = figure(q.key, q.pl);
         const [tx, tz] = toWorld(q.x, q.y);
-        const vX = q.vy, vZ = q.vx, sp = Math.hypot(vX, vZ);
-        q.vX = vX; q.vZ = vZ; q.sp = sp;
+        let vX = q.vy, vZ = q.vx, sp = Math.hypot(vX, vZ);
         if (useRig && !fg.rig) anim.attach(fg, q.pl, fg.H, fg.skin);
         if (fg.rig) fg.rig.model.visible = useRig;
         fg.simple.visible = !useRig;
         // light damping on top of the spline, never more than 0.6 ft from the truth
-        if (snap || fg.seen !== seen - 1 || Math.hypot(tx - fg.x, tz - fg.z) > 6) { fg.x = tx; fg.z = tz; fg.fresh = true; }
+        if (snap || fg.seen !== seen - 1 || Math.hypot(tx - fg.x, tz - fg.z) > 6) {
+          fg.x = tx; fg.z = tz; fg.fresh = true; fg.vx = vX; fg.vz = vZ; fg.ax = fg.az = 0;
+        } else if (useRig && fluid) {
+          // Animated: a body with limits follows the recorded position (see MOVE_ACCEL above).
+          // Only while the game runs: paused, he stays where he is drawn.
+          fg.fresh = false;
+          if (live && dtg > 0) {
+            const lim = fg.rig.busy > 0.2 || q === st.holder ? MOVE_LAG_TIGHT : MOVE_LAG;
+            const n = Math.max(1, Math.ceil(dtg / 0.034)), hstep = dtg / n, vx0 = fg.vx, vz0 = fg.vz;
+            const rest = sp < 1.2 && Math.hypot(fg.vx, fg.vz) < 1.2 && Math.hypot(tx - fg.x, tz - fg.z) < 0.45;   // standing: he stays put
+            for (let i = 1; i <= n && !rest; i++) {
+              const back = dtg - i * hstep, gx = tx - vX * back, gz = tz - vZ * back;        // where the replay has him at this step
+              let dvx = vX + (gx - fg.x) * MOVE_CATCH - fg.vx, dvz = vZ + (gz - fg.z) * MOVE_CATCH - fg.vz;
+              const ease = 1 - Math.exp(-hstep / MOVE_EASE);       // (he takes a moment to change his speed at all)
+              dvx *= ease; dvz *= ease;
+              const dv = Math.hypot(dvx, dvz), slowing = dvx * fg.vx + dvz * fg.vz < 0;
+              const most = (slowing ? MOVE_BRAKE : MOVE_ACCEL) * hstep;
+              if (dv > most) { dvx *= most / dv; dvz *= most / dv; }
+              fg.vx += dvx; fg.vz += dvz;
+              fg.x += fg.vx * hstep; fg.z += fg.vz * hstep;
+              const off = Math.hypot(gx - fg.x, gz - fg.z);
+              if (off > lim) {                                    // no further behind than that: he is carried along
+                fg.x = gx + (fg.x - gx) * lim / off; fg.z = gz + (fg.z - gz) * lim / off;
+                fg.vx += (vX - fg.vx) * 0.5; fg.vz += (vZ - fg.vz) * 0.5;
+              }
+            }
+            if (rest) { fg.vx *= Math.exp(-dtg / 0.1); fg.vz *= Math.exp(-dtg / 0.1); }
+            const ka = 1 - Math.exp(-dtg / 0.1);
+            fg.ax += ((fg.vx - vx0) / dtg - fg.ax) * ka; fg.az += ((fg.vz - vz0) / dtg - fg.az) * ka;
+            vX = fg.vx; vZ = fg.vz; sp = Math.hypot(vX, vZ);    // his clips and his facing follow how he is drawn to move
+            motion += 1;
+          }
+        }
         else if (useRig && sp < 1.2 && Math.hypot(tx - fg.x, tz - fg.z) < 0.45) fg.fresh = false;   // standing: feet stay planted
         else {
           const kk = 1 - Math.exp(-dtg / 0.07);
@@ -2348,6 +2416,8 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
           fg.fresh = false;
           motion += Math.abs(tx - fg.x) + Math.abs(tz - fg.z);
         }
+        q.vX = vX; q.vZ = vZ; q.sp = sp;
+        fg.lag = Math.hypot(tx - fg.x, tz - fg.z);
         fg.seen = seen;
         fg.root.visible = true;
         fg.root.position.set(fg.x, 0, fg.z);
@@ -2368,11 +2438,16 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
         }
         if (fg.fresh) fg.heading = want;
         else {
-          const d = wrapAngle(want - fg.heading);
-          fg.heading += d * (1 - Math.exp(-dtg * turnK));
+          const d = wrapAngle(want - fg.heading), most = useRig && fluid ? (turnK > 9 ? 1.6 : 1) * TURN_MAX * dtg : 9;
+          fg.heading += Math.max(-most, Math.min(most, d * (1 - Math.exp(-dtg * turnK))));
           motion += Math.abs(d);
         }
         fg.body.rotation.y = fg.heading;
+        if (useRig) {
+          const mine = q === st.holder;                           // lean into how he moves; watch the ball (with it: the rim)
+          anim.carry(fg, fluid && live ? [fg.ax || 0, fg.az || 0] : [0, 0], mine ? rimX : st.ball.x, mine ? 0 : st.ball.z, dtg, fg.fresh || !fluid);
+          if (!fluid) { fg.rig.pitch = fg.rig.roll = fg.rig.look = 0; fg.rig.model.rotation.set(0, 0, 0); }
+        }
         if (useRig) anim.plantFeet(fg, dta, fg.fresh);              // (he is where he will be drawn: hold the feet that are down)
         if (!useRig) {
           // stride: legs and arms swing with speed, a little bob
@@ -2469,10 +2544,11 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
              bodies: () => ({ mode: bodyMode, rig: !!anim, detail: anim ? anim.detail : null, auto: bodyAuto, clips: anim ? anim.names : [],
                               players: st ? st.players.map((q) => { const fg = figures[q.key], r = fg && fg.rig;
                                 return { key: q.key, n: q.n, off: q.off, sp: +(q.sp || 0).toFixed(1), animated: !!(r && r.model.visible),
-                                         name: q.pl.name, look: fg.look, feet: +fg.H.toFixed(2), girth: +fg.build.girth.toFixed(2), reach: +fg.build.reach.toFixed(3),
+                                         name: q.pl.name, lag: +(fg.lag || 0).toFixed(2), look: fg.look, feet: +fg.H.toFixed(2), girth: +fg.build.girth.toFixed(2), reach: +fg.build.reach.toFixed(3),
                                          clips: r ? Object.keys(r.acts).filter((k) => r.acts[k].enabled).map((k) => k + ":" + r.acts[k].weight.toFixed(2)) : [] }; }) : [] }),
              cues: (p) => (anim ? anim.cues(p) : null),
              plantFeet: (on) => { footLock = !!on; dirty = 3; },      // (for comparing with and without, under ?debug)
+             fluid: (on) => { fluid = !!on; dirty = 3; },             // (the same for the smoothed movement, lean and look)
              feet: () => Object.values(figures).filter((fg) => fg.rig && fg.root.visible).map((fg) => ({ key: fg.key, ...Object.fromEntries(
                ["Left", "Right"].map((sd) => { const f = fg.rig.feet[sd] || {}, at = fg.rig.bones[sd + "Foot"].getWorldPosition(new THREE.Vector3());
                  return [sd, { down: !!f.down, held: !!f.on, stepping: f.wait > 0, at: [+at.x.toFixed(3), +at.y.toFixed(3), +at.z.toFixed(3)] }]; })) })),

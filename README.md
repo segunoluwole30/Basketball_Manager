@@ -168,7 +168,16 @@ contest (hand up), block, steal reach, rebound jump, screen, charge fall. Everyt
 read off the frames: idle and defensive stance, walk/jog/sprint, dribbling standing and on
 the move (the ball bounces under the hand), defensive slides and backpedalling while facing
 the ball, and a planted foot on a hard stop or cut. Clips cross-fade; a shooter turns to
-the rim, a passer to his receiver, a defender to his man. Against foot sliding, two things.
+the rim, a passer to his receiver, a defender to his man. Movement is smoothed for the animated players. The replay moves players at ten positions
+a second and lets them reach full speed in a fifth of a second; drawn exactly, starts,
+stops and cuts look robotic. The drawn player follows his recorded position as a body
+with limits: he speeds up by at most 24 ft/s² and brakes by at most 32, turns at most 9
+radians a second, and may trail where the replay has him by up to 1.3 ft (0.45 ft while
+he has the ball or is shooting, passing, catching or contesting, so hands still meet the
+ball). His clips and facing follow the drawn movement. He also leans into it (forward as he
+speeds up, back as he brakes, into a turn), and his chest and head turn toward the ball
+(the man with it: toward the rim) whichever way his legs point. Simple bodies follow the
+replay as before. Against foot sliding, two things.
 The stride is matched to the ground he covers: every moving clip carries its natural speed
 and stride (measured from its root travel in the build, `speed` and `stride` in the glTF
 extras), the cycle plays at the rate that makes the blend's stride cover his speed in the

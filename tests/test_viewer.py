@@ -382,6 +382,29 @@ console.log(JSON.stringify({ out, same: JSON.stringify(a) === JSON.stringify(b),
         # bones the viewer turns are brought back to the clip's pose first (the mixer skips unchanged values)
         self.assertIn("for (const b of r.adjusted) clipPose(b);", src)
 
+    def test_fluid_movement(self):
+        """Animated players follow the replay as bodies with limits, lean into how they move,
+        and turn chest and head toward the ball; simple bodies keep the old exact follow."""
+        src = self.template
+        limits = dict(re.findall(r"(MOVE_\w+|TURN_MAX) = ([\d.]+)", src.split("const MOVE_ACCEL", 1)[1].split(";", 1)[0].join(["MOVE_ACCEL", ""])))
+        self.assertTrue(15 <= float(limits["MOVE_ACCEL"]) <= 30)       # ft/s2: quick, but a person's
+        self.assertGreater(float(limits["MOVE_BRAKE"]), float(limits["MOVE_ACCEL"]))
+        self.assertLessEqual(float(limits["MOVE_LAG"]), 1.5)           # never far from where the replay has him
+        self.assertLess(float(limits["MOVE_LAG_TIGHT"]), 0.6)          # closer still around shots, passes, catches
+        view = src.split("function createView3D(", 1)[1]
+        self.assertIn("} else if (useRig && fluid) {", view)
+        self.assertIn("const lim = fg.rig.busy > 0.2 || q === st.holder ? MOVE_LAG_TIGHT : MOVE_LAG;", view)
+        self.assertIn("if (live && dtg > 0) {", view)                  # paused: he stays where he is drawn
+        self.assertIn("const off = Math.hypot(tx - fg.x, tz - fg.z), lim = 0.6;", view)   # simple bodies: as before
+        # his clips and facing follow the drawn movement, so strides still match the ground
+        self.assertIn("vX = fg.vx; vZ = fg.vz; sp = Math.hypot(vX, vZ);", view)
+        # lean and look happen before the feet are planted, and ease off during a one-shot clip
+        self.assertLess(view.index("anim.carry(fg,"), view.index("anim.plantFeet(fg, dta, fg.fresh);"))
+        self.assertIn("free = 1 - 0.8 * Math.min(1, r.busy || 0)", src)
+        self.assertIn('for (const [name, share] of [["Spine1", LOOK_CHEST], ["Head", LOOK_HEAD]])', src)
+        self.assertIn('adjusted: ["Spine1", "Head", "LeftArm"', src)   # brought back to the clip's pose each frame
+        self.assertIn("fluid: (on) => { fluid = !!on; dirty = 3; },", src)
+
     def test_light_model(self):
         """The same player with far fewer triangles: same skeleton, clips and parts."""
         full, light = (read_glb(PLAYER_ASSETS[n])[4] for n in ("player.glb", "player_light.glb"))
