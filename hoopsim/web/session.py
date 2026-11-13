@@ -37,7 +37,7 @@ from ..playoffs import (_HIGH_SEED_HOME, _advance_bracket, current_round, next_p
                         start_playoffs, team_records)
 from ..season import (
     OFFSEASON_STEPS, STEP_TITLES, answer_offseason, finish_season, manager_answer,
-    offseason_pending, offseason_report, pending_players, play_regular_season,
+    offseason_pending, offseason_report, pending_players, play_regular_day,
     refresh_lineups, regular_season_over, season_start, start_offseason, trade_deadline_day,
 )
 from ..models import Game as GameModel
@@ -276,11 +276,12 @@ class GameSession:
             "open_offers": sum(1 for m in lg.inbox if m.get("kind") == "offer" and m.get("status") == "open"),
             "unread": sum(1 for m in lg.inbox if not m.get("read")),
         })
+        if lg.phase in (Phase.REGULAR_SEASON, Phase.PLAYOFFS):
+            out.update(self._today_view())
         if lg.phase is Phase.REGULAR_SEASON:
-            played = self._days_played()
+            today = out["day"]
             deadline = trade_deadline_day(lg)
-            out["day"] = played
-            out["deadline_in"] = (deadline - played) if deadline and played < deadline else None
+            out["deadline_in"] = (deadline - today) if deadline and today < deadline else None
             out["season_over"] = regular_season_over(lg)
         if lg.phase is Phase.OFFSEASON:
             pending = offseason_pending(lg)
@@ -302,6 +303,46 @@ class GameSession:
         lg = self._lg()
         return max((g.day for g in lg.games.values() if g.season == lg.season and g.played and not g.playoff),
                    default=0)
+
+    def _today(self) -> int:
+        """The season's calendar day the league is at: the last day that is done.
+        "Next day" plays the day after it. It follows the league's date, which the
+        sims move one calendar day at a time (off days included). A date at or past a
+        day still unplayed (no save should have one: the date moves after a day's
+        games) is read as the end of the day before it, and in the playoffs the date
+        is never behind the last day played (saves from before the date moved there)."""
+        lg = self._lg()
+        today = (lg.current_date - season_start(lg.season)).days
+        games = [g for g in lg.games.values() if g.season == lg.season]
+        if lg.phase is Phase.REGULAR_SEASON:
+            first_open = min((g.day for g in games if not g.playoff and not g.played), default=None)
+            if first_open is not None and first_open <= today:
+                today = first_open - 1
+        elif lg.phase is Phase.PLAYOFFS:
+            today = max([today] + [g.day for g in games if g.played])
+        return today
+
+    def _today_view(self) -> dict:
+        """Today and the next day for the UI: the dates, and your game on the next day."""
+        lg = self._lg()
+        today = self._today()
+        base = season_start(lg.season)
+        me = lg.user_team_id
+        nxt = today + 1
+        tomorrow = [g for g in lg.games.values() if g.season == lg.season and g.day == nxt]
+        mine = next((g for g in tomorrow if not g.played and me in (g.home_team_id, g.away_team_id)), None)
+        out = {"day": today, "today_date": (base + timedelta(days=today)).isoformat(),
+               "next_date": (base + timedelta(days=nxt)).isoformat(),
+               "next_day_games": len(tomorrow),
+               "next_day_game": self._game_view(mine) if mine else None,
+               "next_day_mine": mine is not None}
+        if lg.phase is Phase.PLAYOFFS and not tomorrow and lg.playoffs:
+            # Playoff games are scheduled as their day comes: is the next day one?
+            live = [s for s in lg.playoffs if s.round == current_round(lg) and not s.over]
+            if live and self._next_playoff_game_day() == nxt:
+                out["next_day_games"] = len(live)
+                out["next_day_mine"] = any(me in (s.high_id, s.low_id) for s in live)
+        return out
 
     # -- player views ---------------------------------------------------------------
     def _potential(self, p: Player) -> Optional[dict]:
@@ -698,33 +739,46 @@ class GameSession:
 
     # -- simulation -------------------------------------------------------------------
     def sim(self, mode: str = "day", days: Optional[int] = None) -> dict:
+        """Play on through the regular season a calendar day at a time: "day" is
+        exactly the next day (on an off day the date moves and nothing is played),
+        "week" seven days, "days" ``days`` days, "deadline" through the trade
+        deadline, "end" the rest of the season. Stops early for a trade offer."""
         lg = self._me()
         if lg.phase is not Phase.REGULAR_SEASON:
             raise UserError("the regular season is over" if lg.phase is not Phase.OFFSEASON
                             else "it's the offseason: finish it to start the new season")
         if regular_season_over(lg):
             raise UserError("the regular season is over: on to the playoffs")
-        played = self._days_played()
-        remaining = sorted({g.day for g in lg.games.values()
-                            if g.season == lg.season and not g.playoff and not g.played})
+        today = self._today()
         if mode == "day":
-            target = remaining[:1]
+            last = today + 1
         elif mode == "week":
-            target = [d for d in remaining if d <= played + 7] or remaining[:1]
+            last = today + 7
         elif mode == "days":
             n = int(days or 1)
             if not 1 <= n <= 200:
                 raise UserError("days must be 1-200")
-            target = remaining[:n]
+            last = today + n
         elif mode == "deadline":
             deadline = trade_deadline_day(lg)
-            if deadline is None or played >= deadline:
+            if deadline is None or today >= deadline:
                 raise UserError("the trade deadline has passed")
-            target = [d for d in remaining if d <= deadline]
+            last = deadline
         elif mode == "end":
-            target = remaining
+            last = None
         else:
             raise UserError(f"unknown sim mode '{mode}' (day, week, days, deadline, end)")
+        return self._sim_through(last)
+
+    def _sim_through(self, last: Optional[int]) -> dict:
+        """Play every regular-season calendar day after today up to and including
+        ``last`` (None: to the final day), then report. Stops after a day that
+        brought a trade offer."""
+        lg = self._me()
+        today = self._today()
+        final = max((g.day for g in lg.games.values() if g.season == lg.season and not g.playoff),
+                    default=today)
+        target = range(today + 1, (final if last is None else min(last, final)) + 1)
         self._expire_offers()
         me = lg.user_team_id
         before = {g.id for g in lg.games.values() if g.played}
@@ -733,8 +787,8 @@ class GameSession:
         manager = _DeferredOffers()
         stopped_for = None
         days_done = 0
-        for _ in target:
-            events += play_regular_season(lg, self.rng, days=1, manager=manager)
+        for day in target:
+            events += play_regular_day(lg, self.rng, day, manager)
             days_done += 1
             if manager.offers:
                 stopped_for = "offers"
@@ -769,7 +823,10 @@ class GameSession:
             self._news("season", "The regular season is over",
                        ["The playoff bracket is set. Head to the League screen to start the playoffs."])
         self.dirty = True
+        league_games = sum(1 for g in lg.games.values() if g.season == lg.season and g.played
+                           and g.id not in before and not g.playoff)
         return {"ok": True, "days": days_done, "games": [self._game_view(g) for g in new][-20:],
+                "league_games": league_games, "date": lg.current_date.isoformat(),
                 "stopped_for": stopped_for, "events": events, "state": self.state()}
 
     # -- playoffs ------------------------------------------------------------------
@@ -794,30 +851,42 @@ class GameSession:
             return False
         day, live = opened
         play_day(self._lg(), day, self.rng)
-        self._playoff_day_close(live)
+        self._playoff_day_close(live, day)
         return True
+
+    def _playoff_series_to_play(self):
+        """The series still playing (moving the bracket on when a round is done), or None
+        when the playoffs are over."""
+        lg = self._lg()
+        while True:
+            live = [s for s in lg.playoffs if s.round == current_round(lg) and not s.over]
+            if live:
+                return live
+            if not _advance_bracket(lg):
+                return None
+
+    def _next_playoff_game_day(self) -> int:
+        lg = self._lg()
+        return next_playoff_day(lg, max(g.day for g in lg.games.values() if g.season == lg.season))
 
     def _playoff_day_open(self):
         """Schedule the next playoff day's games: (day, series playing) or None when done."""
         lg = self._lg()
-        day = max(g.day for g in lg.games.values() if g.season == lg.season)
-        while True:
-            live = [s for s in lg.playoffs if s.round == current_round(lg) and not s.over]
-            if not live:
-                if not _advance_bracket(lg):
-                    return None
-                continue
-            day = next_playoff_day(lg, day)
-            for s in live:
-                n = len(s.game_ids)
-                home, away = (s.high_id, s.low_id) if n in _HIGH_SEED_HOME else (s.low_id, s.high_id)
-                gid = lg.next_game_id()
-                lg.add_game(GameModel(gid, lg.season, day, home, away, playoff=True))
-                s.game_ids.append(gid)
-            return day, live
+        live = self._playoff_series_to_play()
+        if live is None:
+            return None
+        day = self._next_playoff_game_day()
+        for s in live:
+            n = len(s.game_ids)
+            home, away = (s.high_id, s.low_id) if n in _HIGH_SEED_HOME else (s.low_id, s.high_id)
+            gid = lg.next_game_id()
+            lg.add_game(GameModel(gid, lg.season, day, home, away, playoff=True))
+            s.game_ids.append(gid)
+        return day, live
 
-    def _playoff_day_close(self, live) -> None:
+    def _playoff_day_close(self, live, day: int) -> None:
         lg = self._lg()
+        lg.current_date = season_start(lg.season) + timedelta(days=day)
         for s in live:
             g = lg.games[s.game_ids[-1]]
             if g.winner_id() == s.high_id:
@@ -832,8 +901,15 @@ class GameSession:
         if mode not in ("day", "round", "all"):
             raise UserError("mode must be day, round or all")
         over_before = {s.id for s in lg.playoffs if s.over}
+        played_before = sum(1 for g in lg.games.values() if g.played)
         rnd = current_round(lg)
         finished = False
+        if mode == "day" and self._playoff_series_to_play() is not None:
+            # One calendar day: games are every other day, so on an off day only the date moves.
+            today = self._today()
+            if self._next_playoff_game_day() > today + 1:
+                lg.current_date = season_start(lg.season) + timedelta(days=today + 1)
+                return dict(self._after_playoff_days(over_before, False), games_played=0)
         while True:
             if not self._playoff_day():
                 finished = True
@@ -842,7 +918,8 @@ class GameSession:
                 break
             if mode == "round" and all(s.over for s in lg.playoffs if s.round == rnd):
                 break
-        return self._after_playoff_days(over_before, finished)
+        played = sum(1 for g in lg.games.values() if g.played) - played_before
+        return dict(self._after_playoff_days(over_before, finished), games_played=played)
 
     def _after_playoff_days(self, over_before: set, finished: bool) -> dict:
         lg = self._lg()
@@ -993,10 +1070,8 @@ class GameSession:
                        and not g.played and mine(g)), key=lambda g: (g.day, g.id), default=None)
             if nxt is None:
                 raise UserError("you have no games left this regular season")
-            days = len({g.day for g in lg.games.values() if g.season == lg.season and not g.playoff
-                        and not g.played and g.day < nxt.day})
-            if days:
-                r = self.sim("days", days)
+            if self._today() < nxt.day - 1:
+                r = self._sim_through(nxt.day - 1)
                 if r["stopped_for"]:
                     return {"ok": True, "started": False, "stopped_for": r["stopped_for"], "state": self.state()}
             allstar.catch_up(lg, nxt.day)       # All-Star events dated before tip-off
@@ -1018,7 +1093,7 @@ class GameSession:
                 if game is not None:
                     break
                 play_day(lg, day, self.rng)            # your series is waiting on others
-                self._playoff_day_close(series)
+                self._playoff_day_close(series, day)
             clear_healed(lg)
             match = LiveMatch(lg, game, self.rng)
             self.live = {"match": match, "kind": "playoff", "game_id": game.id, "day": day,
@@ -1078,12 +1153,12 @@ class GameSession:
             rest = [x for x in lg.games.values() if x.season == lg.season and not x.playoff
                     and x.day == live["day"] and not x.played]
             if rest:
-                self.sim("day")                        # the rest of today's games
+                self._sim_through(live["day"])         # the rest of the day's games
             else:
                 lg.current_date = season_start(lg.season) + timedelta(days=live["day"])
         else:
             play_day(lg, live["day"], self.rng)
-            self._playoff_day_close(live["series"])
+            self._playoff_day_close(live["series"], live["day"])
             self._after_playoff_days(live["over_before"], False)
         return {"ok": True, "game": self._game_view(g), "final": match.state(), "state": self.state()}
 
@@ -1101,9 +1176,7 @@ class GameSession:
                        and not g.played and mine(g)), key=lambda g: (g.day, g.id), default=None)
             if nxt is None:
                 raise UserError("you have no games left this regular season")
-            days = len({g.day for g in lg.games.values() if g.season == lg.season and not g.playoff
-                        and not g.played and g.day <= nxt.day})
-            r = self.sim("days", days)
+            r = self._sim_through(nxt.day)
             if not lg.games[nxt.id].played:
                 return {"ok": True, "game_id": None, "stopped_for": r["stopped_for"], "state": self.state()}
             game_id = nxt.id

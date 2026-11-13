@@ -156,6 +156,10 @@ class WebApiTests(unittest.TestCase):
         me = self.new_game()
         self.assertEqual(self.post("/api/sim", {"mode": "day"})["days"], 1)
         self.assertIn("unknown sim mode", self.error("/api/sim", {"mode": "forever"}))
+        for _ in range(4):                                # a preseason week before opening night
+            if self.get("/api/results")["games"]:
+                break
+            self.post("/api/sim", {"mode": "week"})
         self.assertTrue(self.get("/api/results")["games"])
         game_id = self.get("/api/results")["games"][0]["id"]
         box = self.get(f"/api/game/{game_id}")["box"]
@@ -306,7 +310,7 @@ class WebApiTests(unittest.TestCase):
         fg = next(c for c in d["categories"] if c["key"] == "fg_pct")
         for r in fg["rows"]:
             t = totals[r["player_id"]]
-            self.assertAlmostEqual(r["value"], t["fgm"] / t["fga"], places=3)
+            self.assertAlmostEqual(r["value"], t["fgm"] / t["fga"], delta=0.00051)     # shown to 3 places
         # Nobody qualified is left out of a counting list that isn't full
         qualified = [pid for pid, t in totals.items() if t["gp"] >= d["min_games"]]
         self.assertEqual(len(pts["rows"]), min(10, len(qualified)))
@@ -717,13 +721,20 @@ class WebMatchEngineTests(unittest.TestCase):
         for m in ("Opening night", "Christmas Day", "All-Star Game", "Trade deadline",
                   "Final day of the regular season"):
             self.assertIn(m, marks)
-        # Sim to my fifth game: everything up to that day is played, nothing after.
+        # Go to my fifth game's day: every day before it is played, and it stops at the
+        # start of that day, my game still to play.
         target = mine[4]["day"]
-        self.post("/api/sim/to", {"day": target})
+        r = self.post("/api/sim/to", {"day": target})
+        self.assertEqual(r["at_day"], target)
         lg = self.session.league
-        self.assertTrue(all(g.played == (g.day <= target) for g in lg.games.values()))
+        self.assertTrue(all(g.played == (g.day < target) for g in lg.games.values()))
         day = self.client.get(f"/api/calendar/day/{target}").json()
-        self.assertTrue(day["games"] and all(g["played"] for g in day["games"]))
+        self.assertTrue(day["games"] and not any(g["played"] for g in day["games"]))
+        cal = self.client.get("/api/calendar").json()
+        self.assertEqual(cal["today"], target - 1)
+        self.assertEqual([d["day"] for d in cal["days"] if d["next"]], [target])
+        self.assertEqual(self.client.get("/api/state").json()["next_day_game"]["id"], mine[4]["game"]["id"])
+        self.assertEqual(self.post("/api/sim", {"mode": "day"})["games"][0]["id"], mine[4]["game"]["id"])
         self.assertEqual(self.client.post("/api/sim/to", json={"day": target}).status_code, 400)
         other = self.client.get("/api/calendar", params={"team_id": choices[1]["id"]}).json()
         self.assertEqual(other["team_id"], choices[1]["id"])

@@ -377,14 +377,37 @@ package (`hoopsim/web/static/`), so Node isn't needed to play.
 
 | Screen | What's on it |
 |---|---|
-| **Home** | record, conference standings, next games and recent results, team leaders, injuries, and an inbox: results, injuries, trades, offers from AI teams (accept or decline), season news. The top bar sims a day, a week, to the trade deadline or to the end of the regular season, then runs the playoffs (a day, a round or all). |
+| **Home** | record, conference standings, next games and recent results, team leaders, injuries, and an inbox: results, injuries, trades, offers from AI teams (accept or decline), season news. The top bar sims a day, a week, to the trade deadline or to the end of the regular season, then runs the playoffs (a day, a round or all). See *Days in the web app* below. |
 | **Squad** | sortable roster tables (overview, ratings, stats, contracts) for any team, finances. Click any name for the player card: attributes, scouted potential with its range, scouting notes, ability by position, player instructions, this season's line and a career section: small charts of points, rebounds and assists per game and current ability by season (ability from end-of-season snapshots, plus today's), and a season-by-season table for the regular season and the playoffs. |
 | **Tactics** | starting five by position (with each player's ability at that slot), minutes that must total 240 (with a "balance" helper), the assistant-coach toggle, team tactics and player instructions. |
 | **Transfers** | free agents with their asks and a contract form that shows how you'd pay (cap space, mid-level exception, minimum); a trade builder with live salary-matching and roster feedback and the other team's verdict. |
 | **League** | standings, leaders, schedule and results with box scores (current season), a daily scoreboard, the playoff bracket and past seasons. |
-| **Calendar** | The season a month at a time: your games (home/away, results, **B2B** badges), league games per night, opening night, Thanksgiving, Christmas, the All-Star break, the trade deadline and the playoffs. Click a day for every game on it, and **Sim to this day** to play up to it. See *Schedule* below. |
+| **Calendar** | The season a month at a time: your games (home/away, results, **B2B** badges), league games per night, opening night, Thanksgiving, Christmas, the All-Star break, the trade deadline and the playoffs. Click a day for every game on it, and **Go to this day** to play every day before it and stop at its start. See *Schedule* below. |
 | **Stats** | *League leaders*: per-game points, rebounds, assists, steals and blocks, FG%, 3P% and FT%, and advanced lists (true shooting %, usage %, share of team FGA, points/rebounds/assists per 36), filtered by season, regular season or playoffs, and position; your players are highlighted. To qualify a player needs 60% of the most games any team has played (4 games in the playoffs), plus 5 FGA, 2 3PA or 2 FTA per game for the shooting lists and 15 minutes per game for the rate lists. *Team stats*: a sortable table of points for and against, pace, offensive, defensive and net rating and the four factors for offence and defence (eFG%, TOV%, ORB%/DRB%, FT rate, 3PA rate). *Game log*: every game a team has played this season with the score, running record and top scorer, linked to the box score and, for recorded games, the viewer. |
 | **Offseason** | one screen per step: team options, re-signing (asks and the chance he stays), the draft board pick by pick, every free-agency round, trade offers and roster cuts. Any decision, a whole step or the rest of the summer can be handed to your assistant. |
+
+**Days in the web app.** The league's date is the last day that is done; the
+top bar shows it, Home shows it with its day number, and the Calendar outlines it
+(the next day has a dashed outline). Every control moves the date one calendar
+day at a time:
+
+- **Next day** plays exactly the next day: all of that day's games, yours if you
+  have one, and the date moves by one. On a day you don't play it plays the
+  league's games; on a day with no games at all (the week before opening night,
+  Thanksgiving, Christmas Eve, the All-Star break, off days between playoff games)
+  only the date moves. Its tooltip says what the next day holds, and the toast
+  what happened (your result, "no game for you", or "no games"). Off days draw no
+  random numbers, so going a day at a time plays the same season as **To end**.
+- **Week** plays the next seven days, **To deadline** through the trade deadline,
+  **To end** the rest of the regular season. In the playoffs **Next day** is one
+  day too (games are every other day), and **Round** and **All playoffs** play on.
+- **Go to this day** (Calendar) plays every day *before* the chosen one and stops
+  at its start, FM-style: that day's games, yours included, are still to play.
+  Play your game live, watch it, or press **Next day** to sim it. Picking the day
+  after today does nothing (you're already there); a played day is refused.
+- **▶ Watch** and **🏀 Play live** play on to your next game; after **Go to this
+  day** that's the game on the chosen day.
+- A trade offer from an AI team stops any of them after the day it arrives.
 
 The offseason runs as resumable steps (`start_offseason`, `offseason_pending`,
 `answer_offseason` in `season.py`); `run_offseason` drives the same steps with a
@@ -2108,8 +2131,10 @@ The browser app's **Calendar** screen shows the season a month at a time:
 - Summary cards show games, home/away split, back-to-backs and the longest road
   trip. Any team's schedule can be viewed.
 - Clicking a day lists every game on it, with box score and watch links.
-- **Sim to this day** plays up to it. It stops early for a trade offer, as the
-  other sim buttons do.
+- **Go to this day** plays every day before it and stops at the start of that
+  day, its games (yours included) still to play: coach yours live, watch it, or
+  sim it with **Next day**. It stops early for a trade offer, as the other sim
+  buttons do. The next day to play has a dashed outline.
 
 The routes are `/api/calendar`, `/api/calendar/day/{day}` and `POST /api/sim/to`.
 
@@ -2364,6 +2389,10 @@ report = run_offseason(league, rng)        # everything between seasons
 - **Morale** updates weekly from playing time versus role, winning (weighted by
   ambition) and injuries. It feeds game-day form and re-signing decisions.
 - **Trade deadline** at 60% of the season.
+- **Days**: `play_regular_season` plays the days that have games;
+  `play_regular_day` plays one calendar day (the All-Star events dated on it, its
+  games if there are any, and the league's date moves to it). The web app's sims
+  use it, so every control moves the date a calendar day at a time.
 - **Playoffs** (`playoffs.py`): the top two thirds of each conference (rounded down
   to a power of two) are seeded by record, then point differential. Best-of-7
   series use 2-2-1-1-1 home court, and the conference champions meet in the finals.
