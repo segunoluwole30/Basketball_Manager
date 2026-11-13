@@ -585,11 +585,13 @@ def career_flags(league: League) -> dict[int, dict]:
 
 
 HONOUR_KEYS = ("all_star", "asg_mvp", "three_point_champion", "rising_stars_mvp", "mvp", "finals_mvp",
-               "dpoy", "roy", "sixth_man", "mip", "clutch_poy", "all_nba", "all_defense")
+               "dpoy", "roy", "sixth_man", "mip", "clutch_poy", "all_nba", "all_defense", "all_rookie")
+TEAM_HONOURS = ("all_nba", "all_defense", "all_rookie")      # stored as the team: 1, 2 or 3
 HONOUR_NAMES = {"all_star": "All-Star", "asg_mvp": "All-Star MVP", "three_point_champion": "3-Point champion",
                 "rising_stars_mvp": "Rising Stars MVP", "mvp": "MVP", "finals_mvp": "Finals MVP",
                 "dpoy": "Defensive POY", "roy": "Rookie of the Year", "sixth_man": "Sixth Man", "mip": "Most Improved",
-                "clutch_poy": "Clutch POY", "all_nba": "All-NBA", "all_defense": "All-Defensive"}
+                "clutch_poy": "Clutch POY", "all_nba": "All-NBA", "all_defense": "All-Defensive",
+                "all_rookie": "All-Rookie"}
 
 
 def honours(p) -> dict:
@@ -599,7 +601,7 @@ def honours(p) -> dict:
 
 HONOUR_SHORT = {"all_star": "AS", "asg_mvp": "ASG MVP", "three_point_champion": "3PT", "rising_stars_mvp": "RS MVP",
                 "mvp": "MVP", "finals_mvp": "FMVP", "dpoy": "DPOY", "roy": "ROY", "sixth_man": "6MOY", "mip": "MIP",
-                "clutch_poy": "CPOY", "all_nba": "NBA", "all_defense": "DEF"}
+                "clutch_poy": "CPOY", "all_nba": "NBA", "all_defense": "DEF", "all_rookie": "ROOK"}
 
 
 def season_honours_short(line: dict) -> list[str]:
@@ -608,7 +610,7 @@ def season_honours_short(line: dict) -> list[str]:
     for k in HONOUR_KEYS:
         v = line.get(k)
         if v:
-            tier = v if k in ("all_nba", "all_defense") and isinstance(v, int) and not isinstance(v, bool) else ""
+            tier = v if k in TEAM_HONOURS and isinstance(v, int) and not isinstance(v, bool) else ""
             out.append(f"{HONOUR_SHORT[k]}{tier}")
     return out
 
@@ -620,7 +622,7 @@ def season_honours(line: dict) -> list[str]:
         v = line.get(k)
         if not v:
             continue
-        if k in ("all_nba", "all_defense") and isinstance(v, int) and not isinstance(v, bool):
+        if k in TEAM_HONOURS and isinstance(v, int) and not isinstance(v, bool):
             out.append(f"{HONOUR_NAMES[k]} {['1st', '2nd', '3rd'][min(v, 3) - 1]}")
         else:
             out.append(HONOUR_NAMES[k])

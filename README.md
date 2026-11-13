@@ -16,7 +16,8 @@ You're the general manager. During the season:
 | Command | What it does |
 |---|---|
 | `sim [N]`, `week`, `deadline`, `end` | play N days, a week, to the trade deadline, or the rest of the season |
-| `next` | after the regular season: playoffs, awards, then the offseason |
+| `next` | after the regular season (whose awards are printed when it ends): the playoffs, then the offseason |
+| `awards [SEASON]` | the season's awards: winners, finalists and their share of the vote, All-NBA, All-Defensive and All-Rookie teams |
 | `roster [ABBR]`, `player ID` | ratings, scouted potential, contracts, injuries, morale; full scouting report |
 | `lineup`, `start A B C D E`, `minutes ID=MIN`, `auto on/off` | set the starting five (PG..C) and minute targets, or let your assistant |
 | `tactics pace=16 three=14 defense=zone focus=perimeter crash=8 depth=9` | team tactics |
@@ -386,11 +387,11 @@ package (`hoopsim/web/static/`), so Node isn't needed to play.
 
 | Screen | What's on it |
 |---|---|
-| **Home** | record, conference standings, next games and recent results, team leaders, injuries, and an inbox: results, injuries, trades, offers from AI teams (accept or decline), season news. The top bar sims a day, a week, to the trade deadline or to the end of the regular season, then runs the playoffs (a day, a round or all). See *Days in the web app* below. |
+| **Home** | record, conference standings, next games and recent results, team leaders, injuries, and an inbox: results, injuries, trades, offers from AI teams (accept or decline), season news and the awards. The top bar sims a day, a week, to the trade deadline or to the end of the regular season, then runs the playoffs (a day, a round or all). See *Days in the web app* below. However the regular season ends (Next day, Week, To end, Go to this day or a live game), **awards night** opens: a window with every award, its finalists and the All-NBA teams. |
 | **Squad** | sortable roster tables (overview, ratings, stats, contracts) for any team, finances. Click any name for the player card: attributes, scouted potential with its range, scouting notes, ability by position, player instructions, this season's line and a career section: small charts of points, rebounds and assists per game and current ability by season (ability from end-of-season snapshots, plus today's), and a season-by-season table for the regular season and the playoffs. |
 | **Tactics** | starting five by position (with each player's ability at that slot), minutes that must total 240 (with a "balance" helper), the assistant-coach toggle, team tactics and player instructions. |
 | **Transfers** | free agents with their asks and a contract form that shows how you'd pay (cap space, mid-level exception, minimum); a trade builder with live salary-matching and roster feedback and the other team's verdict. |
-| **League** | standings, leaders, schedule and results with box scores (current season), a daily scoreboard, the playoff bracket and past seasons. See *Playoff bracket* below. |
+| **League** | standings, leaders, schedule and results with box scores (current season), a daily scoreboard, the playoff bracket (see *Playoff bracket* below), the **Awards** (this season's once the regular season is over, and every past season's) and past seasons (History links to each season's awards). |
 | **Calendar** | The season a month at a time: your games (home/away, results, **B2B** badges), league games per night, opening night, Thanksgiving, Christmas, the All-Star break, the trade deadline and the playoffs. Click a day for every game on it, and **Go to this day** to play every day before it and stop at its start. See *Schedule* below. |
 | **Stats** | *League leaders*: per-game points, rebounds, assists, steals and blocks, FG%, 3P% and FT%, and advanced lists (true shooting %, usage %, share of team FGA, points/rebounds/assists per 36), filtered by season, regular season or playoffs, and position; your players are highlighted. To qualify a player needs 60% of the most games any team has played (4 games in the playoffs), plus 5 FGA, 2 3PA or 2 FTA per game for the shooting lists and 15 minutes per game for the rate lists. *Team stats*: a sortable table of points for and against, pace, offensive, defensive and net rating and the four factors for offence and defence (eFG%, TOV%, ORB%/DRB%, FT rate, 3PA rate). *Game log*: every game a team has played this season with the score, running record and top scorer, linked to the box score and, for recorded games, the viewer. |
 | **Offseason** | one screen per step: team options, re-signing (asks and the chance he stays), the draft board pick by pick, every free-agency round, trade offers and roster cuts. Any decision, a whole step or the rest of the summer can be handed to your assistant. |
@@ -1848,6 +1849,54 @@ weekend. Everything happens on its date as you sim:
 * **API:** `GET /api/allstar`. Exhibition replays are served at `/api/replay/10000001` (the
   game) and `/api/replay/10000002` (Rising Stars).
 
+## Season awards (`hoopsim/awards.py`, web: **League → Awards**)
+The regular-season awards are announced the day the regular season ends, before the
+playoffs, as the NBA does. Everything comes from regular-season box scores, so the
+playoffs can't change them. The Finals MVP is named after the Finals.
+
+| Award | Who wins it |
+|---|---|
+| **MVP** | Production and impact (Game Score per game plus 0.15 × plus-minus per game), plus 20 × (team win% − 0.5), a bonus for being his team's best player and a little for availability. Voters reward winning. |
+| **Defensive Player of the Year** | Steals, blocks and defensive rebounds, the scouts' defensive ratings (reputation), his team's defensive rating against the league's and its record, all scaled by minutes. |
+| **Rookie of the Year** | Production plus a little team success, among this season's rookies. |
+| **Sixth Man** | Production, for players who came off the bench in more games than they started. |
+| **Most Improved** | The jump in production and scoring from last season (20+ games then), damped for players who were already stars. A league's first season has none. |
+| **All-NBA** (3 teams), **All-Defensive** (2), **All-Rookie** (2) | Five players each, positionless (as the NBA has been since 2023-24). All-NBA leans less on team success than the MVP. |
+
+* **The vote.** 100 media members fill in NBA ballots: 10-7-5-3-1 points for MVP,
+  5-3-1 for the other awards, 5-3-1 for All-NBA's three teams and 2-1 for the
+  two-team selections. Each voter sees a player's score with some noise of his own,
+  so a close race can go either way. Every award lists its top three with their share
+  of the most points possible (and first-place votes for the MVP). The vote has its
+  own random stream, so announcing the awards never changes the season.
+* **Eligibility** is the NBA's 65-game rule, scaled to the season: 65/82 of the games
+  (65 of 82, 16 of 20) with 20+ minutes (scaled to the game's length), plus up to two
+  (scaled) games of 15-20 minutes. It applies to MVP, DPOY, Most Improved, All-NBA and
+  All-Defensive. As in the NBA, Rookie of the Year, All-Rookie and Sixth Man are exempt,
+  but voters don't pick part-timers: Rookie of the Year and Sixth Man need half the
+  season's games and All-Rookie a quarter. A selection is short when too few players
+  qualify (a small league's rookie class).
+* **Left out:** Clutch Player of the Year (box scores have no clutch-time split) and
+  Coach of the Year (the game has no coaches).
+* **Effects.** Winners' morale goes up (+6 for an award, +3 for a team selection). The
+  honours go on the season's career line (`mvp`, `dpoy`, `roy`, `sixth_man`, `mip`,
+  `finals_mvp`; `all_nba`, `all_defense` and `all_rookie` hold the team: 1, 2 or 3) and
+  show on the player card ("2× All-NBA", and "MVP this season" before the season's
+  line is filed). There are no award-based contract rules (no supermax) to feed.
+* **Announcement.** In the browser, awards night opens over whatever screen you're on,
+  with your players highlighted; the inbox gets one item per award and one for the
+  teams, and League → Awards keeps every season. `python -m hoopsim season` prints them
+  between the standings and the playoffs, and `play` prints them when the regular
+  season ends (`awards` shows them again).
+* **State and saves.** The announcement is stored on the league (`league.awards`) and
+  saved with it; `finish_season` adds the Finals MVP and files the whole thing in the
+  season's history (`season_awards`). Saves from before this feature keep working: one
+  whose regular season is over names its awards when it's loaded (web) or before the
+  playoffs start, one already in the playoffs names them from its regular-season box
+  scores when the Finals end, and older seasons in the history show their winners (and
+  any All-NBA teams on career lines, e.g. imported real leagues).
+* **API:** `GET /api/awards?season=` and `POST /api/awards/seen` (closes awards night).
+
 ## Real leagues and the editor
 
 ### League files (`hoopsim/league_file.py`)
@@ -2015,7 +2064,8 @@ used. API:
 ```bash
 python -m hoopsim new --seed 1 --teams 12 --out league.db   # generate, save, print summary
 python -m hoopsim game --seed 1 --pbp                       # one game: play-by-play + box score
-python -m hoopsim season --seed 1                           # season + playoffs, awards, leaders
+python -m hoopsim season --seed 1                           # season, awards, playoffs, leaders
+python -m hoopsim season --seed 1 --teams 6 --games 20      # a short one
 python -m hoopsim career --seasons 20 --seed 1              # 20 years: drafts, free agency, ageing
 python -m hoopsim.calibrate --seasons 3                     # compare sim averages with the NBA
 python -m unittest discover -s tests -t .                   # run tests
@@ -2411,7 +2461,7 @@ than the strong bigs who drew them before). The spatial engine is untouched.
 ```python
 league = generate_league(seed=1)
 rng = random.Random(1)
-summary = play_full_season(league, rng)   # regular season, playoffs, awards
+summary = play_full_season(league, rng)   # regular season, awards, playoffs, Finals MVP
 report = run_offseason(league, rng)        # everything between seasons
 ```
 
@@ -2441,8 +2491,9 @@ report = run_offseason(league, rng)        # everything between seasons
   `"decider"`), but they aren't counted in playoff stats, and the teams knocked out
   in the play-in go into the draft lottery. `LeagueRules.play_in = False` turns it off.
   Smaller leagues, with four-team brackets, have no play-in.
-- **Awards**: MVP, Finals MVP, Defensive POY, Rookie of the Year, Sixth Man and Most
-  Improved. Each player's season line (stats, age, CA) goes into `player.career`.
+- **Awards** (`awards.py`, see *Season awards*): named when the regular season ends,
+  before the playoffs; the Finals MVP after the Finals. Each player's season line
+  (stats, age, CA, honours) goes into `player.career` at the end of the season.
 
 **Offseason**, in order:
 1. **Retirements**: likelier with age and declining ability, and much likelier

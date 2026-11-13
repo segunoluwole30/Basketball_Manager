@@ -22,6 +22,7 @@ from ..db import load_league, save_league
 from ..engine import clear_healed, play_day, store_result, tick_injuries
 from ..generate import generate_league
 from .. import allstar, editor
+from .. import awards as season_awards
 from ..news import post as post_news
 from ..systems import describe as describe_systems, fit_for_team
 from ..models import MATCH_ENGINES
@@ -222,6 +223,10 @@ class GameSession:
         self.save_path = str(p)
         self.rng = random.Random()
         self.dirty = False
+        if league.phase is Phase.REGULAR_SEASON and season_awards.current(league) is None \
+                and regular_season_over(league) and league.user_team_id is not None:
+            season_awards.announce(league)             # a save from before awards night
+            self.dirty = True
         return self.state()
 
     def save(self, path: Optional[str] = None) -> dict:
@@ -277,6 +282,8 @@ class GameSession:
             "open_offers": sum(1 for m in lg.inbox if m.get("kind") == "offer" and m.get("status") == "open"),
             "unread": sum(1 for m in lg.inbox if not m.get("read")),
         })
+        named = season_awards.current(lg)
+        out["awards"] = {"season": named["season"], "seen": bool(named.get("seen"))} if named else None
         if lg.phase in (Phase.REGULAR_SEASON, Phase.PLAYOFFS):
             out.update(self._today_view())
         if lg.phase is Phase.REGULAR_SEASON:
@@ -442,6 +449,7 @@ class GameSession:
             "tendencies": p.tendencies.to_dict(), "tendencies_text": describe_tendencies(p),
             "season": season, "career": career, "draft": draft, "honours": allstar.honours(p),
             "all_star_now": p.id in allstar.selected(lg),
+            "awards_now": self._awards_now(p.id),
             "is_mine": is_mine, "is_prospect": p.id not in lg.players, "ask": ask,
             "at_positions": {pos.value: p.ability_at(pos) for pos in POSITIONS},
         }
@@ -826,14 +834,117 @@ class GameSession:
                        [f"They want {give} for {get}. The offer stands until you sim again."],
                        offer=offer, status="open")
         if regular_season_over(lg):
-            self._news("season", "The regular season is over",
-                       ["The playoff bracket is set. Head to the League screen to start the playoffs."])
+            self._season_over_news()
         self.dirty = True
         league_games = sum(1 for g in lg.games.values() if g.season == lg.season and g.played
                            and g.id not in before and not g.playoff)
         return {"ok": True, "days": days_done, "games": [self._game_view(g) for g in new][-20:],
                 "league_games": league_games, "date": lg.current_date.isoformat(),
                 "stopped_for": stopped_for, "events": events, "state": self.state()}
+
+    def _season_over_news(self) -> None:
+        self._news("season", "The regular season is over",
+                   ["The season's awards are in: MVP, Defensive Player of the Year, the All-NBA teams "
+                    "and more (League → Awards).",
+                    "The playoff bracket is set. Start the playoffs from the top bar."], awards_season=self._lg().season)
+
+    # -- awards ----------------------------------------------------------------------
+    def _award_seasons(self) -> list[int]:
+        lg = self._lg()
+        out = [lg.season] if season_awards.current(lg) and not any(h["season"] == lg.season for h in lg.history) else []
+        return out + [h["season"] for h in reversed(lg.history)]
+
+    def awards(self, season: Optional[int] = None) -> dict:
+        """A season's awards: winners and finalists with their share of the vote, and
+        the All-NBA, All-Defensive and All-Rookie teams (this season once the regular
+        season is over, and every finished season)."""
+        lg = self._lg()
+        seasons = self._award_seasons()
+        base = {"seasons": seasons, "user_team_id": lg.user_team_id}
+        if not seasons:
+            return {**base, "available": False, "season": lg.season,
+                    "message": "The season's awards are announced when the regular season ends."}
+        season = seasons[0] if season is None else int(season)
+        if season not in seasons:
+            raise UserError(f"no awards for {season}")
+        entry = next((h for h in lg.history if h["season"] == season), None)
+        data = (entry or {}).get("season_awards") or (season_awards.current(lg) if season == lg.season else None)
+        me = lg.user_team_id
+
+        def mine(row):
+            return {**row, "mine": me is not None and row.get("team_id") == me}
+
+        single, teams = [], []
+        if data:
+            for key, name, short in season_awards.SINGLE:
+                e = data["single"].get(key, {"winner": None, "finalists": []})
+                single.append({"key": key, "name": name, "short": short, "winner": e["winner"],
+                               "finalists": [mine(r) for r in e["finalists"]]})
+            for key, name, n in season_awards.TEAMS:
+                tiers = data["teams"].get(key, [])
+                teams.append({"key": key, "name": name, "tiers": [
+                    {"name": f"{name} {season_awards.TIER_NAMES[i]}", "players": [mine(r) for r in tier]}
+                    for i, tier in enumerate(tiers)]})
+        else:                                          # a season from before the full announcement
+            won = (entry or {}).get("awards", {})
+            names = (entry or {}).get("award_names", {})
+            for key, name, short in season_awards.SINGLE:
+                pid = won.get(key)
+                rows = [] if pid is None else [mine(self._legacy_row(pid, season, names.get(key)))]
+                single.append({"key": key, "name": name, "short": short, "winner": pid, "finalists": rows})
+            for key, name, n in season_awards.TEAMS:
+                tiers = [[] for _ in range(n)]
+                for p in lg.players.values():
+                    for c in p.career:
+                        tier = c.get(key)
+                        if c["season"] == season and not c["playoffs"] and tier:
+                            t = tier if isinstance(tier, int) and not isinstance(tier, bool) else 1
+                            if 1 <= t <= n:
+                                tiers[t - 1].append(mine(self._legacy_row(p.id, season)))
+                teams.append({"key": key, "name": name, "tiers": [
+                    {"name": f"{name} {season_awards.TIER_NAMES[i]}", "players": tier}
+                    for i, tier in enumerate(tiers) if tier]})
+        finals_mvp = None
+        fm = (data or {}).get("finals_mvp") if data else None
+        if fm is None and entry:
+            fm = entry.get("awards", {}).get("finals_mvp")
+        if fm is not None and fm in lg.players:
+            finals_mvp = mine(self._legacy_row(fm, season))
+        rules = (data or {}).get("rules")
+        return {**base, "available": True, "season": season, "full": bool(data),
+                "date": (data or {}).get("date"), "rules": rules, "single": single, "teams": teams,
+                "finals_mvp": finals_mvp, "current": season == lg.season and entry is None,
+                "seen": bool((data or {}).get("seen", True))}
+
+    def _legacy_row(self, pid: int, season: int, name: Optional[str] = None) -> dict:
+        """A player's line for a past season, from his career lines."""
+        lg = self._lg()
+        p = lg.players.get(pid)
+        line = next((c for c in (p.career if p else []) if c["season"] == season and not c["playoffs"]), None)
+        row = {"id": pid, "name": p.name if p else (name or "?"), "pos": p.position.value if p else "",
+               "team_id": line["team_id"] if line else None, "team": line["team"] if line else "?"}
+        if line:
+            gp = max(1, line["gp"])
+            row.update({"gp": line["gp"], "mpg": round(line["min"] / gp, 1), "ppg": round(line["pts"] / gp, 1),
+                        "rpg": round((line["orb"] + line["drb"]) / gp, 1), "apg": round(line["ast"] / gp, 1),
+                        "spg": round(line["stl"] / gp, 1), "bpg": round(line["blk"] / gp, 1)})
+        return row
+
+    def _awards_now(self, pid: int) -> list[str]:
+        """This season's awards for a player, before they reach his career line."""
+        lg = self._lg()
+        named = season_awards.current(lg)
+        if not named or any(h["season"] == lg.season for h in lg.history):
+            return []
+        return allstar.season_honours(season_awards.career_flags(named).get(pid, {}))
+
+    def awards_seen(self) -> dict:
+        lg = self._lg()
+        named = season_awards.current(lg)
+        if named and not named.get("seen"):
+            named["seen"] = True
+            self.dirty = True
+        return self.state()
 
     # -- playoffs ------------------------------------------------------------------
     def start_playoffs(self) -> dict:
@@ -1181,6 +1292,9 @@ class GameSession:
                 self._sim_through(live["day"])         # the rest of the day's games
             else:
                 lg.current_date = season_start(lg.season) + timedelta(days=live["day"])
+                if regular_season_over(lg):            # that was the last game: awards night
+                    season_awards.announce(lg)
+                    self._season_over_news()
         else:
             play_day(lg, live["day"], self.rng)
             self._playoff_day_close(live["series"], live["day"])
@@ -1327,7 +1441,11 @@ class GameSession:
             for key, label in (("mvp", "MVP"), ("finals_mvp", "Finals MVP"), ("dpoy", "Defensive POY"),
                                ("roy", "Rookie of the Year"), ("sixth_man", "Sixth Man"), ("mip", "Most Improved")):
                 pid = h.get("awards", {}).get(key)
-                awards.append({"award": label, "player_id": pid, "name": h["award_names"].get(key)})
+                awards.append({"award": label, "player_id": pid, "name": h.get("award_names", {}).get(key)})
+            full = h.get("season_awards")
+            all_nba = []
+            if full and full.get("teams", {}).get("all_nba"):
+                all_nba = [{"id": r["id"], "name": r["name"], "team": r["team"]} for r in full["teams"]["all_nba"][0]]
             a = h.get("all_star")
             if a:
                 for key, label in (("mvp", "All-Star MVP"), ("three_point_champion", "3-Point champion"),
@@ -1336,7 +1454,7 @@ class GameSession:
                         awards.append({"award": label, "player_id": a[key], "name": a.get(f"{key}_name")})
             seasons.append({"season": h["season"], "champion": team(h["champion"]),
                             "runner_up": team(h["runner_up"]), "finals": h["finals"],
-                            "awards": awards, "standings": standings,
+                            "awards": awards, "all_nba_first": all_nba, "standings": standings,
                             "deadline_trades": h.get("deadline_trades", [])})
         return {"seasons": seasons}
 

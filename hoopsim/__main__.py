@@ -2,7 +2,7 @@
 
     python -m hoopsim new    [--seed N] [--teams N] [--out league.db] [--team ABBR]
     python -m hoopsim game   [--seed N] [--pbp]          # one game: box score (+ play-by-play)
-    python -m hoopsim season [--seed N] [--out league.db] # season + playoffs, awards, leaders
+    python -m hoopsim season [--seed N] [--games 82] [--out league.db] # season, awards, playoffs, leaders
     python -m hoopsim career [--seasons 10] [--seed N] [--load league.db] [--out league.db]
     python -m hoopsim play   [--team ABBR] [--load save.db]   # manage a team yourself
     python -m hoopsim watch  [--home ABBR --away ABBR] [--possessions 40]   # spatial prototype in a browser
@@ -18,6 +18,7 @@ from . import generate_league, load_league, save_league
 from .engine import play_game
 from .models import League, Player, TeamBox
 from .playoffs import ranked, team_records
+from . import awards as season_awards
 from .season import play_full_season, run_offseason
 from .stats import career_per_game, leaders, player_label, totals_from_careers
 
@@ -155,11 +156,17 @@ def print_playoffs(league: League) -> None:
         print(f"  {stage:<22} ({s.high_seed}) {hi} {s.high_wins}-{s.low_wins} {lo} ({s.low_seed})")
 
 
+def print_season_awards(league: League, named: dict) -> None:
+    """The regular-season awards, as announced when the regular season ends."""
+    print(f"Regular-season awards ({named['season']}-{(named['season'] + 1) % 100:02d})")
+    for line in season_awards.report(named, league.user_team_id):
+        print(line)
+    print()
+
+
 def print_awards(league: League, summary: dict) -> None:
-    labels = {"mvp": "MVP", "finals_mvp": "Finals MVP", "dpoy": "Defensive POY",
-              "roy": "Rookie of the Year", "sixth_man": "Sixth Man", "mip": "Most Improved"}
-    for key, label in labels.items():
-        print(f"  {label:<20}{player_label(league, summary['awards'].get(key))}")
+    """Finals MVP and the All-Star Weekend (the season's awards come before the playoffs)."""
+    print(f"  {'Finals MVP':<20}{player_label(league, summary['awards'].get('finals_mvp'))}")
     a = summary.get("all_star")
     if a:
         teams = ", ".join(f"{k} {v}" for k, v in a["score"].items())
@@ -182,16 +189,25 @@ def print_leaders(league: League, season: int) -> None:
 def cmd_season(args) -> None:
     league = make_league(args)
     set_engine(league, args)
-    summary = play_full_season(league, random.Random(args.seed))
+    if getattr(args, "games", None):            # a shorter season
+        from .generate import generate_schedule
+        league.games = {}
+        league.rules.games_per_season = args.games
+        generate_schedule(league, random.Random(args.seed))
+
+    def at_awards(named):                       # printed when the regular season ends
+        print_standings(league)
+        print_season_awards(league, named)
+
+    summary = play_full_season(league, random.Random(args.seed), on_awards=at_awards)
     if args.out:
         save_league(league, args.out)
         print(f"Saved to {args.out}\n")
-    print_standings(league)
     print("Playoffs")
     print_playoffs(league)
     champ = league.teams[summary["champion"]]
     print(f"\nChampions: {champ.full_name} (won the finals {summary['finals']})\n")
-    print("Awards")
+    print("Finals and All-Star honours")
     print_awards(league, summary)
     print()
     print_leaders(league, summary["season"])
@@ -326,6 +342,7 @@ def main() -> None:
     season.add_argument("--teams", type=int, default=12)
     season.add_argument("--league", help="start from a league file (JSON) instead of generating one")
     season.add_argument("--out", help="save the finished season to this file")
+    season.add_argument("--games", type=int, help="games per team (default 82)")
 
     career = sub.add_parser("career", help="simulate many seasons (draft, free agency, ageing...)")
     career.add_argument("--engine", choices=["statistical", "spatial", "hybrid"], help="match engine: statistical (fast, default), spatial (players on a court, ~0.7 s a game) or hybrid (spatial for your team's games only)")
