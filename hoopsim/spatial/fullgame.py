@@ -177,8 +177,12 @@ class FullGame:
                  tuning: SpatialTuning = DEFAULT_TUNING, game_tuning: GameTuning = DEFAULT_GAME_TUNING,
                  open_tuning: OpenCourtTuning = DEFAULT_OPEN_TUNING,
                  model: Optional[DecisionModel] = None, params=None,
-                 season_tuning: Tuning = SEASON_TUNING, day: Optional[int] = None):
-        """``day``: the schedule day, so players who played last night start tired."""
+                 season_tuning: Tuning = SEASON_TUNING, day: Optional[int] = None,
+                 explore: float = 0.0, recorder: Optional[dict] = None):
+        """``day``: the schedule day, so players who played last night start tired.
+        ``explore`` and ``recorder`` are for training (``train.py --full``): the chance of a
+        random option, and a dict collecting (features, points the possession scored from
+        that half-court segment on) per option."""
         self.league, self.rules = league, league.rules
         self.rng = rng or random.Random()
         self.gt, self.ot = game_tuning, open_tuning
@@ -188,7 +192,9 @@ class FullGame:
         self.irng = random.Random(self.rng.getrandbits(64))
         self.record = record
         self.hc = HalfCourtGame(league, home_id, away_id, self.rng, tuning, record=record, model=model,
-                                params=params)
+                                params=params, explore=explore)
+        self.recorder = recorder
+        self._pending: list = []                # (kind, features, score before the segment)
         self.sides = {key: self._side(key, tid) for key, tid in (("home", home_id), ("away", away_id))}
         self.hc.box = {id(s.agent): Counter() for side in self.sides.values() for s in side.roster}
         self._game_day_form()
@@ -777,7 +783,12 @@ class FullGame:
         snap = {id(a): Counter(hc.box[id(a)]) for a in hc.everyone}
         lineup = self._lineup_indices() if self.record else None
         clock0 = start.get("game_clock", self.clock)
+        score0 = hc.score[offense.key]
         hc.play_possession(offense.key, start)
+        if self.recorder is not None:
+            if hc.explored is not None:
+                self._pending = []             # a random choice later on: earlier decisions don't count
+            self._pending += [(kind, feats, score0) for kind, feats in hc.on_policy_decisions()]
         seconds = max(0.0, clock0 - (hc.game_clock if hc.game_clock is not None else clock0))
         if hc.result == "period":
             seconds = self.clock
@@ -844,6 +855,13 @@ class FullGame:
     def _finish_possession(self, offense: Side, before: int, open_court, first_action,
                            record: dict, ending: str) -> None:
         points = self.hc.score[offense.key] - before
+        if self.recorder is not None:
+            # A decision is worth what the possession scored from its segment on (a
+            # non-shooting foul restarts the half court; the possession goes on).
+            end = self.hc.score[offense.key]
+            for kind, feats, score0 in self._pending:
+                self.recorder.setdefault(kind, []).append((feats, float(end - score0)))
+            self._pending = []
         self.stats["points"] += points
         is_transition = (open_court is not None and open_court.pushed and first_action is not None
                          and first_action <= self.gt.transition_window)

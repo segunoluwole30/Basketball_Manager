@@ -28,7 +28,7 @@ class FitTests(unittest.TestCase):
         self.assertLess(abs(w[0]), 0.1)
 
     def test_missing_kind_keeps_prior(self):
-        model = fit({"hold": [([1.0, 1.0, 1.0], 1.0)] * 50}, prior=HEURISTIC)
+        model = fit({"hold": [([1.0, 1.0, 1.0, 0.0], 1.0)] * 50}, prior=HEURISTIC)
         self.assertEqual(model.weights["pnr"], HEURISTIC.weights["pnr"])
 
 

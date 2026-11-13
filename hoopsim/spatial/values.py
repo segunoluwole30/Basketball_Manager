@@ -27,7 +27,8 @@ FEATURES = {
     # backing down in the post
     "post": ["bias", "clock", "strength_edge", "skill_edge", "dist_rim", "doubled"],
     "pnr": ["bias", "clock", "handling", "screener_strength"],
-    "hold": ["bias", "clock", "clock_raw"],
+    # flow: the defence isn't set (a flow out of transition): standing on the ball lets it set
+    "hold": ["bias", "clock", "clock_raw", "flow"],
     # run another set action (plays.py) instead of attacking now
     "reset": ["bias", "clock", "scramble"],
 }
@@ -40,7 +41,7 @@ HEURISTIC_WEIGHTS = {
     "pass": [-0.03, 0.0, 0.0, 0.0, -0.08, 1.0, 0.0, 0.0, 0.0],
     "post": [0.0, 1.0, 0.02, 0.02, -0.05, -0.10],
     "pnr": [0.06, 1.0, 0.012, 0.008],
-    "hold": [0.0, 1.0, 0.0],
+    "hold": [0.0, 1.0, 0.0, 0.0],
     "reset": [-0.02, 1.0, 0.0],
 }
 
@@ -126,9 +127,12 @@ def fit_kind(samples: list[tuple[list[float], float]], prior: list[float], ridge
 
 
 def fit(samples: dict[str, list[tuple[list[float], float]]], prior: DecisionModel,
-        ridge: float = 50.0, meta: Optional[dict] = None) -> DecisionModel:
+        ridge: float = 50.0, meta: Optional[dict] = None, step: float = 1.0) -> DecisionModel:
+    """Refit every option's weights to ``samples``; ``step`` < 1 moves only that share of
+    the way from ``prior`` to the fit (a damped update)."""
     weights = {}
     for kind in FEATURES:
         data = samples.get(kind, [])
-        weights[kind] = fit_kind(data, prior.weights[kind], ridge) if data else list(prior.weights[kind])
+        w = fit_kind(data, prior.weights[kind], ridge) if data else list(prior.weights[kind])
+        weights[kind] = [p + step * (x - p) for p, x in zip(prior.weights[kind], w)]
     return DecisionModel(weights, meta)
