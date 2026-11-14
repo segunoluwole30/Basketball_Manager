@@ -298,7 +298,22 @@ ball and his man. He turns at most 7 rad/s. Nothing in the simulation reads it: 
 the same with and without, and it adds about 7% to a replay before compression. The 3D
 viewer faces players this way when a replay has it (a shooter still turns to the rim and a
 passer to his receiver, from the cues); older replays are faced by the viewer's own guess
-from velocity and the ball, as before. `hoopsim3D.facing(false)` under `?debug` compares. `hoopsim3D.step(ms)` draws one frame
+from velocity and the ball, as before. `hoopsim3D.facing(false)` under `?debug` compares. 
+
+**Smooth tracks.** Positions are recorded to a tenth of a foot, ten times a second, so a
+steady 8.2 ft/s reads as 8 and 9 ft/s by turns: drawn as recorded, every runner shook at
+10 Hz (speed, stride rate and gait blend all rippling). The 3D viewer passes each player's
+track four times through a (1, 2, 1)/4 filter along the frames before interpolating it,
+which removes the ripple without delaying him (the filter looks as far ahead as behind; a
+sharp cut is rounded by a few inches) and never smooths across a jump (a substitution).
+**Eased feet.** A planted foot used to stop in one frame and leave in one frame, a visible
+jerk in the legs several times a second per player. The spot a landing foot is held to now
+slides to rest over 0.06 s, and a released foot returns to the clip on a critically damped
+spring from the speed it had. Measured at 60 frames a second over 40 s of play: frames in
+which a foot's acceleration relative to the body exceeds 600 ft/s² fell from 4.9% to 1.7%
+(0.6% with planting off), and a steady runner's drawn speed from 7.6-8.9 ft/s to a constant
+8.2. `hoopsim3D.smooth(false)` and `.plantFeet(false)` under `?debug` compare.
+`hoopsim3D.step(ms)` draws one frame
 `ms` on and stops following the browser's own frames, so a script can record the viewer at
 a fixed 30 frames a second however slow the machine is.
 

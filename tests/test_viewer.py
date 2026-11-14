@@ -540,6 +540,34 @@ console.log(JSON.stringify({ share: left / n, set, same: lookOf({ name: "A B" },
         # a cued shot arrives at the rim, not where it kisses the glass
         self.assertIn("f[4] <= (high ? 115 : 106) && peak >= high) arr = j;", src)
 
+    def test_smooth_tracks_and_eased_feet(self):
+        """No 10 Hz shake from positions rounded to a tenth of a foot; feet ease into and out of a plant."""
+        import subprocess, shutil
+        src = self.template
+        self.assertIn("const TRACK_PASSES = 4;", src)
+        self.assertIn("const sx = spline(sm, f, n * 2), sy = spline(sm, f, n * 2 + 1);", src)   # players are drawn from the smoothed track
+        self.assertIn("> 30) continue;   // (3 ft in a frame: a jump)", src)
+        self.assertIn("smooth: (on) => { trackSmooth = !!on; smoothOf = new WeakMap(); dirty = 3; },", src)
+        # a landing foot's hold slides to rest; a released one springs back from the speed it had
+        self.assertIn("f.hvx = (cvx + f.ovx) * cap; f.hvz = (cvz + f.ovz) * cap;", src)
+        self.assertIn("const w = 1 / FOOT_EASE, e = Math.exp(-w * dta), ax = (f.ovx + w * f.ox) * dta, az = (f.ovz + w * f.oz) * dta;", src)
+        self.assertNotIn("const e = Math.exp(-dta / FOOT_EASE); f.ox *= e; f.oz *= e;", src)
+        if not shutil.which("node"):
+            self.skipTest("node not installed")
+        # the filter itself: a steady 8.2 ft/s recorded in tenths of a foot comes out steady
+        js = """
+const rows = Array.from({ length: 60 }, (_, i) => [Math.round(8.2 * i)]);      // tenths of a foot, 0.1 s apart
+let sm = rows.map((r) => r.slice());
+for (let pass = 0; pass < 4; pass++) { const s = sm.map((r) => r.slice()); for (let i = 1; i < 59; i++) sm[i][0] = (s[i - 1][0] + 2 * s[i][0] + s[i + 1][0]) / 4; }
+const steps = (a) => a.slice(6, 54).map((r, i) => a[i + 7][0] - r[0]);
+const spread = (v) => Math.max(...v) - Math.min(...v);
+console.log(JSON.stringify({ raw: spread(steps(rows)), smooth: spread(steps(sm)), mid: sm[30][0] - 8.2 * 30 }));
+"""
+        res = json.loads(subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True, timeout=30).stdout)
+        self.assertEqual(res["raw"], 1)                             # 8 and 9 tenths by turns: 8 and 9 ft/s
+        self.assertLess(res["smooth"], 0.15)
+        self.assertLess(abs(res["mid"]), 0.5)                       # and he is where he was (within half a tenth)
+
     def test_light_model(self):
         """The same player with far fewer triangles: same skeleton, clips and parts."""
         full, light = (read_glb(PLAYER_ASSETS[n])[4] for n in ("player.glb", "player_light.glb"))

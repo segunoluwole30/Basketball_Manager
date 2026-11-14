@@ -1260,7 +1260,8 @@ window.GAME = /*GAME_DATA*/null;
   // planted feet: a foot counts as down within FOOT_ON ft of the floor (and until FOOT_OFF).
   // If holding it would stretch the leg more than FOOT_REACH ft from the clip, it takes a
   // step (FOOT_STEP seconds, FOOT_LIFT ft high) to where the clip has it.
-  const FOOT_ON = 0.15, FOOT_OFF = 0.24, FOOT_REACH = 0.75, FOOT_EASE = 0.06, FOOT_STEP = 0.14, FOOT_LIFT = 0.28;
+  const FOOT_ON = 0.15, FOOT_OFF = 0.24, FOOT_REACH = 0.75, FOOT_EASE = 0.1, FOOT_STEP = 0.18, FOOT_LIFT = 0.28;
+  const FOOT_SETTLE = 0.06, FOOT_SLIP = 9;   // a landing foot comes to rest over this long (s); it never slides in faster than this (ft/s)
   const POSE_CUES = { screen: "screen", post_up: "stance" };      // a stance he keeps while he stands there
   const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
   const smooth01 = (x) => { x = clamp01(x); return x * x * (3 - 2 * x); };
@@ -1385,10 +1386,13 @@ window.GAME = /*GAME_DATA*/null;
       fg.root.updateMatrixWorld(true);
       for (const sd of ["Left", "Right"]) {
         const hip = r.bones[sd + "UpLeg"], knee = r.bones[sd + "Leg"], foot = r.bones[sd + "Foot"];
-        const f = r.feet[sd] || (r.feet[sd] = { on: false, x: 0, z: 0, ox: 0, oz: 0, wait: 0 });
+        const f = r.feet[sd] || (r.feet[sd] = { on: false, x: 0, z: 0, ox: 0, oz: 0, wait: 0, ovx: 0, ovz: 0, hvx: 0, hvz: 0, cx: 0, cz: 0, seen: false });
         const other = r.feet[sd === "Left" ? "Right" : "Left"];
         vA.setFromMatrixPosition(foot.matrixWorld);
-        if (fresh || !env.plant()) { f.on = false; f.ox = f.oz = 0; f.wait = 0; }
+        if (fresh || !env.plant()) { f.on = false; f.ox = f.oz = 0; f.wait = 0; f.ovx = f.ovz = 0; f.seen = false; }
+        // how fast the clip is carrying the foot over the floor (it comes to rest, and leaves, at a speed, not in a frame)
+        const live = dta > 0 && f.seen, cvx = live ? (vA.x - f.cx) / dta : 0, cvz = live ? (vA.z - f.cz) / dta : 0;
+        f.cx = vA.x; f.cz = vA.z; f.seen = true;
         const down = vA.y < floor + (f.on ? FOOT_OFF : FOOT_ON) * k;
         f.wait = Math.max(0, f.wait - dta);
         if (f.on) {
@@ -1396,11 +1400,26 @@ window.GAME = /*GAME_DATA*/null;
           if (!down) f.on = false;                                   // the clip lifts it
           else if (far > 1 && !(other && other.wait > 0)) { f.on = false; f.wait = FOOT_STEP; }   // too far: step (one foot at a time)
           else if (far > 1.6) { f.x = vA.x + (f.x - vA.x) * 1.6 / far; f.z = vA.z + (f.z - vA.z) * 1.6 / far; }   // (both at once: this one drags)
-        } else if (down && f.wait <= 0 && dta > 0 && env.plant()) { f.on = true; f.x = vA.x + f.ox; f.z = vA.z + f.oz; }
-        if (f.on) { f.ox = f.x - vA.x; f.oz = f.z - vA.z; }
-        else { const e = Math.exp(-dta / FOOT_EASE); f.ox *= e; f.oz *= e; }
+        } else if (down && f.wait <= 0 && dta > 0 && env.plant()) {
+          // it lands where it is drawn, still moving as it was: the spot it is held to slides to rest
+          f.on = true; f.x = vA.x + f.ox; f.z = vA.z + f.oz;
+          const hv = Math.hypot(cvx + f.ovx, cvz + f.ovz), cap = hv > FOOT_SLIP ? FOOT_SLIP / hv : 1;
+          f.hvx = (cvx + f.ovx) * cap; f.hvz = (cvz + f.ovz) * cap;
+        }
+        if (f.on) {
+          const e = Math.exp(-dta / FOOT_SETTLE), nx = f.x + f.hvx * FOOT_SETTLE * (1 - e), nz = f.z + f.hvz * FOOT_SETTLE * (1 - e);
+          f.x = nx; f.z = nz; f.hvx *= e; f.hvz *= e;
+          const ox = f.x - vA.x, oz = f.z - vA.z;
+          if (dta > 0) { f.ovx = (ox - f.ox) / dta; f.ovz = (oz - f.oz) / dta; }
+          f.ox = ox; f.oz = oz;
+        } else if (dta > 0) {
+          // let go: back to the clip on a critically damped spring, starting at the speed it had (no jump)
+          const w = 1 / FOOT_EASE, e = Math.exp(-w * dta), ax = (f.ovx + w * f.ox) * dta, az = (f.ovz + w * f.oz) * dta;
+          f.ovx = (f.ovx - w * ax) * e; f.ovz = (f.ovz - w * az) * e;
+          f.ox = (f.ox + ax) * e; f.oz = (f.oz + az) * e;
+        }
         f.down = down;
-        const up = f.wait > 0 ? FOOT_LIFT * k * Math.pow(Math.sin(Math.PI * (1 - f.wait / FOOT_STEP)), 0.6) : 0;
+        const lift = f.wait > 0 ? Math.sin(Math.PI * (1 - f.wait / FOOT_STEP)) : 0, up = FOOT_LIFT * k * lift * lift;   // (a forced step: up and down smoothly)
         if (f.ox * f.ox + f.oz * f.oz < 1e-6 && up <= 0) continue;
         // two-bone IK: bend the knee so the ankle is the right distance from the hip, then swing the thigh
         vH.setFromMatrixPosition(hip.matrixWorld); vK.setFromMatrixPosition(knee.matrixWorld);
@@ -2690,8 +2709,32 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       const a1 = -p0 + p2, a2 = 2 * p0 - 5 * p1 + 4 * p2 - p3, a3 = -p0 + 3 * p1 - 3 * p2 + p3;
       return [0.5 * (2 * p1 + a1 * u + a2 * u * u + a3 * u * u * u), 0.5 * (a1 + 2 * a2 * u + 3 * a3 * u * u) / dt];
     }
+    // The players' tracks, smoothed. Positions are recorded to a tenth of a foot, ten times a
+    // second: a steady 8.2 ft/s reads as 8 and 9 ft/s by turns, and the engine corrects
+    // course at full throttle every tick, so drawn exactly a runner shakes at 10 Hz. Each
+    // coordinate is passed twice through a (1, 2, 1) / 4 filter along the frames, which
+    // removes that ripple without delaying him (it looks as far ahead as behind; he cuts a
+    // sharp corner by a few inches). Not across a jump (a substitution, a join).
+    const TRACK_PASSES = 4;
+    let smoothOf = new WeakMap();
+    function smoothed(p) {
+      let sm = smoothOf.get(p);
+      if (sm) return sm;
+      const fr = p.frames, n = fr.length, cols = 2 * NP(p);
+      sm = fr.map((f) => f.slice(6, 6 + cols));
+      if (trackSmooth) for (let pass = 0; pass < TRACK_PASSES; pass++) {
+        const src = sm.map((r) => r.slice());
+        for (let c = 0; c < cols; c += 2) for (let i = 1; i < n - 1; i++) {
+          const a = src[i - 1], b = src[i], d = src[i + 1];
+          if (Math.hypot(a[c] - b[c], a[c + 1] - b[c + 1]) > 30 || Math.hypot(d[c] - b[c], d[c + 1] - b[c + 1]) > 30) continue;   // (3 ft in a frame: a jump)
+          sm[i][c] = (a[c] + 2 * b[c] + d[c]) / 4; sm[i][c + 1] = (a[c + 1] + 2 * b[c + 1] + d[c + 1]) / 4;
+        }
+      }
+      smoothOf.set(p, sm);
+      return sm;
+    }
     function setFrame(p, time, g, tr, cut) {
-      const fr = p.frames, f = Math.min(fr.length - 1, Math.max(0, time / dt)), i = Math.floor(f);
+      const fr = p.frames, f = Math.min(fr.length - 1, Math.max(0, time / dt)), i = Math.floor(f), sm = smoothed(p);
       const a = fr[i], lu = lineupAt(p, i), order = onFloor(p, i), flip = attacksLeft(p) ? 1 : -1;
       const from = g > 0 && tr && tr.from ? tr.from : null;
       const players = [];
@@ -2702,7 +2745,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       const faceAt = (j, n) => { const c = fc.charCodeAt(j * np + n); return (c < 58 ? c - 48 : c < 91 ? c - 55 : c - 61) * Math.PI / 30; };
       for (let n = 0; n < NP(p); n++) {
         const key = (n < 5 ? "h" : "a") + lu[n];
-        const sx = spline(fr, f, 6 + n * 2), sy = spline(fr, f, 7 + n * 2);
+        const sx = spline(sm, f, n * 2), sy = spline(sm, f, n * 2 + 1);
         let [x, y] = toCourt(p, sx[0], sy[0]);
         let vx = sx[1] * flip, vy = sy[1] * flip;
         if (from && from.out[key]) {                 // gliding in from the last possession
@@ -2845,7 +2888,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     }
 
     // ---- animated bodies: the rig arrives after the view is up (or never: simple bodies stay)
-    let anim = null, bodyMode = "simple", bodyAuto = false, onSlow = null, footLock = true, fluid = true, handReach = true, useFacing = true;
+    let anim = null, bodyMode = "simple", bodyAuto = false, onSlow = null, footLock = true, fluid = true, handReach = true, useFacing = true, trackSmooth = true;
     let animP = null, over = 0, grip = 0, slowT = 0, slowN = 0;
     const gripPos = new THREE.Vector3();
     const ballWas = new THREE.Vector3(), spinAxis = new THREE.Vector3(0, 0, 1), TUMBLE = new THREE.Vector3(0.9, 0, 0.44);
@@ -3161,6 +3204,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
              cues: (p) => (anim ? anim.cues(p) : null),
              plantFeet: (on) => { footLock = !!on; dirty = 3; },      // (for comparing with and without, under ?debug)
              fluid: (on) => { fluid = !!on; dirty = 3; },
+             smooth: (on) => { trackSmooth = !!on; smoothOf = new WeakMap(); dirty = 3; },   // (the smoothed tracks against the recorded ones)
              facing: (on) => { useFacing = !!on; dirty = 3; },        // (the replay's facing against the viewer's own guess)
              reach: (on) => { handReach = !!on; dirty = 3; },         // (and for the hand that goes to the ball)             // (the same for the smoothed movement, lean and look)
              feet: () => Object.values(figures).filter((fg) => fg.rig && fg.root.visible).map((fg) => ({ key: fg.key, ...Object.fromEntries(
