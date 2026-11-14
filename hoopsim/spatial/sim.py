@@ -56,6 +56,27 @@ FACE_RUN_OFF = 5.0
 FACE_RUN_DEF = 11.0
 
 
+# The ball in the air. A shot leaves the hand at SHOT_Z0 ft and reaches the rim at 10 ft on a
+# true parabola: gravity fixes how high it goes for the time it is up (gravity_apex), and the
+# time comes from the launch angle (shot_time): steep near the basket, flatter from deep, as
+# shooters do. A three is up about 1.25 s and peaks near 15 ft (NBA tracking: 13-17 ft).
+# Before, a three was up 1.08 s with a 12 ft arc on top: it fell 2.5 times faster than gravity.
+GRAVITY = 32.17             # ft/s²
+RIM_RADIUS = 0.75           # ft
+MISS_AT = 0.72              # ft from the middle of the hoop a miss strikes the rim
+
+
+def shot_time(d: float, rise: float = 2.5) -> float:
+    """Seconds a shot from ``d`` ft is in the air, rising ``rise`` ft from hand to rim."""
+    angle = math.radians(max(49.0, min(58.0, 60.0 - 0.4 * d)))       # launch angle
+    return max(0.55, math.sqrt(2.0 * max(0.0, d * math.tan(angle) - rise) / GRAVITY))
+
+
+def gravity_apex(duration: float) -> float:
+    """The ``Flight.apex`` of a ball in free flight for ``duration`` s."""
+    return GRAVITY * duration * duration / 8.0
+
+
 FACING_CODE = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
 
@@ -1996,7 +2017,7 @@ class HalfCourtGame:
                 self.act(defender, "block", h)
                 self.say(f"{h.p.name} {verb}... BLOCKED by {defender.p.name}!")
                 land = C.clamp((h.x + rng.uniform(-6, 6), h.y + rng.uniform(2, 8)))
-                self.start_rebound(h.pos, land, 0.6)
+                self.start_rebound(h.pos, land, 0.6, z0=9.0)
                 return
         fouled = rng.random() < self.foul_chance(h, z, dd, share)
         if fouled:
@@ -2014,9 +2035,20 @@ class HalfCourtGame:
             self.stats[f"shot_clock_{z}"] += self.shot_clock
             self.stats[f"src_{z}_{source}"] += 1
         assisted = (self.last_passer is not None and self.now - self.catch_time < 2.5)
-        duration = 0.55 + shot_d / 45.0
-        self.flight = Flight("shot", spot, RIM, self.now, duration, apex=6 + shot_d * 0.25, z0=7.5, z1=10.0,
+        duration = shot_time(shot_d)
+        # A make drops through the middle; a miss strikes the rim, usually front or back
+        # (short or long) and a little to one side. Where is for the viewer only, so it is
+        # drawn apart from the game's own random numbers.
+        at = RIM
+        if not made:
+            look = random.Random(int(self.now * 10) * 31 + self.index[id(h)])
+            ux, uy = (RIM[0] - spot[0]) / max(0.1, shot_d), (RIM[1] - spot[1]) / max(0.1, shot_d)
+            turn = math.radians(look.uniform(-55, 55) + (180 if look.random() < 0.55 else 0))   # (front rim a bit more often)
+            c, sn = math.cos(turn), math.sin(turn)
+            at = (RIM[0] + MISS_AT * (ux * c - uy * sn), RIM[1] + MISS_AT * (ux * sn + uy * c))
+        self.flight = Flight("shot", spot, at, self.now, duration, apex=gravity_apex(duration), z0=7.5, z1=10.0,
                              data={"shooter": h, "made": made, "points": points, "zone": z, "fouled": fouled,
+                                   "rim": at,
                                    "defender": defender, "assisted": assisted, "passer": self.last_passer,
                                    "shot_d": shot_d, "bucket": bucket, "ctx": ctx})
         self.act(h, self.finish_action(h, z, spot, dd, lob, post, None if gathered else released), defender)
@@ -2152,11 +2184,13 @@ class HalfCourtGame:
             if self.rng.random() < 0.6:
                 angle = math.radians(90 + side * self.rng.uniform(10, 75))
             land = C.clamp((RIM[0] + r * math.cos(angle), RIM[1] + abs(r * math.sin(angle))))
-            self.start_rebound(RIM, land, 0.7)
+            self.start_rebound(d.get("rim", RIM), land, 0.7)
 
-    def start_rebound(self, start, land, duration, edge: float = 1.0) -> None:
-        """``edge`` multiplies the defence's rebounding advantage (free throws: they have the inside spots)."""
-        self.flight = Flight("rebound", start, land, self.now, duration, z0=10.0, z1=6.0, data={"edge": edge})
+    def start_rebound(self, start, land, duration, edge: float = 1.0, z0: float = 10.0) -> None:
+        """``edge`` multiplies the defence's rebounding advantage (free throws: they have the inside spots).
+        The ball comes off the rim (or a blocker's hand, ``z0`` ft up) in free flight: up a little, then down."""
+        self.flight = Flight("rebound", start, land, self.now, duration, apex=gravity_apex(duration),
+                             z0=z0, z1=6.0, data={"edge": edge})
         self.holder = None
         self.mode = "rebound"
         self.box_out_until = self.now + 0.7
@@ -2281,7 +2315,7 @@ class HalfCourtGame:
                 self.record_frame()
                 self.now += self.t.dt
             self.act(shooter, "free_throw")
-            shot = Flight("shot", shooter.pos, RIM, self.now, 0.9, apex=6, z0=7.5, z1=10.0)
+            shot = Flight("shot", shooter.pos, RIM, self.now, 0.9, apex=gravity_apex(0.9), z0=7.5, z1=10.0)
             for k in range(9):
                 self.flight = shot
                 self.record_frame()

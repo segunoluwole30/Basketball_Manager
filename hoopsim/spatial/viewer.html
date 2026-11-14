@@ -2727,19 +2727,23 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     // leaves a player's hands (holder -1), goes up over 11 ft and comes down by the rim.
     // The result is the play-by-play line at that moment (a score change: made).
     const flightsOf = new WeakMap();
+    const SHOT_CUES = ["jumper_release", "layup", "floater", "hook", "fadeaway", "heave", "free_throw", "dunk", "alley_oop"];
     function flights(p) {
       if (flightsOf.has(p)) return flightsOf.get(p);
       const fr = p.frames, out = [];
+      // (a shot from close peaks barely over the rim: the engine's cue says it is one)
+      const cues = new Set((Array.isArray(p.actions) ? p.actions : []).filter((a) => SHOT_CUES.includes(a[2])).map((a) => a[0]));
       for (let i = 1; i < fr.length; i++) {
         if (fr[i][5] >= 0 || fr[i - 1][5] < 0) continue;              // a release: held, then loose
+        const high = cues.has(i) || cues.has(i - 1) || cues.has(i + 1) ? 0 : 110;
         let j = i, peak = 0, arr = -1;
         for (; j < fr.length && fr[j][5] < 0; j++) {
           const f = fr[j];
           peak = Math.max(peak, f[4]);
-          if (arr < 0 && Math.hypot(f[2], f[3] - 52.5) <= 12 && f[4] >= 85 && f[4] <= 115 && peak >= 110) arr = j;
+          if (arr < 0 && Math.hypot(f[2], f[3] - 52.5) <= 12 && f[4] >= 85 && f[4] <= 115 && peak >= high) arr = j;
         }
         const end = j - 1, last = fr[end];
-        if (arr < 0 && !(peak >= 110 && Math.hypot(last[2], last[3] - 52.5) <= 75 && last[4] >= 60)) { i = j; continue; }
+        if (arr < 0 && !(peak >= Math.max(high, 100) && Math.hypot(last[2], last[3] - 52.5) <= 75 && last[4] >= 60)) { i = j; continue; }
         if (arr < 0) arr = end;                                        // a free throw short of the rim
         let made = null, prev = p.start_score;
         for (const e of p.events) {

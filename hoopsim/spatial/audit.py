@@ -172,8 +172,8 @@ def ball(possessions: list[dict]) -> dict:
                 t = seg[-1][0] - seg[0][0]
                 if max(zs) <= 9.0 and t > 0:
                     pass_speeds.append(math.dist(start, end) / t)
-                elif max(zs) > 10.0 and math.dist(end, C.RIM) < 3.0:
-                    apexes.append(max(zs))
+                elif max(zs) > 10.0 and math.dist(end, C.RIM) < 3.0 and math.dist(start, C.RIM) >= 10.0:
+                    apexes.append(max(zs))               # a jump shot (a lay-up barely clears the rim)
             seg = []
     return {"pass_speed_fts": statistics.median(pass_speeds) if pass_speeds else 0.0,
             "pass_speed_p90": sorted(pass_speeds)[int(0.9 * len(pass_speeds))] if pass_speeds else 0.0,

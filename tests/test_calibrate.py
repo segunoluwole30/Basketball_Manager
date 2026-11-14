@@ -50,9 +50,12 @@ class ParamsTests(unittest.TestCase):
         # is settled in the same tick; README "Defence that recovers"): physics, not
         # SpatialParams. The other defence changes are SpatialParams that LEGACY_PARAMS
         # switches off (was 6981a00e73f0ff0d / 22-40).
+        # Re-pinned when the ball got a true flight (a shot's time in the air from its launch
+        # angle, its height from gravity, a miss striking the rim; README "The ball in the
+        # air"): physics, not SpatialParams (was 0f704bf0fb0f2453 / 25-38).
         g = play(LEGACY_PARAMS)
-        self.assertEqual(fingerprint(g), "0f704bf0fb0f2453")
-        self.assertEqual(g.score, {"home": 25, "away": 38})
+        self.assertEqual(fingerprint(g), "1bc17680ae5ab058")
+        self.assertEqual(g.score, {"home": 27, "away": 28})
 
     def test_params_change_behaviour(self):
         loose = DEFAULT_PARAMS.with_values(help_trigger=10.0, closeout_speed=0.7, contest_outside=0.5)

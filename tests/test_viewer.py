@@ -511,6 +511,12 @@ console.log(JSON.stringify({ share: left / n, set, same: lookOf({ name: "A B" },
         code = lambda c: (ord(c) - 48 if ord(c) < 58 else ord(c) - 55 if ord(c) < 91 else ord(c) - 61)
         self.assertEqual([code(c) for c in FACING_CODE], list(range(62)))
 
+    def test_shots_are_found_by_their_cue(self):
+        """A close shot peaks barely over the rim now: the trail finds it by the engine's cue."""
+        src = self.template
+        self.assertIn('const SHOT_CUES = ["jumper_release", "layup", "floater", "hook", "fadeaway", "heave", "free_throw", "dunk", "alley_oop"];', src)
+        self.assertIn("const high = cues.has(i) || cues.has(i - 1) || cues.has(i + 1) ? 0 : 110;", src)   # (older replays: over 11 ft, as before)
+
     def test_light_model(self):
         """The same player with far fewer triangles: same skeleton, clips and parts."""
         full, light = (read_glb(PLAYER_ASSETS[n])[4] for n in ("player.glb", "player_light.glb"))

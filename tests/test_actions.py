@@ -72,6 +72,40 @@ class ActionTests(unittest.TestCase):
         # nobody spins: a frame's turn is within the turn rate (plus the 6-degree steps)
         self.assertLess(sorted(turns)[int(0.999 * len(turns))], math.degrees(TURN_RATE) * 0.1 + 13)
 
+    def test_the_ball_flies_true(self):
+        """A shot is a parabola under gravity; a miss strikes the rim, a make the middle."""
+        import math
+        from hoopsim.spatial.sim import GRAVITY, MISS_AT, RIM, Flight, gravity_apex, shot_time
+        for d, lo, hi in ((23.75, 14.5, 16.5), (15.0, 12.5, 14.5), (3.0, 10.0, 10.6)):
+            t = shot_time(d)
+            f = Flight("shot", (0.0, RIM[1] + d), RIM, 0.0, t, apex=gravity_apex(t), z0=7.5, z1=10.0)
+            zs = [f.position(t * k / 200)[2] for k in range(201)]
+            self.assertTrue(lo < max(zs) < hi, (d, max(zs)))           # a three peaks near 15 ft, a lay-up just over the rim
+            dt = t / 200                                                # it falls at g all the way
+            acc = [(zs[k + 1] - 2 * zs[k] + zs[k - 1]) / dt ** 2 for k in range(1, 200)]
+            self.assertTrue(all(abs(a + GRAVITY) < 0.5 for a in acc), d)
+        self.assertGreater(shot_time(23.75), shot_time(15.0))
+        self.assertTrue(1.15 < shot_time(23.75) < 1.4)
+        made = missed = 0
+        for p in self.replay["possessions"]:
+            fr = p["frames"]
+            for frame, player, action, other in p["actions"]:
+                if action not in ("jumper_release", "layup", "floater") or frame >= len(fr) or fr[frame][5] >= 0:
+                    continue
+                j = frame
+                while j + 1 < len(fr) and fr[j + 1][5] < 0 and not (fr[j][4] >= fr[j + 1][4] and fr[j + 1][4] <= 100 and j > frame + 2):
+                    j += 1
+                end = fr[min(j + 1, len(fr) - 1)]
+                off = math.hypot(end[2] / 10 - RIM[0], end[3] / 10 - RIM[1])
+                if end[4] != 100:
+                    continue                                            # (not sampled at the rim)
+                if off < 0.15:
+                    made += 1
+                elif abs(off - MISS_AT) < 0.2:
+                    missed += 1
+        self.assertGreater(made, 10)
+        self.assertGreater(missed, 10)                                  # misses arrive on the rim, not through the middle
+
     def test_actions_match_the_play(self):
         """A shot's release is the frame the ball leaves his hands; a pass's catch is by the receiver."""
         shots = ("jumper_release", "layup", "dunk", "floater", "hook", "fadeaway")   # an alley-oop is never held
