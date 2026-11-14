@@ -728,7 +728,11 @@ window.GAME = /*GAME_DATA*/null;
       el.setAttribute("aria-pressed", String(el.dataset.stage ? el.dataset.stage === P[poss].contest.stage : +el.dataset.period === P[poss].period)));
     drawFrame();
   }
-  function tick(ts) {
+  // (stepped: a frame asked for by hoopsim3D.step under ?debug, for recording at a fixed
+  // rate; while stepping, the browser's own frames are ignored)
+  let stepping = false;
+  function tick(ts, stepped) {
+    if (stepping && !stepped) { requestAnimationFrame(tick); return; }
     if (lastTs === null) lastTs = ts;
     const elapsed = Math.min(0.1, (ts - lastTs) / 1000);
     lastTs = ts;
@@ -757,7 +761,7 @@ window.GAME = /*GAME_DATA*/null;
       if (LIVE && (poss >= P.length - 2 || nextShown(poss) < 0)) liveFetch();
     }
     if (view3d && viewMode === "3d") view3d.render(elapsed, trans ? Math.min(speed, 2) : playing ? speed : 1);
-    requestAnimationFrame(tick);
+    if (!stepped) requestAnimationFrame(tick);
   }
   function setPlaying(on) {
     playing = on;
@@ -3207,6 +3211,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     rigShown = null; applyBodies();                 // (a model already loaded comes straight back)
     if (DEBUG) {
       window.hoopsim3D = view3d;
+      view3d.step = (ms) => { stepping = true; tick((lastTs === null ? 0 : lastTs) + ms, true); };   // one frame, ms on
       view3d.bodyPref = () => ({ pref: bodyPref, autoSimple, autoLevel, device: deviceSig() });
       view3d.fallBack = stepDown;                // as if the device had been too slow
       view3d.seek = (n, time, play = false) => { goTo(n); t = Math.min(time, duration(P[poss])); setPlaying(play); drawFrame(); };

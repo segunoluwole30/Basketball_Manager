@@ -529,6 +529,9 @@ console.log(JSON.stringify({ share: left / n, set, same: lookOf({ name: "A B" },
         self.assertIn("rattle = off > 0.4 && off < 0.95 && sy < 10.4;", src)
         self.assertIn("while (up > 1.2) { const T = up / 16.1;", src)                               # it bounces lower each time, and drifts on
         self.assertIn("if (Math.hypot(ex - rimX, ez) > 0.95) { ex = rimX; ez = 0;", src)            # off the glass: to the middle, no snap
+        # a frame at a time under ?debug, for recording the viewer at a fixed rate
+        self.assertIn("view3d.step = (ms) => { stepping = true; tick((lastTs === null ? 0 : lastTs) + ms, true); };", src)
+        self.assertIn("if (stepping && !stepped) { requestAnimationFrame(tick); return; }", src)
         self.assertIn("nets[sg] = add(new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.42, 1.5, 12, 3, true), netMat)", src)
         self.assertIn("net.scale.set(1 + 0.16 * k, 1 + 0.14 * k, 1 + 0.16 * k); net.position.y = 9.25 - 0.105 * k;", src)
         # the frame before the engine parks the ball at the rim is the last of its flight

@@ -298,7 +298,9 @@ ball and his man. He turns at most 7 rad/s. Nothing in the simulation reads it: 
 the same with and without, and it adds about 7% to a replay before compression. The 3D
 viewer faces players this way when a replay has it (a shooter still turns to the rim and a
 passer to his receiver, from the cues); older replays are faced by the viewer's own guess
-from velocity and the ball, as before. `hoopsim3D.facing(false)` under `?debug` compares.
+from velocity and the ball, as before. `hoopsim3D.facing(false)` under `?debug` compares. `hoopsim3D.step(ms)` draws one frame
+`ms` on and stops following the browser's own frames, so a script can record the viewer at
+a fixed 30 frames a second however slow the machine is.
 
 **The ball in the air** (`spatial/sim.py` `gravity_apex`, `Flight.shown`). The recorded
 ball is in free flight: a shot leaves the hand at 7.5 ft and reaches the rim at 10 ft on a
