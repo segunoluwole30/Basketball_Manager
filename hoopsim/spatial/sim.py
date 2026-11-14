@@ -73,6 +73,10 @@ BOARD_HALF = 2.6            # ... and no wider than this from the middle of the 
 RATTLE_IN_AT = 0.5          # ft from the middle a rattling make first meets the rim
 RATTLE_IN = 0.18            # share of makes that rattle in (not banked ones)
 RATTLE_OUT = 0.3            # share of misses that bounce on the rim before coming off
+# How often a shot from the side goes off the glass, by distance (ft, chance). No published
+# rate was found (scorekeepers' "bank shot" labels are known to lean towards makes), so these
+# are judgement: most lay-ups from an angle, some short jumpers, almost no long ones.
+BANK_CHANCE = ((6.0, 0.75), (14.0, 0.2), (99.0, 0.03))
 
 
 def bank_point(spot: tuple[float, float], at: tuple[float, float], shot_d: float, look: random.Random) -> Optional[tuple]:
@@ -80,7 +84,7 @@ def bank_point(spot: tuple[float, float], at: tuple[float, float], shot_d: float
     share of the flight spent getting there), or None for a shot straight at the rim."""
     dx, dy = spot[0] - RIM[0], spot[1] - RIM[1]
     side = math.degrees(math.atan2(abs(dx), dy)) if dy > 0.5 else 90.0
-    chance = 0.75 if shot_d < 6 else 0.2 if shot_d < 14 else 0.03
+    chance = next(c for within, c in BANK_CHANCE if shot_d < within)
     if not 20.0 <= side <= 70.0 or look.random() >= chance:
         return None
     mirror_y = 2 * BOARD_Y - at[1]                       # aim at the rim's reflection in the glass

@@ -321,14 +321,17 @@ change results: tried, it put the trained decision values out of line with the e
 Three more things are shown, again without the simulation reading any of them
 (`sim.bank_point`, `Flight.shown_via`). **Bank shots:** a shot from the side (20 to 70
 degrees off the line straight out from the rim) is often played off the glass: three in
-four from inside 6 ft, one in five from 6 to 14 ft, rarely from further. The ball flies to
+four from inside 6 ft, one in five from 6 to 14 ft, rarely from further (`sim.BANK_CHANCE`:
+judgement, since no published rate was found). The ball flies to
 the point on the board where the rim's reflection lies on its line, then to the rim, each
 leg in free flight. **Rim rattle:** three misses in ten bounce across to the far side of
 the rim before they come off; about one make in five (not banked) arrives 0.5 ft off the
 middle, and the viewer bounces it across the rim and in. **Through the net:** a made shot's
 frames end with the ball at the rim; the 3D viewer carries on from the last frame of its
 flight: through the net (which is pulled down and out, then flicks back; a dunk does the
-same), down to the floor and one bounce, until someone has the ball again. **Spin:** the
+same), down to the floor, where it bounces lower each time and drifts on the way the shot
+was going, until someone has the ball again. A banked make, whose last frames straddle the
+glass, is taken smoothly to the middle of the hoop. **Spin:** the
 viewer's ball has seams, so spin shows: backspin on a shot (2.5 turns a second, the top
 coming back towards the shooter), a little on a pass, a tumble off the rim, a slow roll on
 the dribble and none in the hands.

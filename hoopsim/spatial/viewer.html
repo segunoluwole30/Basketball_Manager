@@ -2849,8 +2849,8 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     // through the net, falls and bounces once; if it caught the rim on the way in (it
     // arrives off the middle: the engine's rattle), it bounces across the rim first.
     // (sx, sy, sz): where it arrived. Returns how far the net is pulled (0-1).
-    const RATTLE_T = 0.46;
-    function throughNet(t, sx, sy, sz, rimX, out) {
+    const RATTLE_T = 0.46, NET_BOUNCE = 0.6, NET_DRIFT = 2.4;      // (a bounce keeps this much of its speed; ft/s it leaves the net with, along the shot)
+    function throughNet(t, sx, sy, sz, rimX, out, ux = 0, uz = 0) {
       const off = Math.hypot(sx - rimX, sz), rattle = off > 0.4 && off < 0.95 && sy < 10.4;
       let y0 = Math.min(sy, 10.6);
       if (rattle) {
@@ -2862,15 +2862,18 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       const k = Math.min(1, t / 0.08);                             // to the middle, then down: the net slows it
       let y = y0 - 4.5 * t - 11 * t * t;
       const tn = (-4.5 + Math.sqrt(20.25 + 44 * (y0 - 8.3))) / 22;   // out of the bottom of the net
+      let drift = 0;
       if (t > tn) {
-        const v = 4.5 + 22 * tn, d = t - tn;
-        y = 8.3 - v * d - 16.1 * d * d;
-        if (y < BALL_R) {                                          // the floor: one bounce, then it stays down
-          const tf = (-v + Math.sqrt(v * v + 64.4 * (8.3 - BALL_R))) / 32.2, up = 0.55 * (v + 32.2 * tf), e = d - tf;
-          y = Math.max(BALL_R, BALL_R + up * e - 16.1 * e * e);
+        const v = 4.5 + 22 * tn, d = t - tn, tf = (-v + Math.sqrt(v * v + 64.4 * (8.3 - BALL_R))) / 32.2;
+        if (d <= tf) y = 8.3 - v * d - 16.1 * d * d;
+        else {                                                     // the floor: bounces, each lower, until it rolls
+          let e = d - tf, up = NET_BOUNCE * (v + 32.2 * tf);
+          y = BALL_R;
+          while (up > 1.2) { const T = up / 16.1; if (e < T) { y = BALL_R + up * e - 16.1 * e * e; break; } e -= T; up *= NET_BOUNCE; }
         }
+        drift = NET_DRIFT * 0.9 * (1 - Math.exp(-d / 0.9));         // it carries on the way the shot was going, and slows
       }
-      out.set(lerp(sx, rimX, k), y, lerp(sz, 0, k));
+      out.set(lerp(sx, rimX, k) + ux * drift, y, lerp(sz, 0, k) + uz * drift);
       return t < 0.45 ? Math.sin(Math.PI * t / 0.45) : Math.exp(-7 * (t - 0.45)) * Math.sin(26 * (t - 0.45)) * 0.35;
     }
     function setRig(rig) {
@@ -3085,11 +3088,14 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
             vy = (a[4] - b0[4]) / 10 / dt - 16.1 * dt;
             tau = Math.min(0.14, (vy + Math.sqrt(vy * vy + 64.4 * (sy - 10))) / 32.2);
           }
-          const ex = sx + (sx - px) / dt * tau, ez = sz + (sz - pz) / dt * tau;
+          let ex = sx + (sx - px) / dt * tau, ez = sz + (sz - pz) / dt * tau;
+          // (off the glass, or too far out to read: it is on its way to the middle)
+          if (Math.hypot(ex - rimX, ez) > 0.95) { ex = rimX; ez = 0; if (tau < 0.05) { tau = 0.08; vy = (10 - sy) / tau + 16.1 * tau; } }
+          const run = Math.hypot(sx - px, sz - pz) || 1, ux = (sx - px) / run, uz = (sz - pz) / run;   // the way it came in
           const parked = Math.hypot(st.ball.x - rimX, st.ball.z) < 1.3 && st.ball.y > 9.4;     // (the frames still have it at the rim)
-          if (tA < 1.4 || parked) {
+          if (tA < 2.6 || parked) {
             if (tA < tau) gripPos.set(sx + (ex - sx) * tA / tau, sy + vy * tA - 16.1 * tA * tA, sz + (ez - sz) * tA / tau);
-            else pull = throughNet(tA - tau, ex, tau > 0 ? 10 : sy, ez, rimX, gripPos);
+            else pull = throughNet(tA - tau, ex, tau > 0 ? 10 : sy, ez, rimX, gripPos, ux, uz);
             bX = gripPos.x; bY = gripPos.y; bZ = gripPos.z; dropping = tA >= tau; dirty = Math.max(dirty, 1);
           }
         }
