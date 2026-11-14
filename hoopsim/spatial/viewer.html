@@ -2332,6 +2332,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     const glass = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.3, depthWrite: false });
     const white = new THREE.LineBasicMaterial({ color: 0xffffff });
     const netMat = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity: 0.8 });
+    const nets = {};                                               // by end (-1, 1): they move when a ball goes through
     for (const sg of [-1, 1]) {
       const add = (mesh, x, y, shadow) => { mesh.position.set(x, y, 0); mesh.castShadow = !!shadow; scene.add(mesh); return mesh; };
       add(new THREE.Mesh(new THREE.BoxGeometry(4, 3.5, 3.5), padMat), sg * (L + 7.5), 1.75, true);
@@ -2346,7 +2347,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       const rim = add(new THREE.Mesh(new THREE.TorusGeometry(0.75, 0.055, 6, 24), rimMat), sg * RIM_X, 10, true);
       rim.rotation.x = Math.PI / 2;
       add(new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.12, 0.3), rimMat), sg * (L - 4.3), 10);
-      add(new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.42, 1.5, 12, 3, true), netMat), sg * RIM_X, 9.25);
+      nets[sg] = add(new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.42, 1.5, 12, 3, true), netMat), sg * RIM_X, 9.25);
     }
 
     // players: low-poly body, number on the jersey and on a label over the head
@@ -2471,7 +2472,19 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     scene.add(ring);
 
     // the ball (true size) and its shadow
-    const ballMat = new THREE.MeshLambertMaterial();
+    // (seams, so its spin shows: light with dark lines, tinted by the theme's ball colour)
+    const seams = document.createElement("canvas"); seams.width = 256; seams.height = 128;
+    {
+      const c = seams.getContext("2d");
+      c.fillStyle = "#fff"; c.fillRect(0, 0, 256, 128);
+      c.strokeStyle = "#3a2418"; c.lineWidth = 4;
+      const line = (pts) => { c.beginPath(); pts.forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y))); c.stroke(); };
+      line([[0, 64], [256, 64]]);                                  // round the middle
+      for (const x of [1, 128, 255]) line([[x, 0], [x, 128]]);     // over the poles
+      for (const x0 of [64, 192]) line(Array.from({ length: 33 }, (_, i) => [x0 + 30 * Math.cos(i * Math.PI / 16), i * 4]));   // the two curved seams
+    }
+    const ballMat = new THREE.MeshLambertMaterial({ map: new THREE.CanvasTexture(seams) });
+    ballMat.map.colorSpace = THREE.SRGBColorSpace;
     const ball = new THREE.Mesh(new THREE.SphereGeometry(BALL_R, 20, 14), ballMat);
     ball.castShadow = true;
     scene.add(ball);
@@ -2740,7 +2753,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
         for (; j < fr.length && fr[j][5] < 0; j++) {
           const f = fr[j];
           peak = Math.max(peak, f[4]);
-          if (arr < 0 && Math.hypot(f[2], f[3] - 52.5) <= 12 && f[4] >= 85 && f[4] <= 115 && peak >= high) arr = j;
+          if (arr < 0 && Math.hypot(f[2], f[3] - 52.5) <= 12 && f[4] >= 85 && f[4] <= (high ? 115 : 106) && peak >= high) arr = j;   // (a cued shot: at the rim, not where it kisses the glass)
         }
         const end = j - 1, last = fr[end];
         if (arr < 0 && !(peak >= Math.max(high, 100) && Math.hypot(last[2], last[3] - 52.5) <= 75 && last[4] >= 60)) { i = j; continue; }
@@ -2831,6 +2844,35 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     let anim = null, bodyMode = "simple", bodyAuto = false, onSlow = null, footLock = true, fluid = true, handReach = true, useFacing = true;
     let animP = null, over = 0, grip = 0, slowT = 0, slowN = 0;
     const gripPos = new THREE.Vector3();
+    const ballWas = new THREE.Vector3(), spinAxis = new THREE.Vector3(0, 0, 1), TUMBLE = new THREE.Vector3(0.9, 0, 0.44);
+    // A made shot's frames end with the ball at the rim. From there (t seconds on) it drops
+    // through the net, falls and bounces once; if it caught the rim on the way in (it
+    // arrives off the middle: the engine's rattle), it bounces across the rim first.
+    // (sx, sy, sz): where it arrived. Returns how far the net is pulled (0-1).
+    const RATTLE_T = 0.46;
+    function throughNet(t, sx, sy, sz, rimX, out) {
+      const off = Math.hypot(sx - rimX, sz), rattle = off > 0.4 && off < 0.95 && sy < 10.4;
+      let y0 = Math.min(sy, 10.6);
+      if (rattle) {
+        const qx = rimX - (sx - rimX) * 0.55, qz = -sz * 0.55;      // the far side of the rim, then in
+        if (t < 0.26) { const u = t / 0.26; out.set(lerp(sx, qx, u), 10 + 2 * u * (1 - u), lerp(sz, qz, u)); return 0; }
+        if (t < RATTLE_T) { const u = (t - 0.26) / 0.2; out.set(lerp(qx, rimX, u), 10 + 0.9 * u * (1 - u), lerp(qz, 0, u)); return 0; }
+        t -= RATTLE_T; y0 = 10; sx = rimX; sz = 0;
+      }
+      const k = Math.min(1, t / 0.08);                             // to the middle, then down: the net slows it
+      let y = y0 - 4.5 * t - 11 * t * t;
+      const tn = (-4.5 + Math.sqrt(20.25 + 44 * (y0 - 8.3))) / 22;   // out of the bottom of the net
+      if (t > tn) {
+        const v = 4.5 + 22 * tn, d = t - tn;
+        y = 8.3 - v * d - 16.1 * d * d;
+        if (y < BALL_R) {                                          // the floor: one bounce, then it stays down
+          const tf = (-v + Math.sqrt(v * v + 64.4 * (8.3 - BALL_R))) / 32.2, up = 0.55 * (v + 32.2 * tf), e = d - tf;
+          y = Math.max(BALL_R, BALL_R + up * e - 16.1 * e * e);
+        }
+      }
+      out.set(lerp(sx, rimX, k), y, lerp(sz, 0, k));
+      return t < 0.45 ? Math.sin(Math.PI * t / 0.45) : Math.exp(-7 * (t - 0.45)) * Math.sin(26 * (t - 0.45)) * 0.35;
+    }
     function setRig(rig) {
       for (const key in figures) {                    // (players already on the floor are rebuilt from the new model)
         const fg = figures[key];
@@ -3004,7 +3046,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       } else ring.visible = false;
       // animated: the ball sits in his hands (and bounces under one on the dribble); once it
       // leaves them it eases from the hand onto its recorded flight
-      let slamFig = null;
+      let slamFig = null, pull = 0, shotUp = false, dropping = false;
       if (useRig) for (const q of st.players) {
         const f = figures[q.key];
         if (f.rig && f.rig.slam) slamFig = f;
@@ -3014,7 +3056,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
         const c = slamFig.rig.slam, after = st.at - c.slam;
         anim.slamHand(slamFig, rimX, st.at);
         if (after < 0) anim.ballInHand(slamFig, gripPos, dta);
-        else gripPos.set(rimX, Math.max(BALL_R, 9.7 - 16 * after * after), 0);   // through the net and down
+        else { gripPos.set(rimX, Math.max(BALL_R, 9.7 - 16 * after * after), 0); pull = after < 0.45 ? Math.sin(Math.PI * after / 0.45) : Math.exp(-7 * (after - 0.45)) * Math.sin(26 * (after - 0.45)) * 0.35; }   // through the net and down
         grip = 1; ring.visible = false;
       } else if (useRig && holderFig) { anim.ballInHand(holderFig, gripPos, dta); grip = snap ? 1 : grip + (1 - grip) * (1 - Math.exp(-dtg / 0.05)); }
       else grip = snap || !useRig ? 0 : Math.max(0, grip - dtg / 0.16);
@@ -3023,12 +3065,56 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
         bX = lerp(bX, gripPos.x, g); bY = lerp(bY, gripPos.y, g); bZ = lerp(bZ, gripPos.z, g);
         if (grip < 1 && !holderFig) dirty = Math.max(dirty, 1);
       }
+      // a made shot: on from where the frames leave it at the rim, through the net and down
+      // (until someone has the ball again, or the frames move it on)
+      if (!slamFig && !holderFig && !CONTEST) {
+        const fN = st.time / dt, list = flights(st.p);
+        shotUp = list.some((x) => fN >= x.rel && fN <= x.arr);
+        const fl = list.find((x) => x.made === true && st.at >= (x.arr - 1) * dt && !(useRig && anim.dunkAt(st.p, x.rel)));
+        // (once the shot is over the engine parks the ball at the middle of the rim: the frame
+        // before that is the last of its flight)
+        const fr = st.p.frames, parkedAt = (f) => Math.abs(f[2]) < 1 && Math.abs(f[3] - 52.5) < 1 && f[4] === 100;
+        const k = fl ? (fl.arr >= 2 && parkedAt(fr[fl.arr]) && !parkedAt(fr[fl.arr - 1]) && fr[fl.arr - 1][5] < 0 ? fl.arr - 1 : fl.arr) : 0;
+        if (fl && st.at >= k * dt) {
+          const a = fr[k], b0 = fr[Math.max(0, k - 1)], tA = st.at - k * dt;
+          const at = (f) => toWorld(...toCourt(st.p, f[2] / 10, f[3] / 10));
+          const [sx, sz] = at(a), [px, pz] = at(b0), sy = a[4] / 10;
+          // The last frame is often a little short of the rim: it flies on (tau s) to rim height first.
+          let tau = 0, vy = 0;
+          if (sy > 10.05 && b0[5] < 0 && b0[4] > a[4]) {
+            vy = (a[4] - b0[4]) / 10 / dt - 16.1 * dt;
+            tau = Math.min(0.14, (vy + Math.sqrt(vy * vy + 64.4 * (sy - 10))) / 32.2);
+          }
+          const ex = sx + (sx - px) / dt * tau, ez = sz + (sz - pz) / dt * tau;
+          const parked = Math.hypot(st.ball.x - rimX, st.ball.z) < 1.3 && st.ball.y > 9.4;     // (the frames still have it at the rim)
+          if (tA < 1.4 || parked) {
+            if (tA < tau) gripPos.set(sx + (ex - sx) * tA / tau, sy + vy * tA - 16.1 * tA * tA, sz + (ez - sz) * tA / tau);
+            else pull = throughNet(tA - tau, ex, tau > 0 ? 10 : sy, ez, rimX, gripPos);
+            bX = gripPos.x; bY = gripPos.y; bZ = gripPos.z; dropping = tA >= tau; dirty = Math.max(dirty, 1);
+          }
+        }
+      }
+      // the net is pulled down and out as the ball goes through, and flicks back
+      for (const sg of [-1, 1]) {
+        const net = nets[sg], k = net && sg * rimX > 0 ? pull : 0;
+        if (!net) continue;
+        net.scale.set(1 + 0.16 * k, 1 + 0.14 * k, 1 + 0.16 * k); net.position.y = 9.25 - 0.105 * k;
+      }
       bY = Math.max(BALL_R, bY);
       if (contest3D) contest3D(st);
       ball.position.set(bX, bY, bZ);
       // a blocker's or contester's hand goes to the ball, now that it is where it will be drawn
       if (useRig) for (const q of st.players) { const f = figures[q.key]; if (f && f.rig && (f.rig.reachW > 0.01 || f.rig.reachFor)) anim.reachBall(f, bX, bY, bZ); }
-      ball.rotation.x += dtg * 6; ball.rotation.z += dtg * 2;
+      // Spin. In the hands: none. A shot has backspin (the top of the ball comes back towards
+      // the shooter, about 2.5 turns a second), a pass a little; off the rim it tumbles.
+      const mx = bX - ballWas.x, mz = bZ - ballWas.z, moved = Math.hypot(mx, mz);
+      ballWas.set(bX, bY, bZ);
+      if (snap) ball.rotation.set(0, 0, 0);
+      else if (!holderFig && !slamFig && dtg > 0) {
+        if (moved > 0.01 && moved < 6 && !dropping) spinAxis.set(-mz / moved, 0, mx / moved);
+        const flying = shotUp || (bY > 1.2 && moved > 0.02);
+        ball.rotateOnWorldAxis(flying && !dropping ? spinAxis : TUMBLE, dtg * (shotUp ? 15.7 : dropping ? 5 : flying ? 7 : 3));
+      } else if (holderFig && st.ballLow && dtg > 0) ball.rotateOnWorldAxis(TUMBLE, dtg * 3);   // (a dribble: a slow roll)
       const sh = (1.1 + bY * 0.06) * BALL_R / 0.6;
       shadow.position.x = bX; shadow.position.z = bZ;
       shadow.scale.set(sh, 1, sh);

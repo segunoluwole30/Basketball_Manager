@@ -108,6 +108,41 @@ class ActionTests(unittest.TestCase):
         self.assertGreater(made, 10)
         self.assertGreater(missed, 10)                                  # misses arrive on the rim, not through the middle
 
+    def test_bank_shots_and_rattles_are_shown(self):
+        """Display only: a shot off the glass, a miss bouncing across the rim."""
+        import math
+        import random as rnd
+        from hoopsim.spatial.sim import BOARD_HALF, BOARD_Y, RIM, Flight, bank_point
+        look = rnd.Random(3)
+        side = [bank_point((6.0, 9.0), RIM, 7.0, look) for _ in range(400)]         # from the wing, close: often
+        hits = [b for b in side if b]
+        self.assertTrue(0.1 < len(hits) / 400 < 0.35)
+        for bx, by, bz, share in hits:
+            self.assertEqual(by, BOARD_Y)
+            self.assertTrue(abs(bx) < BOARD_HALF and 10.5 < bz < 12 and 0 < share < 1)
+            self.assertTrue(0 < bx < 6.0)                                           # between the shooter and the rim
+        self.assertFalse(any(bank_point((0.0, 20.0), RIM, 14.75, look) for _ in range(200)))    # straight on: never
+        self.assertFalse(any(bank_point((22.0, 4.0), RIM, 22.0, look) for _ in range(200)))     # from the baseline: never
+        self.assertLess(sum(1 for _ in range(400) if bank_point((16.0, 20.0), RIM, 21.8, look)), 30)   # a three: rarely
+        # the flight is shown to the glass, then to the rim; the simulation's own path is the straight one
+        f = Flight("shot", (6.0, 9.0), RIM, 0.0, 0.7, z0=7.5, z1=10.0, shown_via=hits[0])
+        at = f.shown(0.7 * hits[0][3])
+        self.assertAlmostEqual(at[0], hits[0][0], places=6)
+        self.assertAlmostEqual(at[2], hits[0][2], places=6)
+        self.assertEqual(f.shown(0.7)[:2], RIM)
+        self.assertNotEqual(f.position(0.7 * hits[0][3])[:2], at[:2])
+        zs = [f.shown(0.7 * k / 100)[2] for k in range(101)]
+        self.assertLess(max(zs), 12.5)                                              # no leap between the two flights
+        # in a recorded game: some shots touch the glass, some misses cross the rim before coming off
+        glass = 0
+        for p in self.replay["possessions"]:
+            fr = p["frames"]
+            for frame, player, action, other in p["actions"]:
+                if action == "layup" and frame < len(fr) and fr[frame][5] < 0:
+                    sy = fr[frame - 1][7 + 2 * player] / 10
+                    glass += sy > 6.5 and any(abs(g[3] / 10 - BOARD_Y) < 0.3 and g[4] >= 106 for g in fr[frame:frame + 8])
+        self.assertGreater(glass, 3)
+
     def test_actions_match_the_play(self):
         """A shot's release is the frame the ball leaves his hands; a pass's catch is by the receiver."""
         shots = ("jumper_release", "layup", "dunk", "floater", "hook", "fadeaway")   # an alley-oop is never held

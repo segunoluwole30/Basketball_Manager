@@ -65,6 +65,33 @@ FACE_RUN_DEF = 11.0
 # rim, as before), so results are unchanged.
 GRAVITY = 32.17             # ft/s²
 MISS_AT = 0.72              # ft from the middle of the hoop a miss strikes the rim
+# Also display only: a shot from the side, close in, is often banked in off the glass; some
+# makes catch the inside of the rim before they drop (the viewer bounces them in); some
+# misses bounce across the rim once before they come off.
+BOARD_Y = 4.45              # the ball's centre when it touches the glass (the board is 4 ft from the baseline)
+BOARD_HALF = 2.6            # ... and no wider than this from the middle of the board
+RATTLE_IN_AT = 0.5          # ft from the middle a rattling make first meets the rim
+RATTLE_IN = 0.18            # share of makes that rattle in (not banked ones)
+RATTLE_OUT = 0.3            # share of misses that bounce on the rim before coming off
+
+
+def bank_point(spot: tuple[float, float], at: tuple[float, float], shot_d: float, look: random.Random) -> Optional[tuple]:
+    """Where on the glass a shot from ``spot`` kisses on its way to ``at`` (x, y, height,
+    share of the flight spent getting there), or None for a shot straight at the rim."""
+    dx, dy = spot[0] - RIM[0], spot[1] - RIM[1]
+    side = math.degrees(math.atan2(abs(dx), dy)) if dy > 0.5 else 90.0
+    chance = 0.75 if shot_d < 6 else 0.2 if shot_d < 14 else 0.03
+    if not 20.0 <= side <= 70.0 or look.random() >= chance:
+        return None
+    mirror_y = 2 * BOARD_Y - at[1]                       # aim at the rim's reflection in the glass
+    if spot[1] - mirror_y < 0.5:
+        return None
+    k = (spot[1] - BOARD_Y) / (spot[1] - mirror_y)
+    bx = spot[0] + (at[0] - spot[0]) * k
+    if abs(bx) > BOARD_HALF:
+        return None
+    d1, d2 = math.hypot(bx - spot[0], BOARD_Y - spot[1]), math.hypot(at[0] - bx, at[1] - BOARD_Y)
+    return bx, BOARD_Y, 10.9 + 0.035 * shot_d, d1 / (d1 + 1.6 * d2)
 
 
 def gravity_apex(duration: float) -> float:
@@ -306,6 +333,9 @@ class Flight:
     # strikes the rim and comes off it there): for the recorded frames only.
     shown_start: Optional[tuple] = None
     shown_end: Optional[tuple] = None
+    # ... and a point it is shown touching on the way: (x, y, height, share of the flight
+    # to get there): the glass on a bank shot, the far side of the rim on a rattle.
+    shown_via: Optional[tuple] = None
 
     def position(self, now: float) -> tuple[float, float, float]:
         f = max(0.0, min(1.0, (now - self.t0) / self.duration))
@@ -318,7 +348,16 @@ class Flight:
         """The ball as recorded for the viewer (``position`` is what the simulation follows)."""
         f = max(0.0, min(1.0, (now - self.t0) / self.duration))
         a, b = self.shown_start or self.start, self.shown_end or self.end
-        return a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, self.position(now)[2]
+        if self.shown_via is None:
+            return a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, self.position(now)[2]
+        vx, vy, vz, share = self.shown_via                 # two free flights, joined where it touches
+        share = max(0.05, min(0.95, share))
+        if f < share:
+            u, t, p, q, za, zb = f / share, self.duration * share, a, (vx, vy), self.z0, vz
+        else:
+            u, t, p, q, za, zb = (f - share) / (1 - share), self.duration * (1 - share), (vx, vy), b, vz, self.z1
+        return (p[0] + (q[0] - p[0]) * u, p[1] + (q[1] - p[1]) * u,
+                za + (zb - za) * u + gravity_apex(t) * 4 * u * (1 - u))
 
     def done(self, now: float) -> bool:
         return now - self.t0 >= self.duration
@@ -2044,17 +2083,23 @@ class HalfCourtGame:
         # A make drops through the middle; a miss is shown striking the rim, usually front
         # or back (short or long) and a little to one side. That is for the viewer only, so
         # it is drawn apart from the game's own random numbers.
-        at = RIM
+        at, rattle = RIM, None
+        look = random.Random(int(self.now * 10) * 31 + self.index[id(h)])
+        ux, uy = (RIM[0] - spot[0]) / max(0.1, shot_d), (RIM[1] - spot[1]) / max(0.1, shot_d)
+        turn = math.radians(look.uniform(-55, 55) + (180 if look.random() < 0.55 else 0))   # (front rim a bit more often)
+        c, sn = math.cos(turn), math.sin(turn)
+        rx, ry = ux * c - uy * sn, ux * sn + uy * c
         if not made:
-            look = random.Random(int(self.now * 10) * 31 + self.index[id(h)])
-            ux, uy = (RIM[0] - spot[0]) / max(0.1, shot_d), (RIM[1] - spot[1]) / max(0.1, shot_d)
-            turn = math.radians(look.uniform(-55, 55) + (180 if look.random() < 0.55 else 0))   # (front rim a bit more often)
-            c, sn = math.cos(turn), math.sin(turn)
-            at = (RIM[0] + MISS_AT * (ux * c - uy * sn), RIM[1] + MISS_AT * (ux * sn + uy * c))
+            at = (RIM[0] + MISS_AT * rx, RIM[1] + MISS_AT * ry)
+            if look.random() < RATTLE_OUT:             # ... and across to the far side before it comes off
+                rattle = (RIM[0] - 0.6 * MISS_AT * rx, RIM[1] - 0.6 * MISS_AT * ry, 10.0, 0.36)
+        bank = bank_point(spot, at, shot_d, look)
+        if made and bank is None and look.random() < RATTLE_IN:
+            at = (RIM[0] + RATTLE_IN_AT * rx, RIM[1] + RATTLE_IN_AT * ry)
         self.flight = Flight("shot", spot, RIM, self.now, duration, apex=gravity_apex(duration), z0=7.5, z1=10.0,
-                             shown_end=at,
+                             shown_end=at, shown_via=bank,
                              data={"shooter": h, "made": made, "points": points, "zone": z, "fouled": fouled,
-                                   "rim": at,
+                                   "rim": at, "rattle": rattle,
                                    "defender": defender, "assisted": assisted, "passer": self.last_passer,
                                    "shot_d": shot_d, "bucket": bucket, "ctx": ctx})
         self.act(h, self.finish_action(h, z, spot, dd, lob, post, None if gathered else released), defender)
@@ -2190,15 +2235,15 @@ class HalfCourtGame:
             if self.rng.random() < 0.6:
                 angle = math.radians(90 + side * self.rng.uniform(10, 75))
             land = C.clamp((RIM[0] + r * math.cos(angle), RIM[1] + abs(r * math.sin(angle))))
-            self.start_rebound(RIM, land, 0.7, shown_start=d.get("rim"))
+            self.start_rebound(RIM, land, 0.7, shown_start=d.get("rim"), shown_via=d.get("rattle"))
 
     def start_rebound(self, start, land, duration, edge: float = 1.0, z0: float = 10.0,
-                      shown_start: Optional[tuple] = None) -> None:
+                      shown_start: Optional[tuple] = None, shown_via: Optional[tuple] = None) -> None:
         """``edge`` multiplies the defence's rebounding advantage (free throws: they have the inside spots).
         The ball is shown coming off the rim where the miss struck it (``shown_start``), or off a
         blocker's hand (``z0`` ft up), in free flight: up a little, then down."""
         self.flight = Flight("rebound", start, land, self.now, duration, apex=gravity_apex(duration),
-                             z0=z0, z1=6.0, shown_start=shown_start, data={"edge": edge})
+                             z0=z0, z1=6.0, shown_start=shown_start, shown_via=shown_via, data={"edge": edge})
         self.holder = None
         self.mode = "rebound"
         self.box_out_until = self.now + 0.7

@@ -318,6 +318,21 @@ The 3D viewer's shot trail finds a close shot by the engine's cue, since it no l
 over 11 ft. A fuller arc (a three up 1.25 s, peaking at 15 ft) needs longer flights, which
 change results: tried, it put the trained decision values out of line with the engine.
 
+Three more things are shown, again without the simulation reading any of them
+(`sim.bank_point`, `Flight.shown_via`). **Bank shots:** a shot from the side (20 to 70
+degrees off the line straight out from the rim) is often played off the glass: three in
+four from inside 6 ft, one in five from 6 to 14 ft, rarely from further. The ball flies to
+the point on the board where the rim's reflection lies on its line, then to the rim, each
+leg in free flight. **Rim rattle:** three misses in ten bounce across to the far side of
+the rim before they come off; about one make in five (not banked) arrives 0.5 ft off the
+middle, and the viewer bounces it across the rim and in. **Through the net:** a made shot's
+frames end with the ball at the rim; the 3D viewer carries on from the last frame of its
+flight: through the net (which is pulled down and out, then flicks back; a dunk does the
+same), down to the floor and one bounce, until someone has the ball again. **Spin:** the
+viewer's ball has seams, so spin shows: backspin on a shot (2.5 turns a second, the top
+coming back towards the shooter), a little on a pass, a tumble off the rim, a slow roll on
+the dribble and none in the hands.
+
 **Animation cues** (`spatial/sim.py` `ACTIONS`). Each recorded possession carries an
 `"actions"` list next to its frames and events: `[frame, player, action, other]`, meaning
 player `player` (0-9, as in the frame's positions; `other` likewise, or -1) starts doing

@@ -517,6 +517,24 @@ console.log(JSON.stringify({ share: left / n, set, same: lookOf({ name: "A B" },
         self.assertIn('const SHOT_CUES = ["jumper_release", "layup", "floater", "hook", "fadeaway", "heave", "free_throw", "dunk", "alley_oop"];', src)
         self.assertIn("const high = cues.has(i) || cues.has(i - 1) || cues.has(i + 1) ? 0 : 110;", src)   # (older replays: over 11 ft, as before)
 
+    def test_ball_spin_and_through_the_net(self):
+        """A seamed ball with backspin; a make drops through the net, which moves; a rattle bounces in."""
+        src = self.template
+        view = src[src.index("function createView3D"):]
+        self.assertIn("const ballMat = new THREE.MeshLambertMaterial({ map: new THREE.CanvasTexture(seams) });", src)
+        self.assertIn("if (moved > 0.01 && moved < 6 && !dropping) spinAxis.set(-mz / moved, 0, mx / moved);", src)   # backspin: about the axis across its path
+        self.assertIn("dtg * (shotUp ? 15.7 : dropping ? 5 : flying ? 7 : 3)", src)                 # 2.5 turns a second on a shot
+        self.assertNotIn("ball.rotation.x += dtg * 6", src)
+        self.assertEqual(src.count("function throughNet(t, sx, sy, sz, rimX, out) {"), 1)
+        self.assertIn("rattle = off > 0.4 && off < 0.95 && sy < 10.4;", src)
+        self.assertIn("nets[sg] = add(new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.42, 1.5, 12, 3, true), netMat)", src)
+        self.assertIn("net.scale.set(1 + 0.16 * k, 1 + 0.14 * k, 1 + 0.16 * k); net.position.y = 9.25 - 0.105 * k;", src)
+        # the frame before the engine parks the ball at the rim is the last of its flight
+        self.assertIn("parkedAt = (f) => Math.abs(f[2]) < 1 && Math.abs(f[3] - 52.5) < 1 && f[4] === 100;", src)
+        self.assertLess(view.index("pull = throughNet("), view.index("ball.position.set(bX, bY, bZ);"))
+        # a cued shot arrives at the rim, not where it kisses the glass
+        self.assertIn("f[4] <= (high ? 115 : 106) && peak >= high) arr = j;", src)
+
     def test_light_model(self):
         """The same player with far fewer triangles: same skeleton, clips and parts."""
         full, light = (read_glb(PLAYER_ASSETS[n])[4] for n in ("player.glb", "player_light.glb"))

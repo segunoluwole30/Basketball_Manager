@@ -53,8 +53,10 @@ class ParamsTests(unittest.TestCase):
         # Re-pinned when the recorded ball got a true flight (its height from gravity, a
         # miss shown striking the rim; README "The ball in the air"): the frames' ball
         # columns change, the play and the score do not (was 0f704bf0fb0f2453).
+        # ... and again when bank shots and rim rattles were shown (was b3ee972e6b523217):
+        # the ball's columns again, the same play and score.
         g = play(LEGACY_PARAMS)
-        self.assertEqual(fingerprint(g), "b3ee972e6b523217")
+        self.assertEqual(fingerprint(g), "6039d559e5afa512")
         self.assertEqual(g.score, {"home": 25, "away": 38})
 
     def test_params_change_behaviour(self):
