@@ -56,20 +56,15 @@ FACE_RUN_OFF = 5.0
 FACE_RUN_DEF = 11.0
 
 
-# The ball in the air. A shot leaves the hand at SHOT_Z0 ft and reaches the rim at 10 ft on a
-# true parabola: gravity fixes how high it goes for the time it is up (gravity_apex), and the
-# time comes from the launch angle (shot_time): steep near the basket, flatter from deep, as
-# shooters do. A three is up about 1.25 s and peaks near 15 ft (NBA tracking: 13-17 ft).
-# Before, a three was up 1.08 s with a 12 ft arc on top: it fell 2.5 times faster than gravity.
+# The ball in the air, as recorded for the viewer. A shot leaves the hand at 7.5 ft and
+# reaches the rim at 10 ft in free flight: gravity fixes how high it goes for the time it is
+# up (gravity_apex). Before, a fixed arc was added on top (6 ft plus a quarter of the
+# distance): a three peaked at 21 ft and a lay-up at 15, falling about 2.5 times faster than
+# gravity. A miss is shown striking the rim, MISS_AT ft from the middle. None of this is
+# read by the simulation (it follows the ball's path over the floor, to the middle of the
+# rim, as before), so results are unchanged.
 GRAVITY = 32.17             # ft/s²
-RIM_RADIUS = 0.75           # ft
 MISS_AT = 0.72              # ft from the middle of the hoop a miss strikes the rim
-
-
-def shot_time(d: float, rise: float = 2.5) -> float:
-    """Seconds a shot from ``d`` ft is in the air, rising ``rise`` ft from hand to rim."""
-    angle = math.radians(max(49.0, min(58.0, 60.0 - 0.4 * d)))       # launch angle
-    return max(0.55, math.sqrt(2.0 * max(0.0, d * math.tan(angle) - rise) / GRAVITY))
 
 
 def gravity_apex(duration: float) -> float:
@@ -307,6 +302,10 @@ class Flight:
     z0: float = 4.0
     z1: float = 4.0
     data: dict = field(default_factory=dict)
+    # Where the ball is shown leaving from and arriving, if not start and end (a miss
+    # strikes the rim and comes off it there): for the recorded frames only.
+    shown_start: Optional[tuple] = None
+    shown_end: Optional[tuple] = None
 
     def position(self, now: float) -> tuple[float, float, float]:
         f = max(0.0, min(1.0, (now - self.t0) / self.duration))
@@ -314,6 +313,12 @@ class Flight:
         y = self.start[1] + (self.end[1] - self.start[1]) * f
         z = self.z0 + (self.z1 - self.z0) * f + self.apex * 4 * f * (1 - f)
         return x, y, z
+
+    def shown(self, now: float) -> tuple[float, float, float]:
+        """The ball as recorded for the viewer (``position`` is what the simulation follows)."""
+        f = max(0.0, min(1.0, (now - self.t0) / self.duration))
+        a, b = self.shown_start or self.start, self.shown_end or self.end
+        return a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, self.position(now)[2]
 
     def done(self, now: float) -> bool:
         return now - self.t0 >= self.duration
@@ -689,7 +694,7 @@ class HalfCourtGame:
         if not self.record:
             return
         if self.flight:
-            bx, by, bz = self.flight.position(self.now)
+            bx, by, bz = self.flight.shown(self.now)
             holder = -1
         elif self.holder is not None:
             bx, by, bz = self.holder.x + 0.8, self.holder.y, 3.0
@@ -2035,10 +2040,10 @@ class HalfCourtGame:
             self.stats[f"shot_clock_{z}"] += self.shot_clock
             self.stats[f"src_{z}_{source}"] += 1
         assisted = (self.last_passer is not None and self.now - self.catch_time < 2.5)
-        duration = shot_time(shot_d)
-        # A make drops through the middle; a miss strikes the rim, usually front or back
-        # (short or long) and a little to one side. Where is for the viewer only, so it is
-        # drawn apart from the game's own random numbers.
+        duration = 0.55 + shot_d / 45.0
+        # A make drops through the middle; a miss is shown striking the rim, usually front
+        # or back (short or long) and a little to one side. That is for the viewer only, so
+        # it is drawn apart from the game's own random numbers.
         at = RIM
         if not made:
             look = random.Random(int(self.now * 10) * 31 + self.index[id(h)])
@@ -2046,7 +2051,8 @@ class HalfCourtGame:
             turn = math.radians(look.uniform(-55, 55) + (180 if look.random() < 0.55 else 0))   # (front rim a bit more often)
             c, sn = math.cos(turn), math.sin(turn)
             at = (RIM[0] + MISS_AT * (ux * c - uy * sn), RIM[1] + MISS_AT * (ux * sn + uy * c))
-        self.flight = Flight("shot", spot, at, self.now, duration, apex=gravity_apex(duration), z0=7.5, z1=10.0,
+        self.flight = Flight("shot", spot, RIM, self.now, duration, apex=gravity_apex(duration), z0=7.5, z1=10.0,
+                             shown_end=at,
                              data={"shooter": h, "made": made, "points": points, "zone": z, "fouled": fouled,
                                    "rim": at,
                                    "defender": defender, "assisted": assisted, "passer": self.last_passer,
@@ -2184,13 +2190,15 @@ class HalfCourtGame:
             if self.rng.random() < 0.6:
                 angle = math.radians(90 + side * self.rng.uniform(10, 75))
             land = C.clamp((RIM[0] + r * math.cos(angle), RIM[1] + abs(r * math.sin(angle))))
-            self.start_rebound(d.get("rim", RIM), land, 0.7)
+            self.start_rebound(RIM, land, 0.7, shown_start=d.get("rim"))
 
-    def start_rebound(self, start, land, duration, edge: float = 1.0, z0: float = 10.0) -> None:
+    def start_rebound(self, start, land, duration, edge: float = 1.0, z0: float = 10.0,
+                      shown_start: Optional[tuple] = None) -> None:
         """``edge`` multiplies the defence's rebounding advantage (free throws: they have the inside spots).
-        The ball comes off the rim (or a blocker's hand, ``z0`` ft up) in free flight: up a little, then down."""
+        The ball is shown coming off the rim where the miss struck it (``shown_start``), or off a
+        blocker's hand (``z0`` ft up), in free flight: up a little, then down."""
         self.flight = Flight("rebound", start, land, self.now, duration, apex=gravity_apex(duration),
-                             z0=z0, z1=6.0, data={"edge": edge})
+                             z0=z0, z1=6.0, shown_start=shown_start, data={"edge": edge})
         self.holder = None
         self.mode = "rebound"
         self.box_out_until = self.now + 0.7

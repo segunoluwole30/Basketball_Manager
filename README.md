@@ -300,21 +300,23 @@ viewer faces players this way when a replay has it (a shooter still turns to the
 passer to his receiver, from the cues); older replays are faced by the viewer's own guess
 from velocity and the ball, as before. `hoopsim3D.facing(false)` under `?debug` compares.
 
-**The ball in the air** (`spatial/sim.py` `shot_time`, `gravity_apex`). A shot is a true
-parabola: its time in the air comes from a launch angle (58 degrees near the basket, 49
-from deep, as shooters do) and gravity then fixes its height. A three is up about 1.25 s
-and peaks near 15 ft (NBA tracking: 13-17 ft); a 15-footer about 1.05 s and 13.5 ft; a
-lay-up 0.55 s, barely over the rim. Before, the arc was a fixed height added on top of a
-shorter flight: a three was up 1.08 s and peaked at 21 ft, a lay-up at 15 ft, both falling
-about 2.5 times faster than gravity. A make drops through the middle of the hoop; a miss
-strikes the rim 0.72 ft from the middle, front or back of the shot's line and a little to
-one side, and comes off it in free flight (up a little, then down) to where the rebound
-lands. A blocked shot leaves the blocker's hand at 9 ft, not from 10. Where a miss strikes
-is drawn apart from the game's random numbers, but flight times are physics: a seeded game
-plays out differently from before (the legacy fingerprint is re-pinned), with the realism
-audit unchanged beyond noise over 20 games. The audit's arc line now measures jump shots
-only (released 10 ft or more from the rim). The 3D viewer's shot trail finds a close shot
-by the engine's cue, since it no longer rises over 11 ft.
+**The ball in the air** (`spatial/sim.py` `gravity_apex`, `Flight.shown`). The recorded
+ball is in free flight: a shot leaves the hand at 7.5 ft and reaches the rim at 10 ft on a
+parabola whose height gravity fixes for the time it is up. A three (1.08 s) peaks near
+13.5 ft, a 15-footer near 12 ft, a lay-up barely over the rim. Before, a fixed arc was added
+on top (6 ft plus a quarter of the distance): a three peaked at 21 ft and a lay-up at 15,
+both falling about 2.5 times faster than gravity. A make drops through the middle of the
+hoop; a miss is shown striking the rim 0.72 ft from the middle, front or back of the shot's
+line and a little to one side, and coming off it there in free flight (up a little, then
+down) to where the rebound lands. A blocked shot leaves the blocker's hand at 9 ft, not
+from 10. All of this is display: the simulation follows the ball over the floor to the
+middle of the rim with the same timing as before, where a miss strikes is drawn apart from
+the game's random numbers, and a seeded game's players and score are identical (the legacy
+fingerprint is re-pinned for the ball's columns only). The audit's arc line now measures
+jump shots only (released 10 ft or more from the rim); it used to average lay-ups in.
+The 3D viewer's shot trail finds a close shot by the engine's cue, since it no longer rises
+over 11 ft. A fuller arc (a three up 1.25 s, peaking at 15 ft) needs longer flights, which
+change results: tried, it put the trained decision values out of line with the engine.
 
 **Animation cues** (`spatial/sim.py` `ACTIONS`). Each recorded possession carries an
 `"actions"` list next to its frames and events: `[frame, player, action, other]`, meaning

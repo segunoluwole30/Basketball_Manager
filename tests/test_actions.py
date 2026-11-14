@@ -75,17 +75,19 @@ class ActionTests(unittest.TestCase):
     def test_the_ball_flies_true(self):
         """A shot is a parabola under gravity; a miss strikes the rim, a make the middle."""
         import math
-        from hoopsim.spatial.sim import GRAVITY, MISS_AT, RIM, Flight, gravity_apex, shot_time
-        for d, lo, hi in ((23.75, 14.5, 16.5), (15.0, 12.5, 14.5), (3.0, 10.0, 10.6)):
-            t = shot_time(d)
+        from hoopsim.spatial.sim import GRAVITY, MISS_AT, RIM, Flight, gravity_apex
+        for d, lo, hi in ((23.75, 13.0, 14.5), (15.0, 11.5, 12.8), (3.0, 10.0, 10.6)):
+            t = 0.55 + d / 45.0                                         # (the engine's flight time, unchanged)
             f = Flight("shot", (0.0, RIM[1] + d), RIM, 0.0, t, apex=gravity_apex(t), z0=7.5, z1=10.0)
             zs = [f.position(t * k / 200)[2] for k in range(201)]
-            self.assertTrue(lo < max(zs) < hi, (d, max(zs)))           # a three peaks near 15 ft, a lay-up just over the rim
+            self.assertTrue(lo < max(zs) < hi, (d, max(zs)))           # a three peaks near 13.5 ft, a lay-up just over the rim
             dt = t / 200                                                # it falls at g all the way
             acc = [(zs[k + 1] - 2 * zs[k] + zs[k - 1]) / dt ** 2 for k in range(1, 200)]
             self.assertTrue(all(abs(a + GRAVITY) < 0.5 for a in acc), d)
-        self.assertGreater(shot_time(23.75), shot_time(15.0))
-        self.assertTrue(1.15 < shot_time(23.75) < 1.4)
+        # shown where a miss strikes the rim; the simulation still follows it to the middle
+        miss = Flight("shot", (0.0, 20.0), RIM, 0.0, 1.0, shown_end=(RIM[0] + MISS_AT, RIM[1]))
+        self.assertEqual(miss.position(1.0)[:2], RIM)
+        self.assertAlmostEqual(miss.shown(1.0)[0], RIM[0] + MISS_AT)
         made = missed = 0
         for p in self.replay["possessions"]:
             fr = p["frames"]
