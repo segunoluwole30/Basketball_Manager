@@ -22,9 +22,9 @@ def play(params, seed=5, possessions=40):
 
 
 def fingerprint(g) -> str:
-    # The play itself (frames, events, score), not the viewer's animation cues: those
-    # were added later and don't change what happens.
-    play = [{k: v for k, v in p.items() if k != "actions"} for p in g.possessions]
+    # The play itself (frames, events, score), not the viewer's animation cues or the
+    # recorded facing: those were added later and don't change what happens.
+    play = [{k: v for k, v in p.items() if k not in ("actions", "facing")} for p in g.possessions]
     return hashlib.sha256(json.dumps(play).encode()).hexdigest()[:16]
 
 
