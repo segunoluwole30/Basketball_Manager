@@ -46,6 +46,58 @@ SEPARATE_PASSES = 2         # body-separation passes per tick (was 1)
 # Nobody covers more than this in a tick (ft/s): a sprinter shoved by a body he ran
 # into was carried past 32 ft/s, a "teleport" (README "Last audit flags").
 MAX_STEP_SPEED = 30.0
+# Which way each player faces is recorded for the viewer (a possession's "facing"); nothing
+# in the simulation reads it. He turns no faster than TURN_RATE (rad/s). Running at more than
+# FACE_RUN_OFF / FACE_RUN_DEF ft/s he faces where he is going; otherwise the man with the
+# ball faces the rim, his team-mates the ball, and a defender the ball or, off the ball, the
+# gap between the ball and his man.
+TURN_RATE = 7.0
+FACE_RUN_OFF = 5.0
+FACE_RUN_DEF = 11.0
+
+
+FACING_CODE = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+
+def pack_facing(rows: list) -> str:
+    """A possession's facing as the replay stores it: one character per player per frame
+    (frame by frame, players in frame order), each the angle
+    in 6-degree steps (0-59) as FACING_CODE. A list of numbers cost a third of the file."""
+    return "".join(FACING_CODE[round(d / 6) % 60] for row in rows for d in row)
+
+
+def update_facing(offense: list, defense: list, holder, ball: tuple[float, float], dt: float,
+                  man_of=None) -> list[int]:
+    """Turn each player towards what he should face (``Agent.facing``, radians, atan2(dx, dy)
+    in court feet) and return the ten angles in whole degrees, offence first as given."""
+    out = []
+    for group, is_off in ((offense, True), (defense, False)):
+        for a in group:
+            speed = math.hypot(a.vx, a.vy)
+            limit = FACE_RUN_OFF if is_off else FACE_RUN_DEF
+            a.face_run = speed > (limit - 1.5 if a.face_run else limit)     # (no flicker at the line)
+            if a.face_run:
+                fx, fy = a.vx, a.vy
+            elif a is holder:
+                fx, fy = RIM[0] - a.x, RIM[1] - a.y
+            else:
+                fx, fy = ball[0] - a.x, ball[1] - a.y
+                man = man_of(a) if (man_of is not None and not is_off) else None
+                if man is not None and man is not holder:
+                    d1, d2 = math.hypot(fx, fy) or 1.0, math.hypot(man.x - a.x, man.y - a.y) or 1.0
+                    fx, fy = fx / d1 + (man.x - a.x) / d2, fy / d1 + (man.y - a.y) / d2
+            if math.hypot(fx, fy) > 0.3:
+                want = math.atan2(fx, fy)
+                if a.facing is None:
+                    a.facing = want
+                else:
+                    turn = (want - a.facing + math.pi) % (2 * math.pi) - math.pi
+                    most = TURN_RATE * dt
+                    a.facing += max(-most, min(most, turn))
+            elif a.facing is None:
+                a.facing = 0.0
+            out.append(round(math.degrees(a.facing)) % 360)
+    return out
 
 # Animation cues in recorded possessions ("actions": [frame, player, action, other]):
 # what a player starts doing at that frame, for the viewer; recording them changes
@@ -168,6 +220,10 @@ class Agent:
         self.fatigue_shot = 0.0
         self.form = 1.0
         self.travelled = 0.0
+        # Which way he faces (radians, atan2(dx, dy); None: not set yet). Recorded for the
+        # viewer only: see update_facing.
+        self.facing: Optional[float] = None
+        self.face_run = False
 
     @property
     def pos(self) -> tuple[float, float]:
@@ -180,6 +236,7 @@ class Agent:
         self.x, self.y = x, y
         self.tx, self.ty = x, y
         self.vx = self.vy = 0.0
+        self.facing = None                     # (put somewhere new: he faces afresh)
 
     def target(self, p: tuple[float, float]) -> None:
         self.tx, self.ty = C.clamp(p)
@@ -413,6 +470,7 @@ class HalfCourtGame:
         self.side = side
         self.guards = list(range(5))           # guards[offense slot] = defense slot
         self.frames, self.events, self.actions = [], [], []
+        self.facing: list = []                 # per frame: the ten players' facing, degrees (see update_facing)
         self.start_score = dict(self.score)
         self.now = 0.0
         self.shot_clock = 24.0 - rng.uniform(3.0, 4.5)   # time used bringing it up (fullgame bring_up)
@@ -513,7 +571,7 @@ class HalfCourtGame:
                 "offense": side, "start_score": [self.start_score["home"], self.start_score["away"]],
                 "end_score": [self.score["home"], self.score["away"]],
                 "frames": self.frames, "events": self.events, "actions": self.actions,
-                "result": self.result,
+                "facing": pack_facing(self.facing), "result": self.result,
             })
 
     def end(self, result: str, points: int = 0) -> None:
@@ -624,6 +682,13 @@ class HalfCourtGame:
         if self.game_clock is not None:
             row.append(round(max(0.0, self.game_clock), 1))
         self.frames.append(row)
+        self.facing.append(self.face_row(self.offense, self.defense, self.holder, (bx, by), self.man_of))
+
+    def face_row(self, offense: list, defense: list, holder, ball: tuple[float, float], man_of=None) -> list[int]:
+        """The ten players' facing for the frame just recorded, in ``everyone``'s order."""
+        deg = update_facing(offense, defense, holder, ball, self.t.dt, man_of)
+        at = {id(a): d for a, d in zip(offense + defense, deg)}
+        return [at.get(id(a), 0) for a in self.everyone]
 
     # ------------------------------------------------------------------ movement goals
     def offense_targets(self) -> None:

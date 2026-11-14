@@ -2679,6 +2679,10 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       const from = g > 0 && tr && tr.from ? tr.from : null;
       const players = [];
       let holder = null;
+      // which way each player faces, if the replay records it: a character per player per
+      // frame, the angle in 6-degree steps (the engine's sim.pack_facing), in court terms
+      const np = NP(p), fc = typeof p.facing === "string" && p.facing.length === fr.length * np ? p.facing : null;
+      const faceAt = (j, n) => { const c = fc.charCodeAt(j * np + n); return (c < 58 ? c - 48 : c < 91 ? c - 55 : c - 61) * Math.PI / 30; };
       for (let n = 0; n < NP(p); n++) {
         const key = (n < 5 ? "h" : "a") + lu[n];
         const sx = spline(fr, f, 6 + n * 2), sy = spline(fr, f, 7 + n * 2);
@@ -2690,6 +2694,10 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
           x = lerp(x, fx, g); y = lerp(y, fy, g);
         }
         const q = { key, pl: order[n], x, y, vx, vy, n, off: (n < 5) === (p.offense === "home") };
+        if (fc && !(from && from.out[key])) {      // as a world heading (the court is drawn turned round for one end)
+          const a0 = faceAt(i, n), a1 = faceAt(Math.min(fr.length - 1, i + 1), n);
+          q.face = (flip > 0 ? 0.5 : 1.5) * Math.PI - (a0 + Math.atan2(Math.sin(a1 - a0), Math.cos(a1 - a0)) * (f - i));
+        }
         players.push(q);
         if (a[5] === n) holder = q;
       }
@@ -2816,7 +2824,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     }
 
     // ---- animated bodies: the rig arrives after the view is up (or never: simple bodies stay)
-    let anim = null, bodyMode = "simple", bodyAuto = false, onSlow = null, footLock = true, fluid = true, handReach = true;
+    let anim = null, bodyMode = "simple", bodyAuto = false, onSlow = null, footLock = true, fluid = true, handReach = true, useFacing = true;
     let animP = null, over = 0, grip = 0, slowT = 0, slowN = 0;
     const gripPos = new THREE.Vector3();
     function setRig(rig) {
@@ -2922,6 +2930,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
         if (sp > (useRig && !q.off ? 7.5 : 3)) want = Math.atan2(vX, vZ);
         else if (q === st.holder) want = Math.atan2(rimX - fg.x, -fg.z);
         else want = Math.atan2(st.ball.x - fg.x, st.ball.z - fg.z);
+        if (q.face !== undefined && useFacing) want = q.face;      // the replay says which way he faces
         if (useRig) {
           // clips for what he's doing; some turn him: a shooter to the rim, a passer to his man
           const face = anim.update(fg, q, st, dtg, dta, fg.fresh);
@@ -3047,11 +3056,12 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
              bodies: () => ({ mode: bodyMode, rig: !!anim, detail: anim ? anim.detail : null, auto: bodyAuto, clips: anim ? anim.names : [],
                               players: st ? st.players.map((q) => { const fg = figures[q.key], r = fg && fg.rig;
                                 return { key: q.key, n: q.n, off: q.off, sp: +(q.sp || 0).toFixed(1), animated: !!(r && r.model.visible),
-                                         name: q.pl.name, lefty: !!(r && r.lefty), hook: r && r.hook != null && r.hookW ? r.hook.toFixed(2) + ":" + r.hookW.toFixed(2) : "", slam: r && r.slam && r.slamGap != null ? r.slamW.toFixed(2) + ":" + r.slamGap.toFixed(2) : "", at: [+fg.x.toFixed(1), +fg.z.toFixed(1)], hand: r && r.reachFor && r.reachGap != null ? r.reachSide + ":" + r.reachW.toFixed(2) + ":" + r.reachGap.toFixed(2) + ":" + r.reachFrom.toFixed(2) : "", lag: +(fg.lag || 0).toFixed(2), look: fg.look, feet: +fg.H.toFixed(2), girth: +fg.build.girth.toFixed(2), reach: +fg.build.reach.toFixed(3),
+                                         name: q.pl.name, lefty: !!(r && r.lefty), hook: r && r.hook != null && r.hookW ? r.hook.toFixed(2) + ":" + r.hookW.toFixed(2) : "", slam: r && r.slam && r.slamGap != null ? r.slamW.toFixed(2) + ":" + r.slamGap.toFixed(2) : "", at: [+fg.x.toFixed(1), +fg.z.toFixed(1)], heading: +fg.heading.toFixed(2), holder: !!(st && st.holder === q), hand: r && r.reachFor && r.reachGap != null ? r.reachSide + ":" + r.reachW.toFixed(2) + ":" + r.reachGap.toFixed(2) + ":" + r.reachFrom.toFixed(2) : "", lag: +(fg.lag || 0).toFixed(2), look: fg.look, feet: +fg.H.toFixed(2), girth: +fg.build.girth.toFixed(2), reach: +fg.build.reach.toFixed(3),
                                          clips: r ? Object.keys(r.acts).filter((k) => r.acts[k].enabled).map((k) => k + ":" + r.acts[k].weight.toFixed(2)) : [] }; }) : [] }),
              cues: (p) => (anim ? anim.cues(p) : null),
              plantFeet: (on) => { footLock = !!on; dirty = 3; },      // (for comparing with and without, under ?debug)
              fluid: (on) => { fluid = !!on; dirty = 3; },
+             facing: (on) => { useFacing = !!on; dirty = 3; },        // (the replay's facing against the viewer's own guess)
              reach: (on) => { handReach = !!on; dirty = 3; },         // (and for the hand that goes to the ball)             // (the same for the smoothed movement, lean and look)
              feet: () => Object.values(figures).filter((fg) => fg.rig && fg.root.visible).map((fg) => ({ key: fg.key, ...Object.fromEntries(
                ["Left", "Right"].map((sd) => { const f = fg.rig.feet[sd] || {}, at = fg.rig.bones[sd + "Foot"].getWorldPosition(new THREE.Vector3());

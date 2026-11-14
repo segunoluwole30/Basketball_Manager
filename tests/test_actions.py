@@ -33,6 +33,45 @@ class ActionTests(unittest.TestCase):
                   "free_throw", "contest", "inbound"):
             self.assertGreater(seen[a], 0, a)
 
+    def test_facing_is_recorded(self):
+        """Which way each player faces, a character per player per frame (sim.pack_facing)."""
+        import math
+        from hoopsim.spatial.sim import FACING_CODE, RIM, TURN_RATE
+        self.assertEqual(len(FACING_CODE), 62)
+        self.assertEqual(len(set(FACING_CODE)), 62)
+        to_ball, to_rim, turns = [], [], []
+        for p in self.replay["possessions"]:
+            fr, fc = p["frames"], p["facing"]
+            self.assertEqual(len(fc), 10 * len(fr))
+            ang = [[FACING_CODE.index(fc[10 * i + n]) * 6 for n in range(10)] for i in range(len(fr))]
+            self.assertTrue(all(0 <= a < 360 for row in ang for a in row))
+            diff = lambda a, b: abs((a - b + 180) % 360 - 180)
+            for i in range(1, len(fr)):
+                if not 0.05 < fr[i][0] - fr[i - 1][0] < 0.15:
+                    continue                                        # (a join between parts of the possession)
+                turns += [diff(ang[i][n], ang[i - 1][n]) for n in range(10)]
+                h = fr[i][5]
+                if h < 0 or i < 8:
+                    continue
+                xy = lambda j, n: (fr[j][6 + 2 * n] / 10, fr[j][7 + 2 * n] / 10)
+                still = lambda n: math.dist(xy(i, n), xy(i - 8, n)) < 0.4 and fr[i - 8][5] == h
+                off = range(0, 5) if h < 5 else range(5, 10)
+                for n in off:
+                    if not still(n):
+                        continue
+                    x, y = xy(i, n)
+                    if n == h:
+                        to_rim.append(diff(ang[i][n], math.degrees(math.atan2(RIM[0] - x, RIM[1] - y))))
+                    else:
+                        bx, by = fr[i][2] / 10, fr[i][3] / 10
+                        to_ball.append(diff(ang[i][n], math.degrees(math.atan2(bx - x, by - y))))
+        med = lambda v: sorted(v)[len(v) // 2]
+        self.assertGreater(len(to_ball), 200)
+        self.assertLess(med(to_ball), 12)                           # standing off the ball: he watches it
+        self.assertLess(med(to_rim), 12)                            # standing with it: he faces the rim
+        # nobody spins: a frame's turn is within the turn rate (plus the 6-degree steps)
+        self.assertLess(sorted(turns)[int(0.999 * len(turns))], math.degrees(TURN_RATE) * 0.1 + 13)
+
     def test_actions_match_the_play(self):
         """A shot's release is the frame the ball leaves his hands; a pass's catch is by the receiver."""
         shots = ("jumper_release", "layup", "dunk", "floater", "hook", "fadeaway")   # an alley-oop is never held

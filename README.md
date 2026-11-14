@@ -288,6 +288,18 @@ retargets the clips. Sources, licences and the clip-by-clip list are in
 players (0.1 ms for the simple bodies); see `window.hoopsim3D.stats()` and `.bodies()` with
 `?debug`.
 
+**Facing** (`spatial/sim.py` `update_facing`). Each recorded possession also carries
+`"facing"`: which way every player faces at every frame, one character per player per frame
+(frame by frame, players in the frame's order), the angle `atan2(dx, dy)` in court feet in
+6-degree steps, 0-59 as `0-9A-Za-x` (`sim.pack_facing`). Running (over 5 ft/s on offence,
+11 on defence) a player faces where he is going; otherwise the man with the ball faces the
+rim, his team-mates the ball, and a defender the ball or, off the ball, the gap between the
+ball and his man. He turns at most 7 rad/s. Nothing in the simulation reads it: results are
+the same with and without, and it adds about 7% to a replay before compression. The 3D
+viewer faces players this way when a replay has it (a shooter still turns to the rim and a
+passer to his receiver, from the cues); older replays are faced by the viewer's own guess
+from velocity and the ball, as before. `hoopsim3D.facing(false)` under `?debug` compares.
+
 **Animation cues** (`spatial/sim.py` `ACTIONS`). Each recorded possession carries an
 `"actions"` list next to its frames and events: `[frame, player, action, other]`, meaning
 player `player` (0-9, as in the frame's positions; `other` likewise, or -1) starts doing

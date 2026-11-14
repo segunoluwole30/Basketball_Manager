@@ -498,6 +498,19 @@ console.log(JSON.stringify({ share: left / n, set, same: lookOf({ name: "A B" },
         self.assertIn(res["set"][2], ("L", "R"))                   # junk falls back to his name
         self.assertTrue(res["same"])
 
+    def test_facing_from_the_replay(self):
+        """The viewer faces players as the replay records, when it does; older replays as before."""
+        src = self.template
+        view = src[src.index("function createView3D"):]
+        self.assertIn('fc = typeof p.facing === "string" && p.facing.length === fr.length * np ? p.facing : null;', src)
+        self.assertIn("return (c < 58 ? c - 48 : c < 91 ? c - 55 : c - 61) * Math.PI / 30; };", src)   # sim.FACING_CODE, 6 degrees a step
+        self.assertIn("q.face = (flip > 0 ? 0.5 : 1.5) * Math.PI - ", src)
+        # a clip that turns him (a shooter to the rim, a passer to his man) still wins
+        self.assertLess(view.index("if (q.face !== undefined && useFacing) want = q.face;"), view.index("const face = anim.update(fg, q, st, dtg, dta, fg.fresh);"))
+        from hoopsim.spatial.sim import FACING_CODE
+        code = lambda c: (ord(c) - 48 if ord(c) < 58 else ord(c) - 55 if ord(c) < 91 else ord(c) - 61)
+        self.assertEqual([code(c) for c in FACING_CODE], list(range(62)))
+
     def test_light_model(self):
         """The same player with far fewer triangles: same skeleton, clips and parts."""
         full, light = (read_glb(PLAYER_ASSETS[n])[4] for n in ("player.glb", "player_light.glb"))

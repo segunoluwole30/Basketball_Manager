@@ -59,7 +59,7 @@ from ..systems import offense_style
 from ..models import (BoxScore, DefensiveScheme, GameResult, Injury, League, Player, PlayerLine,
                       Position, TeamBox)
 from . import court as C
-from .sim import DEFAULT_TUNING, Agent, HalfCourtGame, SpatialTuning
+from .sim import DEFAULT_TUNING, Agent, HalfCourtGame, SpatialTuning, pack_facing
 from .transition import DEFAULT_OPEN_TUNING, DeadBallInbound, OpenCourt, OpenCourtTuning
 from .values import DecisionModel
 
@@ -533,7 +533,7 @@ class FullGame:
         offense.possessions += 1
         self.stats[f"poss_after_{how}"] += 1
         before = self.hc.score[offense.key]
-        record = {"trans_frames": [], "trans_events": [], "trans_actions": [], "segments": []}
+        record = {"trans_frames": [], "trans_events": [], "trans_actions": [], "trans_facing": [], "segments": []}
         open_court = None
         first_action: Optional[float] = None
         used = 0.0                              # game seconds since gaining the ball
@@ -579,6 +579,7 @@ class FullGame:
                 open_court.how = how
                 record["trans_frames"], record["trans_events"] = open_court.frames, open_court.events
                 record["trans_actions"] = open_court.actions
+                record["trans_facing"] = open_court.facing
                 self.advance(open_court.seconds)
                 used += open_court.seconds
                 self.stats["seconds_open_court"] += open_court.seconds
@@ -699,6 +700,7 @@ class FullGame:
         if self.record:
             score = [self.hc.score["home"], self.hc.score["away"]]
             record["segments"].append(({"frames": res.frames, "events": res.events, "actions": res.actions,
+                                        "facing": res.facing,
                                         "start_score": score},
                                        self._lineup_indices()))
         return res
@@ -898,6 +900,8 @@ class FullGame:
                 is_transition: bool) -> None:
         frames, events = list(record["trans_frames"]), list(record["trans_events"])
         actions = list(record["trans_actions"])
+        packed = lambda v: v if isinstance(v, str) else pack_facing(v or [])   # (rows, or already a string)
+        facing = packed(record["trans_facing"])
         start_score = None
         lineups = [[0, self._lineup_at_start]]
         for seg, lineup in record["segments"]:
@@ -910,6 +914,7 @@ class FullGame:
             if lineup != lineups[-1][1]:
                 lineups.append([shift, lineup])
             frames += seg["frames"]
+            facing += packed(seg.get("facing"))
             events += [[e[0] + shift, *e[1:]] for e in seg["events"]]
             actions += [[a[0] + shift, *a[1:]] for a in seg.get("actions", [])]
         if not frames:
@@ -924,6 +929,9 @@ class FullGame:
             "offense": offense.key, "period": self.period,
             "start_score": start_score, "end_score": [self.hc.score["home"], self.hc.score["away"]],
             "frames": frames, "events": events, "actions": actions, "result": ending,
+            # which way each player faces at each frame, degrees (sim.update_facing); left out
+            # if any part of the possession did not record it
+            **({"facing": facing} if len(facing) == 10 * len(frames) else {}),
             "transition": is_transition, "lineups": lineups, "log_at": len(self.events),
         })
 

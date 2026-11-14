@@ -124,6 +124,7 @@ class OpenCourtResult:
     points: int = 0
     carrier: Optional[Agent] = None      # who has the ball next (after a steal)
     frames: list = field(default_factory=list)
+    facing: list = field(default_factory=list)    # per frame: the ten players' facing, degrees (sim.update_facing)
     events: list = field(default_factory=list)
     actions: list = field(default_factory=list)   # [frame, player, action, other] (see HalfCourtGame.act)
     advantage: str = ""                  # "breakaway", "numbers", "none", "walk"
@@ -134,6 +135,8 @@ def flip(agent: Agent) -> None:
     agent.x, agent.y = -agent.x, FULL - agent.y
     agent.vx, agent.vy = -agent.vx, -agent.vy
     agent.tx, agent.ty = agent.x, agent.y
+    if agent.facing is not None:
+        agent.facing += math.pi
 
 
 def matchups(offense: list[Agent], defense: list[Agent]) -> list[int]:
@@ -735,6 +738,7 @@ class OpenCourt:
             row += [round(a.x * 10), round(a.y * 10)]
         row.append(round(max(0.0, self.clock - used), 1))
         self.result.frames.append(row)
+        self.result.facing.append(g.face_row(self.offense, self.defense, self.holder, (bx, by)))
 
 
 class DeadBallInbound(OpenCourt):
