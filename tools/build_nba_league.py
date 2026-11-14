@@ -20,9 +20,15 @@ How ratings are made
   as a prior for players with little court time), mapped onto the generated
   leagues' ability distribution, so the engines stay calibrated: a real league plays
   like a generated one, with real names.
+* Scoring ratings bend toward a top (``soft_top``) rather than a hard clamp, so the
+  best scorers stay above the next tier.
+* Foul drawing (``foul_drawing``): free-throw attempts beyond what his shot mix and
+  usage would earn, in the statistical engine's units, shrunk by sample size.
 * Potential from age, hidden attributes partly from availability, physique from the
   roster's height and weight. Shot tendencies are what the ratings don't explain:
-  set so the statistical engine reproduces each player's real shot mix.
+  set so the statistical engine reproduces each player's real shot mix. Pass-first
+  is assists for his share of the ball, less some of his shot load. The four scoring
+  ratings come from shooting and shot load only, not from the impact level.
 
 Every rating can be changed in the game's editor afterwards.
 """
@@ -47,8 +53,8 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 import bbref_fetch as bf  # noqa: E402
 from hoopsim.generate import development_fraction, generate_league  # noqa: E402
-from hoopsim.models import (ATTR_MAX, ATTR_MIN, Attributes, Position,  # noqa: E402
-                            compute_ability)
+from hoopsim.models import (ABILITY_ATTRIBUTES, ATTR_MAX, ATTR_MIN, Attributes,  # noqa: E402
+                            Position, compute_ability, derived_drawing_fouls)
 
 # abbreviation on the site -> (shown abbreviation, city, nickname, conference, division)
 TEAMS = {
@@ -102,11 +108,26 @@ OLDER_WEIGHT = 0.5
 # also set how many shots he takes. Usage (z-score of log usage rate) is added to them, so
 # a 30%-usage star out-shoots a 15%-usage spot-up shooter with the same percentages.
 # Threes get half: a three rating also sets three-point volume and accuracy.
-LOAD = {"finishing": 1.0, "close_range": 1.0, "mid_range": 1.0, "three_point": 0.5}
+# The same ratings set how well he shoots, and in the NBA efficiency doesn't rise with
+# usage, so the load is kept to what volume needs (0.65; it was 1.0) and part of the
+# volume goes through the pass-first tendency instead (``LOAD_PASSING``).
+LOAD = {"finishing": 0.65, "close_range": 0.65, "mid_range": 0.65, "three_point": 0.33}
+# Pass-first tendency points taken off per unit of shot load (z of log usage): a
+# high-usage scorer shoots more without his shooting ratings, and so his percentages,
+# going up with it (statistical engine: -3% of shot weight per point).
+LOAD_PASSING = 2.0
 THREE_VOLUME = 0.25          # three_point: 75% accuracy, 25% volume (volume is a tendency)
 # The engines already favour taller rebounders; take part of the height out of the
 # rebound ratings so bigs' boards aren't counted twice.
 REBOUND_HEIGHT_CM = 32       # cm of height per unit of log rebound rate
+# Scoring ratings (the LOAD ones) bend toward a top z-score instead of a hard clamp, so
+# the league's best scorers stay a notch above the next 30 (with a hard 2.8 clamp,
+# about 60 players shared the top scoring ratings).
+SCORING_Z_KNEE, SCORING_Z_TOP = 2.0, 3.6
+# Foul drawing: free-throw rates are shrunk toward the league by this many attempts, and
+# players with few shots lean on their ratings (``foul_drawing``).
+FT_PRIOR_FTA = 40
+FT_PRIOR_FGA = 150
 WITH_HISTORY = True
 RULES = {"salary_cap": 165_000_000, "luxury_tax_line": 201_000_000, "min_salary": 1_270_000,
          "mid_level_exception": 14_100_000, "max_roster": 15, "min_roster": 13}
@@ -263,7 +284,7 @@ def raw_features(p: dict) -> dict[str, float]:
     obpm, dbpm, bpm = mins(st["obpm"], -1.5, 900), mins(st["dbpm"], -0.5, 900), mins(st["bpm"], -2, 900)
     ws48 = mins(st["ws_per_48"], 0.07, 900)
     pf36 = shrink(per36(t["pf"]), mp, 3.2, 600)
-    fta36, fg3a36 = per36(t["fta"]), per36(t["fg3a"])
+    fg3a36 = per36(t["fg3a"])
     mpg = st["mp"] / max(st["g"], 1)
     age = p["age"]
     youth = -max(0, age - 28)                         # athleticism fades in the thirties
@@ -271,8 +292,9 @@ def raw_features(p: dict) -> dict[str, float]:
         "three_point": (1 - THREE_VOLUME) * three / 0.035 + THREE_VOLUME * math.log1p(fg3a36) / 0.5,
         "free_throw": ft,
         "mid_range": mid / 0.05 + 0.6 * ft / 0.08,
-        "close_range": short / 0.06 + 0.3 * math.log1p(per36(st["zones"]["03_10"][0])),
-        "finishing": rim / 0.06 + 0.5 * math.log1p(fta36) + 2.0 * st["dunk_share"],
+        # Accuracy only: volume is the shot load's, free throws are foul drawing's.
+        "close_range": short / 0.06,
+        "finishing": rim / 0.06 + 2.0 * st["dunk_share"],
         "passing": math.log(max(ast, 3)),
         "vision": math.log(max(ast, 3)) / 0.5 - 0.3 * tov / 4 + 0.2 * obpm / 2,
         "ball_handling": ast / 8 + usg / 8 - tov / 5 - (h - 200) / 12,
@@ -317,9 +339,14 @@ def generated_targets(free_agents: int, seed: int = 7) -> tuple[list[int], dict[
 
 
 def make_attributes(z: dict[str, float], spread, position: Position, target: int) -> dict[str, int]:
+    """The ratings that make up ability (drawing_fouls is rated on its own: foul_drawing)."""
+    # The scoring ratings (``LOAD``) come from his shooting and his shot load alone: the
+    # level from impact goes into the rest. Otherwise a high-impact player's shooting
+    # ratings rise with it, and he shoots better in the engine than he does in life.
     def build(shift: float) -> dict[str, int]:
-        return {n: int(max(ATTR_MIN, min(ATTR_MAX, round(spread[n][0] + spread[n][1] * z[n] + shift))))
-                for n in Attributes.names()}
+        return {n: int(max(ATTR_MIN, min(ATTR_MAX, round(spread[n][0] + spread[n][1] * z[n]
+                                                          + (0.0 if n in LOAD else shift)))))
+                for n in ABILITY_ATTRIBUTES}
     lo, hi = -15.0, 15.0
     for _ in range(40):                 # find the shift that lands on the target ability
         mid = (lo + hi) / 2
@@ -328,6 +355,71 @@ def make_attributes(z: dict[str, float], spread, position: Position, target: int
         else:
             hi = mid
     return build(hi)
+
+
+def soft_top(z: float) -> float:
+    """A scoring z-score bent toward ``SCORING_Z_TOP`` past ``SCORING_Z_KNEE`` (slope 1 at the
+    knee, as the engine's usage ceiling): the best scorers stay above the next tier
+    instead of all sitting at one clamp."""
+    if z <= SCORING_Z_KNEE:
+        return z
+    room = SCORING_Z_TOP - SCORING_Z_KNEE
+    return SCORING_Z_KNEE + room * (1 - math.exp(-(z - SCORING_Z_KNEE) / room))
+
+
+def _foul_shots(st: dict) -> float:
+    """Free throws a player's shot mix earns at the statistical engine's base rates:
+    shooting-foul odds by zone times the free throws a foul gives (2, 3 from deep)."""
+    from hoopsim.engine import CLOSE, DEFAULT_TUNING, MID, RIM, THREE
+    base = DEFAULT_TUNING.shooting_foul
+    z = st["zones"]
+    return (2 * (base[RIM] * z["00_03"][0] + base[CLOSE] * z["03_10"][0]
+                 + base[MID] * (z["10_16"][0] + z["16_xx"][0])) + 3 * base[THREE] * st["tot"]["fg3a"])
+
+
+def _engine_share(usage: float) -> float:
+    """About the share of the shots the statistical engine gives a player with this real
+    usage rate: past the knee his share levels off (``engine.usage_ceiling``)."""
+    from hoopsim.engine import DEFAULT_TUNING as T
+    knee, room = T.usage_knee, T.usage_ceiling - T.usage_knee
+    return usage if usage <= knee else knee + room * (1 - math.exp(-(usage - knee) / room))
+
+
+def foul_drawing(players: list[dict]) -> list[int]:
+    """drawing_fouls for each player: what his free-throw rate says beyond his shot mix
+    and his share of the shots, in the statistical engine's units.
+
+    The rate is free-throw attempts against the attempts his shots would earn at the
+    league's rate for their mix (``_foul_shots``: a rim attacker is expected to get to the
+    line more than a spot-up shooter), shrunk toward the league by ``FT_PRIOR_FTA``
+    attempts. The engine already gives a high-usage scorer more whistles
+    (``Tuning.foul_draw``, on the share the engine will give him), so that part comes
+    out too. What is left is the rating's
+    log effect (``Tuning.foul_drawing`` a point), centred so that the shot-weighted
+    rating is the engine's ``foul_drawing_centre``: team free throws stay where a
+    generated league has them. Without a sample the rating follows his other ratings,
+    as for old saves (``derived_drawing_fouls``)."""
+    from hoopsim.engine import DEFAULT_TUNING as T
+    stats = [p["stats"] for p in players]
+    league_fta = sum(st["tot"]["fta"] for st in stats)
+    league_expected = sum(_foul_shots(st) for st in stats)
+    fga_all = sum(st["tot"]["fga"] for st in stats)
+    resid, weight = [], []
+    for st in stats:
+        t = st["tot"]
+        expected = _foul_shots(st) * league_fta / league_expected
+        ratio = (t["fta"] + FT_PRIOR_FTA) / (expected + FT_PRIOR_FTA)
+        share = _engine_share(shrink(st["usg_pct"], st["mp"], 18, 600) / 100)
+        resid.append(math.log(ratio) - T.foul_draw * share)
+        weight.append(t["fga"])
+    offset = T.foul_drawing_centre - sum(r * w for r, w in zip(resid, weight)) / T.foul_drawing / fga_all
+    out = []
+    for p, r in zip(players, resid):
+        from_stats = offset + r / T.foul_drawing
+        seen = p["stats"]["tot"]["fga"] / (p["stats"]["tot"]["fga"] + FT_PRIOR_FGA)
+        prior = derived_drawing_fouls(Attributes(**p["attributes"]))
+        out.append(int(max(ATTR_MIN, min(ATTR_MAX, round(seen * from_stats + (1 - seen) * prior)))))
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -544,7 +636,7 @@ def _rate(players: list[dict], abil_dist: list[int], spread, today: date) -> Non
                                               "dbpm", "bpm")}}
             _position_prior(p)
         feats[p["_id"]] = raw_features(p)
-    zs = {n: zscores({pid: f[n] for pid, f in feats.items()}) for n in (*Attributes.names(), "_load")}
+    zs = {n: zscores({pid: f[n] for pid, f in feats.items()}) for n in (*ABILITY_ATTRIBUTES, "_load")}
     # Ability: impact rank onto the generated distribution (rostered players), free agents below.
     ranked = sorted(players, key=lambda p: p["_impact"])
     n = len(ranked)
@@ -554,7 +646,10 @@ def _rate(players: list[dict], abil_dist: list[int], spread, today: date) -> Non
         pos = Position(p["position"])
         load = zs["_load"][p["_id"]]
         z = {k: max(-2.8, min(2.8, zs[k][p["_id"]] + LOAD.get(k, 0.0) * load))
-             for k in Attributes.names()}
+             for k in ABILITY_ATTRIBUTES}
+        for k in LOAD:                   # the scoring ratings bend toward their top instead
+            z[k] = max(-2.8, soft_top(zs[k][p["_id"]] + LOAD[k] * load))
+        p["_load"] = load
         attrs = make_attributes(z, spread, pos, target)
         p["attributes"] = attrs
         ca = compute_ability(Attributes(**attrs), pos)
@@ -570,6 +665,8 @@ def _rate(players: list[dict], abil_dist: list[int], spread, today: date) -> Non
     league_shots = _league_shots(players)
     for p in players:
         p["tendencies"] = _tendencies(p, p["attributes"], league_shots)
+    for p, df in zip(players, foul_drawing(players)):
+        p["attributes"]["drawing_fouls"] = df
 
 
 def _league_shots(players: list[dict]) -> dict:
@@ -660,7 +757,13 @@ def _tendencies(p, a, league_shots=None) -> dict[str, int]:
         "drive": scale(None if rim is None else rim * (1 - st["ast_fg2"]) + st["usg_pct"] / 100, 0.28, 0.10, base["drive"]),
         "post_up": scale(post if p["position"] in ("PF", "C") else (post or 0) * 0.6 if post is not None else None,
                          0.15, 0.07, base["post_up"]),
-        "passing": scale(st["ast_pct"] if fga >= 40 else None, 15, 8, base["passing"]),
+        # Pass-first means assists for his share of the ball: a creator who scores and
+        # passes (high assist and usage rates) isn't pass-first, and the statistical
+        # engine would otherwise take shots away from him.
+        # Less the volume his shooting ratings no longer carry (``LOAD_PASSING``).
+        "passing": max(ATTR_MIN, min(ATTR_MAX, scale(
+            math.log(max(st["ast_pct"], 3) / max(st["usg_pct"], 8)) if fga >= 40 else None,
+            -0.30, 0.43, base["passing"]) - round(LOAD_PASSING * p.get("_load", 0.0)))),
         "cutting": scale(None if rim is None else rim * st["ast_fg2"], 0.18, 0.09, base["cutting"]),
     }
     profile = shot_profile(st)

@@ -13,6 +13,8 @@ interface CalDay {
   playoff: boolean;
   game: GameView | null;
   b2b: boolean;
+  /** the day Next day plays */
+  next?: boolean;
   marks: string[];
 }
 
@@ -93,7 +95,7 @@ function CalendarBody({ data, team, setTeam, me }: { data: CalData; team: number
               const g = d?.game;
               const isToday = d && data.today === d.day;
               const cls = ["cal-cell", inMonth ? "" : "cal-out", d && data.today !== null && d.day <= data.today ? "cal-past" : "",
-                isToday ? "cal-today" : "", d && selected === d.day ? "cal-sel" : "", d?.marks.some((m) => m.includes("no games") || m.includes("break")) ? "cal-off" : ""].join(" ");
+                isToday ? "cal-today" : "", d?.next ? "cal-next" : "", d && selected === d.day ? "cal-sel" : "", d?.marks.some((m) => m.includes("no games") || m.includes("break")) ? "cal-off" : ""].join(" ");
               return (
                 <button key={iso} className={cls} role="gridcell" disabled={!d}
                   onClick={() => d && setSelected(d.day)} aria-label={`${iso}${g ? `, ${g.at_home ? "vs" : "at"} ${g.opponent}` : ""}`}>
@@ -125,10 +127,15 @@ function CalendarBody({ data, team, setTeam, me }: { data: CalData; team: number
 
 function DayPanel({ day, data, me, onClose }: { day: number; data: CalData; me: number | null; onClose: () => void }) {
   const { act, busy } = useGame();
-  const f = useFetch<{ day: number; date: string; marks: string[]; games: GameView[] }>(`/api/calendar/day/${day}`);
+  const f = useFetch<{ day: number; date: string; marks: string[]; games: GameView[]; watch?: { label: string; url: string }[] }>(`/api/calendar/day/${day}`);
   const [box, setBox] = useState<number | null>(null);
-  const future = data.today === null || day > data.today;
-  const canSim = future && (data.phase === "regular_season" || data.phase === "playoffs") && data.days.some((d) => d.day === day && d.games > 0);
+  // "Go to this day" plays every day before it and stops at its start: its games, yours
+  // included, are left to play (Next day), coach (Play live) or watch.
+  const lastRegular = Math.max(...data.days.filter((d) => d.games > 0 && !d.playoff).map((d) => d.day));
+  const isNext = data.today !== null && day === data.today + 1;
+  const future = data.today === null || day > data.today + 1;
+  const canSim = future && (data.phase === "regular_season" ? day <= lastRegular
+    : data.phase === "playoffs" && data.days.some((d) => d.day === day && d.games > 0));
   return (
     <Panel title={new Date(data.days.find((d) => d.day === day)!.date + "T12:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
       actions={<button className="btn btn-small btn-ghost" onClick={onClose} aria-label="Close">×</button>}>
@@ -136,6 +143,10 @@ function DayPanel({ day, data, me, onClose }: { day: number; data: CalData; me: 
         {(d) => (
           <>
             {d.marks.map((m) => <p key={m} className="cal-mark-big">{m}</p>)}
+            {!!d.watch?.length && (
+              <p className="row gap wrap">{d.watch.map((w) => (
+                <a key={w.url} className="btn btn-small" href={w.url} target="_blank" rel="noopener">Watch: {w.label}</a>))}</p>
+            )}
             {!d.games.length && <Empty>No games.</Empty>}
             <ul className="games">
               {d.games.map((g) => {
@@ -151,11 +162,17 @@ function DayPanel({ day, data, me, onClose }: { day: number; data: CalData; me: 
                 );
               })}
             </ul>
+            {isNext && (data.phase === "regular_season" || data.phase === "playoffs") && (
+              <p className="muted small">This is the next day: <b>Next day</b> plays it{d.games.some((g) => me !== null && (g.home_id === me || g.away_id === me)) ? ", or play your game live or watch it" : ""}.</p>
+            )}
             {canSim && (
               <button className="btn btn-primary" disabled={busy}
+                title="Play every day before this one and stop at its start: this day's games, yours included, are left to play"
                 onClick={() => act(() => api.post("/api/sim/to", { day }), (r: any) =>
-                  r.stopped_for === "offers" ? "A trade offer arrived first: check your inbox." : "Played to that day")}>
-                Sim to this day
+                  r.stopped_for === "offers" ? "A trade offer arrived first: check your inbox."
+                    : r.at_day === day ? `At the start of the day${d.games.some((g) => me !== null && (g.home_id === me || g.away_id === me)) ? ": your game is next (Next day, Play live or Watch)" : ""}`
+                    : "Stopped early")}>
+                Go to this day
               </button>
             )}
           </>

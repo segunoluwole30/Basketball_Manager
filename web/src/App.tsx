@@ -13,6 +13,7 @@ import { Calendar } from "./screens/Calendar";
 import { Editor } from "./screens/Editor";
 import { Tactics } from "./screens/Tactics";
 import { Transfers } from "./screens/Transfers";
+import { AwardsView } from "./screens/Awards";
 
 const NAV = [
   { key: "home", label: "Home", icon: "⌂" },
@@ -33,6 +34,17 @@ const STAGE_LABEL: Record<string, string> = {
   awards: "Season complete",
   offseason: "Offseason",
 };
+
+const shortDay = (iso?: string) =>
+  iso ? new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : "";
+
+/** What a regular-season sim did, for its toast. */
+function simDone(r: any): string {
+  if (r.days !== 1) return `Played ${r.days} days, to ${shortDay(r.date)}`;
+  const g = r.games[0];
+  if (g) return `${shortDay(r.date)}: ${g.won ? "W" : "L"} ${g.score} ${g.at_home ? "vs" : "@"} ${g.opponent}`;
+  return `${shortDay(r.date)}: ${r.league_games ? `no game for you (${r.league_games} around the league)` : "no games"}`;
+}
 
 function SimControls({ go, onLive }: { go: (r: string) => void; onLive: (url: string) => void }) {
   const { state, act, busy } = useGame();
@@ -58,16 +70,22 @@ function SimControls({ go, onLive }: { go: (r: string) => void; onLive: (url: st
     </>
   ));
   const sim = (mode: string) =>
-    act(() => api.post("/api/sim", { mode }), (r: any) =>
-      r.stopped_for === "offers" ? "A trade offer arrived: check your inbox." : r.games.length ? `Played ${r.days} day${r.days > 1 ? "s" : ""}` : undefined);
-  const po = (mode: string) => act(() => api.post("/api/playoffs/sim", { mode }), (r: any) => (r.finished ? "The season is over!" : undefined));
+    act(() => api.post("/api/sim", { mode }), (r: any) => (r.stopped_for === "offers" ? "A trade offer arrived: check your inbox." : simDone(r)));
+  const po = (mode: string) =>
+    act(() => api.post("/api/playoffs/sim", { mode }), (r: any) =>
+      r.finished ? "The season is over!" : mode === "day" ? `${shortDay(r.state.today_date)}: ${r.games_played ? `${r.games_played} playoff game${r.games_played > 1 ? "s" : ""}` : "no games"}` : undefined);
+  // Next day plays exactly one calendar day; its tooltip says what's on it.
+  const ng = state.next_day_game;
+  const nextTitle = state.next_date
+    ? `Play ${shortDay(state.next_date)}: ${ng ? `your game ${ng.at_home ? "vs" : "@"} ${ng.opponent}` : state.next_day_mine ? "your game" : state.next_day_games ? "you're idle" : "no games"}`
+    : "Play the next day";
   switch (state.stage) {
     case "regular_season":
       return (
         <div className="sim-controls" aria-label="Simulation">
           {live}
-          <button className="btn btn-primary" disabled={busy} onClick={() => sim("day")}>Next day</button>
-          <button className="btn" disabled={busy} onClick={() => sim("week")}>Week</button>
+          <button className="btn btn-primary" disabled={busy} onClick={() => sim("day")} title={nextTitle}>Next day</button>
+          <button className="btn" disabled={busy} onClick={() => sim("week")} title="Play the next seven days">Week</button>
           {state.deadline_in != null && <button className="btn" disabled={busy} onClick={() => sim("deadline")} title="Play to the trade deadline">To deadline</button>}
           <button className="btn" disabled={busy} onClick={() => sim("end")} title="Play the rest of the regular season">To end</button>
         </div>
@@ -84,7 +102,7 @@ function SimControls({ go, onLive }: { go: (r: string) => void; onLive: (url: st
       return (
         <div className="sim-controls">
           {live}
-          <button className="btn btn-primary" disabled={busy} onClick={() => po("day")}>Next day</button>
+          <button className="btn btn-primary" disabled={busy} onClick={() => po("day")} title={nextTitle}>Next day</button>
           <button className="btn" disabled={busy} onClick={() => po("round")}>Round</button>
           <button className="btn" disabled={busy} onClick={() => po("all")}>All playoffs</button>
         </div>
@@ -193,6 +211,17 @@ export default function App() {
           </div>
           <iframe src={live} title="Live game" />
         </div>
+      )}
+      {state.awards && !state.awards.seen && !live && (
+        // Awards night: the regular season has just ended.
+        <Modal wide title={`Awards night: the ${state.awards.season}-${String((state.awards.season + 1) % 100).padStart(2, "0")} season`}
+          onClose={() => act(() => api.post("/api/awards/seen"))}>
+          <AwardsView compact initialSeason={state.awards.season} />
+          <div className="row gap modal-foot">
+            <button className="btn btn-primary" disabled={busy} onClick={() => act(() => api.post("/api/awards/seen"))}>Continue</button>
+            <button className="btn" disabled={busy} onClick={async () => { await act(() => api.post("/api/awards/seen")); go(`league?tab=awards&season=${state.awards!.season}`); }}>Open in League → Awards</button>
+          </div>
+        </Modal>
       )}
       {(menu === "save" || menu === "load") && (
         <Modal title={menu === "save" ? "Save game" : "Load game"} onClose={() => setMenu(null)}>

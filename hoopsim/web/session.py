@@ -22,6 +22,8 @@ from ..db import load_league, save_league
 from ..engine import clear_healed, play_day, store_result, tick_injuries
 from ..generate import generate_league
 from .. import allstar, editor
+from .. import awards as season_awards
+from ..clinch import marker_legend, race as race_markers, race_changes, race_details
 from ..news import post as post_news
 from ..systems import describe as describe_systems, fit_for_team
 from ..models import MATCH_ENGINES
@@ -33,11 +35,12 @@ from ..manager import (
 )
 from ..market import _salaries_match, evaluate_trade, execute_user_trade
 from ..models import ContractOption, DefensiveScheme, League, OffensiveFocus, Phase, Player
-from ..playoffs import (_HIGH_SEED_HOME, _advance_bracket, current_round, next_playoff_day, ranked,
-                        start_playoffs, team_records)
+from ..playoffs import (_HIGH_SEED_HOME, _advance_bracket, current_round, eliminated, next_playoff_day,
+                        ranked, start_playoffs, team_records, waiting_for_play_in)
+from . import bracket as bracket_view
 from ..season import (
     OFFSEASON_STEPS, STEP_TITLES, answer_offseason, finish_season, manager_answer,
-    offseason_pending, offseason_report, pending_players, play_regular_season,
+    offseason_pending, offseason_report, pending_players, play_regular_day,
     refresh_lineups, regular_season_over, season_start, start_offseason, trade_deadline_day,
 )
 from ..models import Game as GameModel
@@ -221,6 +224,10 @@ class GameSession:
         self.save_path = str(p)
         self.rng = random.Random()
         self.dirty = False
+        if league.phase is Phase.REGULAR_SEASON and season_awards.current(league) is None \
+                and regular_season_over(league) and league.user_team_id is not None:
+            season_awards.announce(league)             # a save from before awards night
+            self.dirty = True
         return self.state()
 
     def save(self, path: Optional[str] = None) -> dict:
@@ -276,11 +283,14 @@ class GameSession:
             "open_offers": sum(1 for m in lg.inbox if m.get("kind") == "offer" and m.get("status") == "open"),
             "unread": sum(1 for m in lg.inbox if not m.get("read")),
         })
+        named = season_awards.current(lg)
+        out["awards"] = {"season": named["season"], "seen": bool(named.get("seen"))} if named else None
+        if lg.phase in (Phase.REGULAR_SEASON, Phase.PLAYOFFS):
+            out.update(self._today_view())
         if lg.phase is Phase.REGULAR_SEASON:
-            played = self._days_played()
+            today = out["day"]
             deadline = trade_deadline_day(lg)
-            out["day"] = played
-            out["deadline_in"] = (deadline - played) if deadline and played < deadline else None
+            out["deadline_in"] = (deadline - today) if deadline and today < deadline else None
             out["season_over"] = regular_season_over(lg)
         if lg.phase is Phase.OFFSEASON:
             pending = offseason_pending(lg)
@@ -302,6 +312,46 @@ class GameSession:
         lg = self._lg()
         return max((g.day for g in lg.games.values() if g.season == lg.season and g.played and not g.playoff),
                    default=0)
+
+    def _today(self) -> int:
+        """The season's calendar day the league is at: the last day that is done.
+        "Next day" plays the day after it. It follows the league's date, which the
+        sims move one calendar day at a time (off days included). A date at or past a
+        day still unplayed (no save should have one: the date moves after a day's
+        games) is read as the end of the day before it, and in the playoffs the date
+        is never behind the last day played (saves from before the date moved there)."""
+        lg = self._lg()
+        today = (lg.current_date - season_start(lg.season)).days
+        games = [g for g in lg.games.values() if g.season == lg.season]
+        if lg.phase is Phase.REGULAR_SEASON:
+            first_open = min((g.day for g in games if not g.playoff and not g.played), default=None)
+            if first_open is not None and first_open <= today:
+                today = first_open - 1
+        elif lg.phase is Phase.PLAYOFFS:
+            today = max([today] + [g.day for g in games if g.played])
+        return today
+
+    def _today_view(self) -> dict:
+        """Today and the next day for the UI: the dates, and your game on the next day."""
+        lg = self._lg()
+        today = self._today()
+        base = season_start(lg.season)
+        me = lg.user_team_id
+        nxt = today + 1
+        tomorrow = [g for g in lg.games.values() if g.season == lg.season and g.day == nxt]
+        mine = next((g for g in tomorrow if not g.played and me in (g.home_team_id, g.away_team_id)), None)
+        out = {"day": today, "today_date": (base + timedelta(days=today)).isoformat(),
+               "next_date": (base + timedelta(days=nxt)).isoformat(),
+               "next_day_games": len(tomorrow),
+               "next_day_game": self._game_view(mine) if mine else None,
+               "next_day_mine": mine is not None}
+        if lg.phase is Phase.PLAYOFFS and not tomorrow and lg.playoffs:
+            # Playoff games are scheduled as their day comes: is the next day one?
+            live = [s for s in lg.playoffs if s.round == current_round(lg) and not s.over]
+            if live and self._next_playoff_game_day() == nxt:
+                out["next_day_games"] = len(live)
+                out["next_day_mine"] = any(me in (s.high_id, s.low_id) for s in live)
+        return out
 
     # -- player views ---------------------------------------------------------------
     def _potential(self, p: Player) -> Optional[dict]:
@@ -356,7 +406,7 @@ class GameSession:
         p = self._find_player(int(pid))
         totals = season_totals(lg)
         row = self.player_row(p, totals)
-        groups = [("Scoring", ["finishing", "close_range", "mid_range", "three_point", "free_throw"]),
+        groups = [("Scoring", ["finishing", "close_range", "mid_range", "three_point", "free_throw", "drawing_fouls"]),
                   ("Playmaking", ["passing", "ball_handling", "vision"]),
                   ("Defence", ["perimeter_defense", "interior_defense", "stealing", "blocking"]),
                   ("Rebounding", ["offensive_rebounding", "defensive_rebounding"]),
@@ -400,6 +450,7 @@ class GameSession:
             "tendencies": p.tendencies.to_dict(), "tendencies_text": describe_tendencies(p),
             "season": season, "career": career, "draft": draft, "honours": allstar.honours(p),
             "all_star_now": p.id in allstar.selected(lg),
+            "awards_now": self._awards_now(p.id),
             "is_mine": is_mine, "is_prospect": p.id not in lg.players, "ask": ask,
             "at_positions": {pos.value: p.ability_at(pos) for pos in POSITIONS},
         }
@@ -646,12 +697,13 @@ class GameSession:
         rec = team_records(lg)
         conf_ids = ranked(lg, [t.id for t in lg.teams.values() if t.conference == me.conference])
         leader_w, leader_l, _ = rec[conf_ids[0]]
+        marks = self._race()
         standings = []
         for i, tid in enumerate(conf_ids):
             w, l, diff = rec[tid]
             standings.append({"rank": i + 1, "team_id": tid, "abbr": lg.teams[tid].abbreviation,
                               "name": lg.teams[tid].full_name, "w": w, "l": l,
-                              "gb": ((leader_w - w) + (l - leader_l)) / 2})
+                              "gb": ((leader_w - w) + (l - leader_l)) / 2, "marker": marks[tid]["marker"]})
         my_games = sorted((g for g in lg.games.values() if g.season == lg.season
                            and me.id in (g.home_team_id, g.away_team_id)), key=lambda g: (g.day, g.id))
         upcoming = [self._game_view(g) for g in my_games if not g.played][:5]
@@ -694,47 +746,66 @@ class GameSession:
                 theirs = g.result.away_score if at_home else g.result.home_score
                 v["won"] = mine > theirs
                 v["score"] = f"{mine}-{theirs}"
+        if g.playoff:
+            ctx = bracket_view.series_context(lg, g)
+            if ctx:
+                v["series"] = {"title": ctx["title"], "game": ctx["game"], "play_in": ctx["play_in"],
+                               "status": ctx.get("status_after", ctx["status"])}
         return v
 
     # -- simulation -------------------------------------------------------------------
     def sim(self, mode: str = "day", days: Optional[int] = None) -> dict:
+        """Play on through the regular season a calendar day at a time: "day" is
+        exactly the next day (on an off day the date moves and nothing is played),
+        "week" seven days, "days" ``days`` days, "deadline" through the trade
+        deadline, "end" the rest of the season. Stops early for a trade offer."""
         lg = self._me()
         if lg.phase is not Phase.REGULAR_SEASON:
             raise UserError("the regular season is over" if lg.phase is not Phase.OFFSEASON
                             else "it's the offseason: finish it to start the new season")
         if regular_season_over(lg):
             raise UserError("the regular season is over: on to the playoffs")
-        played = self._days_played()
-        remaining = sorted({g.day for g in lg.games.values()
-                            if g.season == lg.season and not g.playoff and not g.played})
+        today = self._today()
         if mode == "day":
-            target = remaining[:1]
+            last = today + 1
         elif mode == "week":
-            target = [d for d in remaining if d <= played + 7] or remaining[:1]
+            last = today + 7
         elif mode == "days":
             n = int(days or 1)
             if not 1 <= n <= 200:
                 raise UserError("days must be 1-200")
-            target = remaining[:n]
+            last = today + n
         elif mode == "deadline":
             deadline = trade_deadline_day(lg)
-            if deadline is None or played >= deadline:
+            if deadline is None or today >= deadline:
                 raise UserError("the trade deadline has passed")
-            target = [d for d in remaining if d <= deadline]
+            last = deadline
         elif mode == "end":
-            target = remaining
+            last = None
         else:
             raise UserError(f"unknown sim mode '{mode}' (day, week, days, deadline, end)")
+        return self._sim_through(last)
+
+    def _sim_through(self, last: Optional[int]) -> dict:
+        """Play every regular-season calendar day after today up to and including
+        ``last`` (None: to the final day), then report. Stops after a day that
+        brought a trade offer."""
+        lg = self._me()
+        today = self._today()
+        final = max((g.day for g in lg.games.values() if g.season == lg.season and not g.playoff),
+                    default=today)
+        target = range(today + 1, (final if last is None else min(last, final)) + 1)
         self._expire_offers()
         me = lg.user_team_id
+        race_before = self._race()
         before = {g.id for g in lg.games.values() if g.played}
         hurt_before = {p.id: p.injury.description for p in lg.roster(me) if p.injury}
         events: list[str] = []
         manager = _DeferredOffers()
         stopped_for = None
         days_done = 0
-        for _ in target:
-            events += play_regular_season(lg, self.rng, days=1, manager=manager)
+        for day in target:
+            events += play_regular_day(lg, self.rng, day, manager)
             days_done += 1
             if manager.offers:
                 stopped_for = "offers"
@@ -765,12 +836,135 @@ class GameSession:
             self._news("offer", f"Trade offer from the {team.full_name}",
                        [f"They want {give} for {get}. The offer stands until you sim again."],
                        offer=offer, status="open")
+        if days_done:
+            self._race_news(race_before)
         if regular_season_over(lg):
-            self._news("season", "The regular season is over",
-                       ["The playoff bracket is set. Head to the League screen to start the playoffs."])
+            self._season_over_news()
         self.dirty = True
+        league_games = sum(1 for g in lg.games.values() if g.season == lg.season and g.played
+                           and g.id not in before and not g.playoff)
         return {"ok": True, "days": days_done, "games": [self._game_view(g) for g in new][-20:],
+                "league_games": league_games, "date": lg.current_date.isoformat(),
                 "stopped_for": stopped_for, "events": events, "state": self.state()}
+
+    def _season_over_news(self) -> None:
+        self._news("season", "The regular season is over",
+                   ["The season's awards are in: MVP, Defensive Player of the Year, the All-NBA teams "
+                    "and more (League → Awards).",
+                    "The playoff bracket is set. Start the playoffs from the top bar."], awards_season=self._lg().season)
+
+    # -- awards ----------------------------------------------------------------------
+    def _award_seasons(self) -> list[int]:
+        lg = self._lg()
+        out = [lg.season] if season_awards.current(lg) and not any(h["season"] == lg.season for h in lg.history) else []
+        return out + [h["season"] for h in reversed(lg.history)]
+
+    def awards(self, season: Optional[int] = None) -> dict:
+        """A season's awards: winners and finalists with their share of the vote, and
+        the All-NBA, All-Defensive and All-Rookie teams (this season once the regular
+        season is over, and every finished season)."""
+        lg = self._lg()
+        seasons = self._award_seasons()
+        base = {"seasons": seasons, "user_team_id": lg.user_team_id}
+        if not seasons:
+            return {**base, "available": False, "season": lg.season,
+                    "message": "The season's awards are announced when the regular season ends."}
+        season = seasons[0] if season is None else int(season)
+        if season not in seasons:
+            raise UserError(f"no awards for {season}")
+        entry = next((h for h in lg.history if h["season"] == season), None)
+        data = (entry or {}).get("season_awards") or (season_awards.current(lg) if season == lg.season else None)
+        me = lg.user_team_id
+
+        def mine(row):
+            return {**row, "mine": me is not None and row.get("team_id") == me}
+
+        single, teams = [], []
+        if data:
+            for key, name, short in season_awards.SINGLE:
+                e = data["single"].get(key, {"winner": None, "finalists": []})
+                single.append({"key": key, "name": name, "short": short, "winner": e["winner"],
+                               "finalists": [mine(r) for r in e["finalists"]]})
+            for key, name, n in season_awards.TEAMS:
+                tiers = data["teams"].get(key, [])
+                teams.append({"key": key, "name": name, "tiers": [
+                    {"name": f"{name} {season_awards.TIER_NAMES[i]}", "players": [mine(r) for r in tier]}
+                    for i, tier in enumerate(tiers)]})
+        else:                                          # a season from before the full announcement
+            won = (entry or {}).get("awards", {})
+            names = (entry or {}).get("award_names", {})
+            for key, name, short in season_awards.SINGLE:
+                pid = won.get(key)
+                rows = [] if pid is None else [mine(self._legacy_row(pid, season, names.get(key)))]
+                single.append({"key": key, "name": name, "short": short, "winner": pid, "finalists": rows})
+            for key, name, n in season_awards.TEAMS:
+                tiers = [[] for _ in range(n)]
+                for p in lg.players.values():
+                    for c in p.career:
+                        tier = c.get(key)
+                        if c["season"] == season and not c["playoffs"] and tier:
+                            t = tier if isinstance(tier, int) and not isinstance(tier, bool) else 1
+                            if 1 <= t <= n:
+                                tiers[t - 1].append(mine(self._legacy_row(p.id, season)))
+                teams.append({"key": key, "name": name, "tiers": [
+                    {"name": f"{name} {season_awards.TIER_NAMES[i]}", "players": tier}
+                    for i, tier in enumerate(tiers) if tier]})
+        finals_mvp = None
+        fm = (data or {}).get("finals_mvp") if data else None
+        if fm is None and entry:
+            fm = entry.get("awards", {}).get("finals_mvp")
+        if fm is not None and fm in lg.players:
+            finals_mvp = mine(self._legacy_row(fm, season))
+        rules = (data or {}).get("rules")
+        return {**base, "available": True, "season": season, "full": bool(data),
+                "date": (data or {}).get("date"), "rules": rules, "single": single, "teams": teams,
+                "finals_mvp": finals_mvp, "current": season == lg.season and entry is None,
+                "seen": bool((data or {}).get("seen", True))}
+
+    def _legacy_row(self, pid: int, season: int, name: Optional[str] = None) -> dict:
+        """A player's line for a past season, from his career lines."""
+        lg = self._lg()
+        p = lg.players.get(pid)
+        line = next((c for c in (p.career if p else []) if c["season"] == season and not c["playoffs"]), None)
+        row = {"id": pid, "name": p.name if p else (name or "?"), "pos": p.position.value if p else "",
+               "team_id": line["team_id"] if line else None, "team": line["team"] if line else "?"}
+        if line:
+            gp = max(1, line["gp"])
+            row.update({"gp": line["gp"], "mpg": round(line["min"] / gp, 1), "ppg": round(line["pts"] / gp, 1),
+                        "rpg": round((line["orb"] + line["drb"]) / gp, 1), "apg": round(line["ast"] / gp, 1),
+                        "spg": round(line["stl"] / gp, 1), "bpg": round(line["blk"] / gp, 1)})
+        return row
+
+    def _awards_now(self, pid: int) -> list[str]:
+        """This season's awards for a player, before they reach his career line."""
+        lg = self._lg()
+        named = season_awards.current(lg)
+        if not named or any(h["season"] == lg.season for h in lg.history):
+            return []
+        return allstar.season_honours(season_awards.career_flags(named).get(pid, {}))
+
+    def awards_seen(self) -> dict:
+        lg = self._lg()
+        named = season_awards.current(lg)
+        if named and not named.get("seen"):
+            named["seen"] = True
+            self.dirty = True
+        return self.state()
+
+    def _race_news(self, before: dict[int, dict]) -> None:
+        """Inbox items for new clinch / elimination markers: yours, then the league's."""
+        lg = self._lg()
+        changes = race_changes(lg, before, self._race())
+        me = lg.user_team_id
+        mine = [c for c in changes if c["team_id"] == me]
+        if mine:
+            titles = {"w": "Best record in the league clinched", "z": "#1 seed clinched",
+                      "y": "Division title clinched", "x": "Playoff spot clinched",
+                      "pi": "Play-in spot clinched", "o": "Eliminated from the playoff race"}
+            self._news("race", titles[mine[0]["marker"]], [c["text"] + "." for c in mine])
+        others = [c for c in changes if c["team_id"] != me]
+        if others:
+            self._news("race", "Playoff race", [f"{c['marker']}: {c['text']}" for c in others])
 
     # -- playoffs ------------------------------------------------------------------
     def start_playoffs(self) -> dict:
@@ -780,9 +974,14 @@ class GameSession:
         self._expire_offers()
         start_playoffs(lg)
         me = lg.user_team_id
-        made = any(me in (s.high_id, s.low_id) for s in lg.playoffs)
+        made = me in waiting_for_play_in(lg) or any(me in (s.high_id, s.low_id) for s in lg.playoffs
+                                                       if not s.play_in)
+        play_in = next((s for s in lg.playoffs if s.play_in and me in (s.high_id, s.low_id)), None)
+        n = lg.rules.playoff_series_length
         self._news("playoffs", "The playoffs begin",
-                   ["You're in! Every series is best of seven." if made else
+                   [f"You're in! Every series is best of {n}." if made else
+                    (f"You're in the play-in ({bracket_view.PLAY_IN_MATCHUP[play_in.play_in]}): "
+                     + bracket_view.PLAY_IN_NOTE[play_in.play_in].lower() + ".") if play_in else
                     "You missed the playoffs this year. You can still watch the bracket."])
         self.dirty = True
         return self.playoffs()
@@ -794,30 +993,42 @@ class GameSession:
             return False
         day, live = opened
         play_day(self._lg(), day, self.rng)
-        self._playoff_day_close(live)
+        self._playoff_day_close(live, day)
         return True
+
+    def _playoff_series_to_play(self):
+        """The series still playing (moving the bracket on when a round is done), or None
+        when the playoffs are over."""
+        lg = self._lg()
+        while True:
+            live = [s for s in lg.playoffs if s.round == current_round(lg) and not s.over]
+            if live:
+                return live
+            if not _advance_bracket(lg):
+                return None
+
+    def _next_playoff_game_day(self) -> int:
+        lg = self._lg()
+        return next_playoff_day(lg, max(g.day for g in lg.games.values() if g.season == lg.season))
 
     def _playoff_day_open(self):
         """Schedule the next playoff day's games: (day, series playing) or None when done."""
         lg = self._lg()
-        day = max(g.day for g in lg.games.values() if g.season == lg.season)
-        while True:
-            live = [s for s in lg.playoffs if s.round == current_round(lg) and not s.over]
-            if not live:
-                if not _advance_bracket(lg):
-                    return None
-                continue
-            day = next_playoff_day(lg, day)
-            for s in live:
-                n = len(s.game_ids)
-                home, away = (s.high_id, s.low_id) if n in _HIGH_SEED_HOME else (s.low_id, s.high_id)
-                gid = lg.next_game_id()
-                lg.add_game(GameModel(gid, lg.season, day, home, away, playoff=True))
-                s.game_ids.append(gid)
-            return day, live
+        live = self._playoff_series_to_play()
+        if live is None:
+            return None
+        day = self._next_playoff_game_day()
+        for s in live:
+            n = len(s.game_ids)
+            home, away = (s.high_id, s.low_id) if n in _HIGH_SEED_HOME else (s.low_id, s.high_id)
+            gid = lg.next_game_id()
+            lg.add_game(GameModel(gid, lg.season, day, home, away, playoff=True))
+            s.game_ids.append(gid)
+        return day, live
 
-    def _playoff_day_close(self, live) -> None:
+    def _playoff_day_close(self, live, day: int) -> None:
         lg = self._lg()
+        lg.current_date = season_start(lg.season) + timedelta(days=day)
         for s in live:
             g = lg.games[s.game_ids[-1]]
             if g.winner_id() == s.high_id:
@@ -832,8 +1043,15 @@ class GameSession:
         if mode not in ("day", "round", "all"):
             raise UserError("mode must be day, round or all")
         over_before = {s.id for s in lg.playoffs if s.over}
+        played_before = sum(1 for g in lg.games.values() if g.played)
         rnd = current_round(lg)
         finished = False
+        if mode == "day" and self._playoff_series_to_play() is not None:
+            # One calendar day: games are every other day, so on an off day only the date moves.
+            today = self._today()
+            if self._next_playoff_game_day() > today + 1:
+                lg.current_date = season_start(lg.season) + timedelta(days=today + 1)
+                return dict(self._after_playoff_days(over_before, False), games_played=0)
         while True:
             if not self._playoff_day():
                 finished = True
@@ -842,7 +1060,8 @@ class GameSession:
                 break
             if mode == "round" and all(s.over for s in lg.playoffs if s.round == rnd):
                 break
-        return self._after_playoff_days(over_before, finished)
+        played = sum(1 for g in lg.games.values() if g.played) - played_before
+        return dict(self._after_playoff_days(over_before, finished), games_played=played)
 
     def _after_playoff_days(self, over_before: set, finished: bool) -> dict:
         lg = self._lg()
@@ -851,8 +1070,16 @@ class GameSession:
             if s.over and s.id not in over_before and me in (s.high_id, s.low_id):
                 won = s.winner_id == me
                 opp = lg.teams[s.loser_id if won else s.winner_id]
+                if s.play_in:
+                    seed = {"7v8": "the 7 seed" if won else "one more chance, in the decider",
+                            "9v10": "the decider for the 8 seed" if won else "an early summer",
+                            "decider": "the 8 seed" if won else "an early summer"}[s.play_in]
+                    self._news("playoffs", f"Play-in {'win' if won else 'loss'} vs {opp.abbreviation}",
+                               [f"You {'beat' if won else 'lost to'} the {opp.full_name} in the play-in"
+                                f" ({bracket_view.PLAY_IN_MATCHUP[s.play_in]}): {seed}."])
+                    continue
                 score = f"{max(s.high_wins, s.low_wins)}-{min(s.high_wins, s.low_wins)}"
-                stage = "the Finals" if s.conference is None else f"round {s.round}"
+                stage = "the Finals" if s.conference is None else f"the {bracket_view.series_title(lg, s)}"
                 self._news("playoffs", f"{'Series won' if won else 'Eliminated'}: {score} vs {opp.abbreviation}",
                            [f"You {'beat' if won else 'lost to'} the {opp.full_name} {score} in {stage}."])
         if finished:
@@ -872,7 +1099,8 @@ class GameSession:
         series = []
         for s in sorted(lg.playoffs, key=lambda s: (s.round, s.id)):
             series.append({
-                "id": s.id, "round": s.round, "conference": s.conference,
+                "id": s.id, "round": s.round, "conference": s.conference, "play_in": s.play_in,
+                "title": bracket_view.series_title(lg, s),
                 "high_id": s.high_id, "low_id": s.low_id,
                 "high": lg.teams[s.high_id].abbreviation, "low": lg.teams[s.low_id].abbreviation,
                 "high_seed": s.high_seed, "low_seed": s.low_seed,
@@ -882,7 +1110,8 @@ class GameSession:
         champion = None
         if series and series[-1]["conference"] is None and series[-1]["over"]:
             champion = series[-1]["winner_id"]
-        return {"series": series, "champion": champion, "stage": self._stage()}
+        return {"series": series, "champion": champion, "stage": self._stage(),
+                "user_team_id": lg.user_team_id, "bracket": bracket_view.bracket(lg, self._game_view)}
 
     # -- league ------------------------------------------------------------------------
     def standings(self) -> dict:
@@ -901,6 +1130,7 @@ class GameSession:
             streaks[tid] = streak
         from ..playoffs import _Tiebreak
         tb = _Tiebreak(lg)
+        marks = self._race()
         out = []
         for conf in sorted({t.conference for t in lg.teams.values()}):
             ids = tb.order([t.id for t in lg.teams.values() if t.conference == conf])
@@ -915,6 +1145,7 @@ class GameSession:
                              "streak": streaks[tid], "last10": last10[tid],
                              "strength": round(team_strength(lg, tid), 1),
                              "div_leader": tid in tb.leaders,
+                             "marker": marks[tid]["marker"], "markers": marks[tid]["markers"],
                              "div_record": "{}-{}".format(*tb.div[tid]), "conf_record": "{}-{}".format(*tb.conf[tid])})
             out.append({"conference": conf, "teams": rows})
         rows_by_id = {r["team_id"]: r for c in out for r in c["teams"]}
@@ -930,7 +1161,23 @@ class GameSession:
                     w, l, _ = rec[tid]
                     rows.append(dict(rows_by_id[tid], div_rank=i + 1, div_gb=((lw - w) + (l - ll)) / 2))
                 divisions.append({"division": name, "conference": conf, "teams": rows})
-        return {"conferences": out, "divisions": divisions, "season": lg.season, "user_team_id": lg.user_team_id}
+        return {"conferences": out, "divisions": divisions, "season": lg.season, "user_team_id": lg.user_team_id,
+                "legend": marker_legend(lg)}
+
+    def _race(self) -> dict[int, dict]:
+        """Clinch / elimination markers (``clinch.race``), cached until a game is played."""
+        lg = self._lg()
+        return self._stats_memo("race", lg.season, False, lambda: race_markers(lg))
+
+    def race(self, team_id: int) -> dict:
+        """One team's races: clinched, eliminated, or the wins / losses that settle them."""
+        lg = self._lg()
+        if team_id not in lg.teams:
+            raise UserError(f"no team {team_id}", 404)
+        t = lg.teams[team_id]
+        rows = self._stats_memo(f"race-{team_id}", lg.season, False, lambda: race_details(lg, team_id))
+        return {"team_id": team_id, "abbr": t.abbreviation, "name": t.full_name,
+                "marker": self._race()[team_id]["marker"], "races": rows}
 
     def leaders(self) -> dict:
         lg = self._lg()
@@ -993,10 +1240,8 @@ class GameSession:
                        and not g.played and mine(g)), key=lambda g: (g.day, g.id), default=None)
             if nxt is None:
                 raise UserError("you have no games left this regular season")
-            days = len({g.day for g in lg.games.values() if g.season == lg.season and not g.playoff
-                        and not g.played and g.day < nxt.day})
-            if days:
-                r = self.sim("days", days)
+            if self._today() < nxt.day - 1:
+                r = self._sim_through(nxt.day - 1)
                 if r["stopped_for"]:
                     return {"ok": True, "started": False, "stopped_for": r["stopped_for"], "state": self.state()}
             allstar.catch_up(lg, nxt.day)       # All-Star events dated before tip-off
@@ -1005,7 +1250,7 @@ class GameSession:
             match = LiveMatch(lg, nxt, self.rng)
             self.live = {"match": match, "kind": "regular", "game_id": nxt.id, "day": nxt.day}
         elif lg.phase is Phase.PLAYOFFS:
-            if not any(me in (s.high_id, s.low_id) and not s.over for s in lg.playoffs):
+            if eliminated(lg, me):
                 raise UserError("your season is over: no playoff games to coach")
             over_before = {s.id for s in lg.playoffs if s.over}
             while True:
@@ -1018,7 +1263,7 @@ class GameSession:
                 if game is not None:
                     break
                 play_day(lg, day, self.rng)            # your series is waiting on others
-                self._playoff_day_close(series)
+                self._playoff_day_close(series, day)
             clear_healed(lg)
             match = LiveMatch(lg, game, self.rng)
             self.live = {"match": match, "kind": "playoff", "game_id": game.id, "day": day,
@@ -1040,7 +1285,11 @@ class GameSession:
 
     def live_page(self) -> str:
         from ..spatial.export import PLAYER_ASSETS_URL, build_html
-        return build_html(self._viewer_builds(self._live().header()), animation=PLAYER_ASSETS_URL)
+        data = self._live().header()
+        series = bracket_view.viewer_series(self._lg(), self._lg().games[self.live["game_id"]])
+        if series:
+            data["series"] = series                  # the scoreboard's series line
+        return build_html(self._viewer_builds(data), animation=PLAYER_ASSETS_URL)
 
     def live_next(self, after: int = 0, want: int = 2) -> dict:
         return self._live().next_chunk(after, want)
@@ -1078,12 +1327,15 @@ class GameSession:
             rest = [x for x in lg.games.values() if x.season == lg.season and not x.playoff
                     and x.day == live["day"] and not x.played]
             if rest:
-                self.sim("day")                        # the rest of today's games
+                self._sim_through(live["day"])         # the rest of the day's games
             else:
                 lg.current_date = season_start(lg.season) + timedelta(days=live["day"])
+                if regular_season_over(lg):            # that was the last game: awards night
+                    season_awards.announce(lg)
+                    self._season_over_news()
         else:
             play_day(lg, live["day"], self.rng)
-            self._playoff_day_close(live["series"])
+            self._playoff_day_close(live["series"], live["day"])
             self._after_playoff_days(live["over_before"], False)
         return {"ok": True, "game": self._game_view(g), "final": match.state(), "state": self.state()}
 
@@ -1101,14 +1353,12 @@ class GameSession:
                        and not g.played and mine(g)), key=lambda g: (g.day, g.id), default=None)
             if nxt is None:
                 raise UserError("you have no games left this regular season")
-            days = len({g.day for g in lg.games.values() if g.season == lg.season and not g.playoff
-                        and not g.played and g.day <= nxt.day})
-            r = self.sim("days", days)
+            r = self._sim_through(nxt.day)
             if not lg.games[nxt.id].played:
                 return {"ok": True, "game_id": None, "stopped_for": r["stopped_for"], "state": self.state()}
             game_id = nxt.id
         elif lg.phase is Phase.PLAYOFFS:
-            if not any(me in (s.high_id, s.low_id) and not s.over for s in lg.playoffs):
+            if eliminated(lg, me):
                 raise UserError("your season is over: no playoff games to watch")
             while True:
                 r = self.sim_playoffs("day")
@@ -1151,12 +1401,22 @@ class GameSession:
                         row["look"] = dict(found[0].look)
         return data
 
-    def replay_page(self, game_id: int, live: bool = False) -> str:
+    def replay_page(self, game_id: int, live: bool = False, season: Optional[int] = None) -> str:
         """The match viewer for a recorded game (spatial engine, the user's team).
-        ``live``: spoiler-free (the box score appears at the final buzzer)."""
+        ``live``: spoiler-free (the box score appears at the final buzzer). The
+        Three-Point Contest (``allstar.REPLAY_IDS["three"]``) is built from its record,
+        this season's or ``season``'s, whatever the match engine."""
         from ..spatial.export import PLAYER_ASSETS_URL, build_html
         from ..spatial.season_game import replay_data
         lg = self._lg()
+        if int(game_id) == allstar.REPLAY_IDS["three"]:
+            from ..spatial.contest import page_data
+            record = allstar.contest_record(lg, season)
+            if record is None:
+                raise UserError("no record of that Three-Point Contest (it hasn't been held yet, or it was "
+                                "played before contests were recorded shot by shot)", 404)
+            data = page_data(record, season if season is not None else lg.season)
+            return build_html(self._viewer_builds(data), animation=PLAYER_ASSETS_URL)
         if int(game_id) >= allstar.EVENT_REPLAY_BASE:          # an All-Star Weekend exhibition
             data = allstar.replay(lg, int(game_id))
             if data is None:
@@ -1173,6 +1433,9 @@ class GameSession:
             raise UserError("no recording of that game: only your team's most recent games on the "
                             "spatial engine are kept", 404)
         data["live"] = bool(live)
+        series = bracket_view.viewer_series(lg, lg.games[int(game_id)])
+        if series:
+            data["series"] = series                  # the scoreboard's series line (old replays too)
         from ..spatial.highlights import annotate
         annotate(data.get("possessions", []))       # older replays were saved without highlight levels
         return build_html(self._viewer_builds(data), animation=PLAYER_ASSETS_URL)
@@ -1226,7 +1489,11 @@ class GameSession:
             for key, label in (("mvp", "MVP"), ("finals_mvp", "Finals MVP"), ("dpoy", "Defensive POY"),
                                ("roy", "Rookie of the Year"), ("sixth_man", "Sixth Man"), ("mip", "Most Improved")):
                 pid = h.get("awards", {}).get(key)
-                awards.append({"award": label, "player_id": pid, "name": h["award_names"].get(key)})
+                awards.append({"award": label, "player_id": pid, "name": h.get("award_names", {}).get(key)})
+            full = h.get("season_awards")
+            all_nba = []
+            if full and full.get("teams", {}).get("all_nba"):
+                all_nba = [{"id": r["id"], "name": r["name"], "team": r["team"]} for r in full["teams"]["all_nba"][0]]
             a = h.get("all_star")
             if a:
                 for key, label in (("mvp", "All-Star MVP"), ("three_point_champion", "3-Point champion"),
@@ -1235,7 +1502,7 @@ class GameSession:
                         awards.append({"award": label, "player_id": a[key], "name": a.get(f"{key}_name")})
             seasons.append({"season": h["season"], "champion": team(h["champion"]),
                             "runner_up": team(h["runner_up"]), "finals": h["finals"],
-                            "awards": awards, "standings": standings,
+                            "awards": awards, "all_nba_first": all_nba, "standings": standings,
                             "deadline_trades": h.get("deadline_trades", [])})
         return {"seasons": seasons}
 

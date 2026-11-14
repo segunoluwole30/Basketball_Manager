@@ -239,6 +239,10 @@ def create_app(session: Optional[GameSession] = None) -> FastAPI:
     def standings():
         return run(game.standings)
 
+    @app.get("/api/standings/race/{team_id}")
+    def standings_race(team_id: int):
+        return run(game.race, team_id)
+
     @app.get("/api/leaders")
     def leaders():
         return run(game.leaders)
@@ -260,8 +264,8 @@ def create_app(session: Optional[GameSession] = None) -> FastAPI:
         return run(game.all_star)
 
     @app.get("/api/replay/{game_id}", response_class=HTMLResponse)
-    def replay(game_id: int, live: bool = False):
-        return HTMLResponse(run(game.replay_page, game_id, live))
+    def replay(game_id: int, live: bool = False, season: Optional[int] = None):
+        return HTMLResponse(run(game.replay_page, game_id, live, season))
 
     @app.post("/api/watch-next")
     def watch_next():
@@ -299,6 +303,14 @@ def create_app(session: Optional[GameSession] = None) -> FastAPI:
     @app.get("/api/history")
     def history():
         return run(game.history)
+
+    @app.get("/api/awards")
+    def awards(season: Optional[int] = None):
+        return run(game.awards, season)
+
+    @app.post("/api/awards/seen")
+    def awards_seen():
+        return run(game.awards_seen)
 
     @app.get("/api/playoffs")
     def playoffs():

@@ -68,6 +68,9 @@ body {
 .home.off .abbr::after { content: none; }
 .home.off .abbr::before { content: "\25CF "; color: var(--accent); font-size: 18px; vertical-align: middle; }
 .clock { text-align: center; }
+.board .series-line { grid-column: 1 / -1; text-align: center; font-family: var(--font-body); font-size: 13px;
+  color: var(--muted); margin-top: -4px; }
+.board .series-line[hidden] { display: none; }
 .clock .sc { font-size: 40px; font-weight: 700; line-height: 1; color: var(--accent);
   font-variant-numeric: tabular-nums; min-width: 2.4ch; display: inline-block; }
 .clock .label { font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
@@ -195,6 +198,43 @@ aside { min-width: 0; display: flex; flex-direction: column; background: var(--p
 @media (max-width: 900px) { .stage { position: static; } }
 .hl { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 
+/* Three-Point Contest: its own board in place of the scoreboard */
+.cboard { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 6px 16px;
+  background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius); padding: 10px 16px; }
+.cboard[hidden], .board[hidden] { display: none; }
+.cb-stage { font: 600 11px/1.2 var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.cb-name { font: 700 26px/1.05 var(--font-display); letter-spacing: 0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cb-team { font-size: 12px; color: var(--muted); }
+.cb-score { font-family: var(--font-display); text-align: center; line-height: 1; }
+.cb-pts { font-size: 44px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.cb-max { font-size: 16px; color: var(--muted); margin-left: 4px; }
+.cb-clock { text-align: center; font-family: var(--font-display); }
+.cb-clock .sc { font-size: 36px; font-weight: 700; line-height: 1; color: var(--accent); font-variant-numeric: tabular-nums; min-width: 3.2ch; display: inline-block; }
+.cb-clock .label { font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.cb-racks { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.cb-rack { display: inline-flex; gap: 3px; padding: 3px 5px; border-radius: 6px; border: 1px solid var(--rule); }
+.cb-rack.money { border-color: var(--accent); }
+.cb-rack.now { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.cb-rack i { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--accent); background: transparent; display: block; }
+.cb-rack i.mb { border-color: var(--ink); background: repeating-linear-gradient(90deg, var(--panel) 0 3px, var(--accent) 3px 6px); }
+.cb-rack i.dp { border-color: #c79a1e; background: radial-gradient(circle, #e6c25a 0 45%, transparent 50%); }
+.cb-rack i.made { background: #2f9e57; border-color: #2f9e57; }
+.cb-rack i.miss { background: var(--rule); border-color: var(--muted); opacity: 0.75; }
+.cb-rack i.miss::after { content: ""; display: block; width: 100%; height: 2px; margin-top: 4px; background: var(--muted); transform: rotate(45deg); }
+.cb-rack i.up { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
+.cb-rack i.left { opacity: 0.3; }
+.cb-key { font-size: 11px; color: var(--muted); }
+.cb-banner { grid-column: 1 / -1; font: 700 20px/1.2 var(--font-display); letter-spacing: 0.03em; color: var(--accent); }
+.cb-banner[hidden] { display: none; }
+table.stand { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+table.stand th, table.stand td { padding: 5px 8px; text-align: left; }
+table.stand td.n { text-align: right; font-weight: 700; }
+table.stand th { color: var(--muted); font-weight: 600; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; border-bottom: 1px solid var(--rule); }
+table.stand tr.now td { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+table.stand tr.win td:first-child::before { content: "\1F3C6  "; }
+table.stand .muted { color: var(--muted); font-weight: 400; }
+.stand-wrap { padding: 0 8px 12px; display: grid; gap: 12px; }
+
 /* 3D view: another renderer of the same frame, created the first time it's switched on */
 .view3d { position: relative; }
 .view3d[hidden] { display: none; }
@@ -222,6 +262,14 @@ aside { min-width: 0; display: flex; flex-direction: column; background: var(--p
       <div class="team home" id="homeBox"><div class="pts" id="homePts">0</div>
         <div class="name"><div class="abbr" id="homeAbbr">HME</div><div class="full" id="homeName"></div></div>
         <span class="chip"></span></div>
+      <div class="series-line" id="seriesLine" hidden></div>
+    </div>
+    <div class="cboard" id="cboard" hidden aria-label="Three-Point Contest">
+      <div><div class="cb-stage" id="cbStage"></div><div class="cb-name" id="cbName"></div><div class="cb-team" id="cbTeam"></div></div>
+      <div class="cb-score"><span class="cb-pts" id="cbPts">0</span><span class="cb-max">/ 40</span></div>
+      <div class="cb-clock"><div class="label">Time</div><span class="sc" id="cbClock">70.0</span></div>
+      <div class="cb-racks" id="cbRacks"></div>
+      <div class="cb-banner" id="cbBanner" role="status" hidden></div>
     </div>
     <div class="court-wrap"><canvas id="court" width="1000" height="560" aria-label="Court with players"></canvas>
       <div class="view3d" id="view3d" hidden><canvas id="court3d" aria-label="3D court with players"></canvas>
@@ -283,12 +331,14 @@ aside { min-width: 0; display: flex; flex-direction: column; background: var(--p
   <aside>
     <div class="tabs" role="tablist" aria-label="Match panels">
       <button type="button" role="tab" data-pane="coachCard" hidden>Coach</button>
+      <button type="button" role="tab" data-pane="standPane" hidden>Standings</button>
       <button type="button" role="tab" data-pane="pbpPane">Play-by-play</button>
       <button type="button" role="tab" data-pane="boxCard" hidden>Box score</button>
       <button type="button" role="tab" data-pane="floorPane">On the floor</button>
       <button type="button" role="tab" data-pane="aboutPane">About</button>
     </div>
     <section class="pane" role="tabpanel" id="coachCard" hidden><div class="coach" id="coach"></div></section>
+    <section class="pane" role="tabpanel" id="standPane" hidden><div class="stand-wrap" id="standings"></div></section>
     <section class="pane" role="tabpanel" id="pbpPane"><ol class="log" id="log"></ol></section>
     <section class="pane" role="tabpanel" id="boxCard" hidden><div class="tablewrap" id="boxScore"></div></section>
     <section class="pane" role="tabpanel" id="floorPane" hidden><div class="lineups" id="lineups"></div></section>
@@ -320,12 +370,16 @@ window.GAME = /*GAME_DATA*/null;
   // open court too (y up to 94, the far baseline).
   const W = 50, L = 47, FULL = 94, PAD = 2;
   const FULLGAME = !!G.fullgame;
+  // The Three-Point Contest (G.contest): one shooter's round per "possession", at the left
+  // basket; the 2D court shows that end only, and the contest board replaces the scoreboard.
+  const CONTEST = G.contest || null;
+  const SPAN = CONTEST ? L + PAD * 2 + 12 : FULL + PAD * 2;    // court feet across the 2D canvas
   // The whole court, lying sideways as on TV. Each team attacks one basket (they swap at
   // halftime), so possessions flow into each other instead of the picture flipping round.
   // Frames are in the attacking team's coordinates (x across, 0 at the middle; y from the
   // basket it attacks); toCourt() turns them into "left basket" court feet.
   let scale = 1;
-  const ASPECT = (FULL + PAD * 2) / (W + PAD * 2);
+  const ASPECT = SPAN / (W + PAD * 2);
   function fit() {
     const wrap = canvas.parentElement;
     const ratio = Math.min(window.devicePixelRatio || 1, 2);
@@ -341,7 +395,7 @@ window.GAME = /*GAME_DATA*/null;
     canvas.height = Math.round(cssH * ratio);
     canvas.style.width = cssW + "px";
     canvas.style.height = cssH + "px";
-    scale = canvas.width / (FULL + PAD * 2);
+    scale = canvas.width / SPAN;
     if (view3d) view3d.resize(cssW, cssH);
   }
   function attacksLeft(p) {               // home goes left in the first half, right after it
@@ -421,6 +475,14 @@ window.GAME = /*GAME_DATA*/null;
   const roster = { home: G.home.players.map((p) => ({ ...p, side: "home" })),
                    away: G.away.players.map((p) => ({ ...p, side: "away" })) };
   const DEFAULT_LINEUP = [0, 1, 2, 3, 4, 0, 1, 2, 3, 4];
+  // How many players a possession's frames carry: ten, or fewer ("n": the contest's one shooter).
+  const NP = (p) => p.n || 10;
+  // What the arena's boards call the two sides: the teams, or (contest) the shooter and the score to beat.
+  function boardNames() {
+    if (!CONTEST) return { title: G.home.name, home: G.home.abbr, away: G.away.abbr };
+    const w = roster.home[P[poss].contest.shooter];
+    return { title: w.name, home: w.name.split(" ").slice(-1)[0].toUpperCase(), away: "BEST" };
+  }
   function lineupAt(p, i) {
     let lu = DEFAULT_LINEUP;
     for (const [at, l] of (p.lineups || [])) if (at <= i) lu = l;
@@ -450,7 +512,7 @@ window.GAME = /*GAME_DATA*/null;
   function positions(p, i, a, b, k) {
     const lu = lineupAt(p, i);
     const out = {};
-    for (let n = 0; n < 10; n++) {
+    for (let n = 0; n < NP(p); n++) {
       const key = (n < 5 ? "h" : "a") + lu[n];
       out[key] = toCourt(p, lerp(a[6 + n * 2], b[6 + n * 2], k) / 10, lerp(a[7 + n * 2], b[7 + n * 2], k) / 10);
     }
@@ -480,6 +542,7 @@ window.GAME = /*GAME_DATA*/null;
     if (skipText && t < 2.0) setText("callText", skipText);       // what the highlights skipped
     $("homeBox").classList.toggle("off", p.offense === "home");
     $("awayBox").classList.toggle("off", p.offense === "away");
+    if (CONTEST) updateContest(p, i + k, lerp(a[1], b[1], k), score[0]);
     updateLog(i);
   }
 
@@ -490,8 +553,9 @@ window.GAME = /*GAME_DATA*/null;
     const lu = lineupAt(p, i);
     const showNames = $("names").checked;
     const r = Math.max(1.15 * scale, 9.5 * Math.min(window.devicePixelRatio || 1, 2));   // stay tappable-size on phones
+    if (CONTEST) drawContest2D(p, i + k, r);
     // players
-    for (let n = 0; n < 10; n++) {
+    for (let n = 0; n < NP(p); n++) {
       const key = (n < 5 ? "h" : "a") + lu[n];
       let [x, y] = now.out[key];
       if (g > 0 && trans.from.out[key]) {
@@ -529,8 +593,9 @@ window.GAME = /*GAME_DATA*/null;
     ctx.beginPath(); ctx.ellipse(SX(bx, by), SY(bx, by), 0.55 * scale, 0.4 * scale, 0, 0, 2 * Math.PI);
     ctx.fillStyle = "rgba(0,0,0,0.25)"; ctx.fill();
     ctx.beginPath(); ctx.arc(SX(bx, by), SY(bx, by) - lift, (0.55 + bz * 0.03) * scale, 0, 2 * Math.PI);
-    ctx.fillStyle = colors.accent; ctx.fill();
-    ctx.lineWidth = Math.max(1, scale * 0.08); ctx.strokeStyle = "rgba(0,0,0,0.55)"; ctx.stroke();
+    const [ballFill, ballEdge] = CONTEST ? ballStyle(contestBallValue(p, i + k)) : [colors.accent, "rgba(0,0,0,0.55)"];
+    ctx.fillStyle = ballFill; ctx.fill();
+    ctx.lineWidth = Math.max(1, scale * 0.08); ctx.strokeStyle = ballEdge; ctx.stroke();
     // a cut (highlights skipping ahead, halftime): dip through the court colour
     if (trans && trans.kind === "fade") {
       const v = trans.progress < 0.5 ? trans.progress * 2 : (1 - trans.progress) * 2;
@@ -555,6 +620,10 @@ window.GAME = /*GAME_DATA*/null;
       const when = FULLGAME && p.frames[0].length > 26 ? `${periodName(p.period)} ${clockText(p.frames[0][26])} · ` : "";
       head.lastChild.textContent = `${when}${G[p.offense].abbr} ball · ${G.away.abbr} ${p.end_score[1]}, ${G.home.abbr} ${p.end_score[0]}`;
       if (q === poss) head.lastChild.textContent = `${when}${G[p.offense].abbr} ball`;
+      if (CONTEST) {                     // a shooter's round: who, which round, and (once done) his score
+        const c = p.contest, who = roster.home[c.shooter];
+        head.lastChild.textContent = `${c.label} · ${who.name}${q < poss ? ": " + c.points : ""}`;
+      }
       if (p.transition) { const bd = document.createElement("span"); bd.className = "badge"; bd.textContent = "transition"; head.lastChild.appendChild(bd); }
       log.appendChild(head);
       const evs = q < poss ? p.events : p.events.filter((e) => e[0] <= i);
@@ -656,7 +725,7 @@ window.GAME = /*GAME_DATA*/null;
     $("scrub").value = poss;
     $("possLabel").textContent = `${poss + 1} / ${P.length}`;
     document.querySelectorAll("#periods button").forEach((el) =>
-      el.setAttribute("aria-pressed", String(+el.dataset.period === P[poss].period)));
+      el.setAttribute("aria-pressed", String(el.dataset.stage ? el.dataset.stage === P[poss].contest.stage : +el.dataset.period === P[poss].period)));
     drawFrame();
   }
   function tick(ts) {
@@ -718,6 +787,19 @@ window.GAME = /*GAME_DATA*/null;
   // ---- UI
   $("homeAbbr").textContent = G.home.abbr; $("homeName").textContent = G.home.name;
   $("awayAbbr").textContent = G.away.abbr; $("awayName").textContent = G.away.name;
+  // Playoff games: the series as it stood before tip-off, then the result at the final buzzer.
+  function seriesLine(fin) {
+    const s = G.series;
+    if (!s) return;
+    let h = s.home_wins, a = s.away_wins;
+    if (fin) { if (fin[0] > fin[1]) h++; else if (fin[1] > fin[0]) a++; }
+    const lead = h > a ? s.home : s.away, hi = Math.max(h, a), lo = Math.min(h, a);
+    const status = s.play_in ? (h || a ? `${lead} wins` : s.status)
+      : h === a ? `Series tied ${h}–${a}` : `${lead} ${hi >= s.wins_needed ? "wins" : "leads"} ${hi}–${lo}`;
+    $("seriesLine").textContent = `${s.title} · ${s.play_in ? s.matchup : "Game " + s.game} · ${status}`;
+    $("seriesLine").hidden = false;
+  }
+  seriesLine(null);
   const lineups = $("lineups");
   let lineupKey = "";
   function updateLineups(p, i) {
@@ -763,7 +845,10 @@ window.GAME = /*GAME_DATA*/null;
   }
   // Live: no spoilers. The box score appears at the final buzzer.
   let boxReady = false;
-  const revealBox = () => { if (boxReady) offerTab("boxCard", true); };
+  const revealBox = () => {
+    if (boxReady) offerTab("boxCard", true);
+    if (!LIVE) seriesLine(G.final || (P.length ? P[P.length - 1].end_score : null));
+  };
   if (G.live) {
     $("about").innerHTML = "<strong>Live.</strong> Your game as it happened, possession by possession. " +
       "The box score appears at the final buzzer (or jump ahead with the quarter buttons).";
@@ -806,6 +891,166 @@ window.GAME = /*GAME_DATA*/null;
   if (G.box) {
     offerTab("boxCard", !G.live);
     buildBox(G.box, G.final);
+  }
+  // ---- Three-Point Contest mode ----------------------------------------------------------
+  // Each possession is one shooter's round; p.contest lists his balls, in course order, as
+  // [kind (0 rack, 1 deep), spot, ball, value, made, pickup frame, release frame, arrival frame].
+  // The course: rack 1, rack 2, deep shot, rack 3, deep shot, rack 4, rack 5 (CONTEST.spots).
+  const DEEP_FILL = "#e6c25a", DEEP_EDGE = "#8a6a10", MONEY_FILL = "#f5f2ea";
+  function courseSlots(c) {                // every ball on the course: [kind, spot, ball, value]
+    const out = [], seen = { rack: 0, deep: 0 };
+    for (const kind of CONTEST.spots.kinds) {
+      const spot = seen[kind]++;
+      if (kind === "deep") out.push([1, spot, 0, 3]);
+      else for (let b = 0; b < 5; b++) out.push([0, spot, b, spot === c.money_rack || b === 4 ? 2 : 1]);
+    }
+    return out;
+  }
+  function ballSlot(kind, spot, b) {       // where a ball waits, court feet in attacking coordinates
+    if (kind === 1) return CONTEST.spots.deep[spot];
+    const [x, y, ux, uy] = CONTEST.spots.racks[spot], o = (b - 2) * 0.8;
+    return [x + o * ux, y + o * uy];
+  }
+  function currentShot(c, f) {             // the ball he has, or last had (index into c.shots)
+    let k = 0;
+    for (let j = 0; j < c.shots.length; j++) if (c.shots[j][5] <= f) k = j;
+    return k;
+  }
+  function contestBallValue(p, f) {
+    const c = p.contest, sh = c.shots[currentShot(c, f)];
+    return sh ? sh[3] : 1;
+  }
+  function ballStyle(value) {              // fill and edge for 1-point, money and deep balls
+    return value === 3 ? [DEEP_FILL, DEEP_EDGE] : value === 2 ? [MONEY_FILL, colors.accent] : [colors.accent, "rgba(0,0,0,0.55)"];
+  }
+  function drawContest2D(p, f, r) {
+    const c = p.contest, taken = new Set();
+    for (const sh of c.shots) if (f >= sh[5]) taken.add(sh[0] + ":" + sh[1] + ":" + sh[2]);
+    const br = Math.max(0.42 * scale, r * 0.42);
+    const ball = (x, y, value) => {
+      const [cx, cy] = toCourt(p, x, y), [fill, edge] = ballStyle(value);
+      ctx.beginPath(); ctx.arc(SX(cx, cy), SY(cx, cy), br, 0, 2 * Math.PI);
+      ctx.fillStyle = fill; ctx.fill();
+      ctx.lineWidth = Math.max(1.2, br * (value === 2 ? 0.45 : 0.25)); ctx.strokeStyle = edge; ctx.stroke();
+    };
+    ctx.lineCap = "round";
+    CONTEST.spots.racks.forEach(([x, y, ux, uy], k) => {            // the rack: a bar the balls sit on
+      const [ax, ay] = toCourt(p, x - 2.0 * ux, y - 2.0 * uy), [bx, by] = toCourt(p, x + 2.0 * ux, y + 2.0 * uy);
+      ctx.beginPath(); ctx.moveTo(SX(ax, ay), SY(ax, ay)); ctx.lineTo(SX(bx, by), SY(bx, by));
+      ctx.strokeStyle = k === c.money_rack ? colors.accent : "rgba(20,22,26,0.55)";
+      ctx.lineWidth = br * 2.6; ctx.stroke();
+    });
+    CONTEST.spots.deep.forEach(([x, y]) => {                          // the deep-shot stands
+      const [cx, cy] = toCourt(p, x, y);
+      ctx.beginPath(); ctx.arc(SX(cx, cy), SY(cx, cy), br * 1.7, 0, 2 * Math.PI);
+      ctx.fillStyle = "rgba(20,22,26,0.45)"; ctx.fill();
+    });
+    ctx.lineCap = "butt";
+    for (const [kind, spot, b, value] of courseSlots(c)) {
+      if (taken.has(kind + ":" + spot + ":" + b)) continue;
+      const [x, y] = ballSlot(kind, spot, b);
+      ball(x, y, value);
+    }
+  }
+  // the board: who is shooting, his score, the clock, every ball on the course
+  let cbKey = "", cbBalls = [], standKey = "";
+  function updateContest(p, f, clock, pts) {
+    const c = p.contest, who = roster.home[c.shooter];
+    setText("cbStage", `${c.label} · shooter ${c.order + 1} of ${c.of}`);
+    setText("cbName", who.name);
+    setText("cbTeam", who.team || "");
+    setText("cbPts", pts);
+    setText("cbClock", clock.toFixed(1));
+    if (cbKey !== poss + ":" + colorsVersion) {                       // a new round: lay the racks out
+      cbKey = poss + ":" + colorsVersion; cbBalls = [];
+      const box = $("cbRacks"); box.textContent = "";
+      let group = null, last = "";
+      for (const [kind, spot, b, value] of courseSlots(c)) {
+        if (kind + ":" + spot !== last) {
+          last = kind + ":" + spot;
+          group = el("span", "cb-rack" + (kind === 0 && spot === c.money_rack ? " money" : ""));
+          group.title = kind === 1 ? "Deep shot: 3 points" : `Rack ${spot + 1}${spot === c.money_rack ? ": all money balls (2 points each)" : ": the last ball is a 2-point money ball"}`;
+          box.appendChild(group);
+        }
+        const i = el("i", value === 3 ? "dp" : value === 2 ? "mb" : "");
+        group.appendChild(i);
+        cbBalls.push({ i, group, cls: "" });
+      }
+      const key = el("span", "cb-key", `Money-ball rack: ${c.money_rack + 1}. ${c.seconds} seconds.`);
+      box.appendChild(key);
+    }
+    const now = currentShot(c, f);
+    cbBalls.forEach((x, j) => {
+      const sh = c.shots[j], base = x.i.className.split(" ")[0];
+      let st = "";
+      if (sh) st = f >= sh[7] ? (sh[4] ? "made" : "miss") : f >= sh[5] ? "up" : "";
+      else if (clock <= 0) st = "left";                                // never shot: the buzzer went
+      const cls = [base === "dp" || base === "mb" ? base : "", st].filter(Boolean).join(" ");
+      if (cls !== x.cls) { x.i.className = cls; x.cls = cls; }
+      x.i.setAttribute("aria-label", st === "made" ? "made" : st === "miss" ? "missed" : "to shoot");
+    });
+    cbBalls.forEach((x) => x.group.classList.remove("now"));
+    if (c.shots[now] && f >= c.shots[now][5] - 5 && cbBalls[now]) cbBalls[now].group.classList.add("now");
+    const lastP = poss === P.length - 1, done = lastP && f >= p.frames.length - 1.5;
+    $("cbBanner").hidden = !done || CONTEST.winner == null;
+    if (done && CONTEST.winner != null) {
+      const w = roster.home[CONTEST.winner];
+      setText("cbBanner", `\u{1F3C6} ${w.name}${w.team ? " (" + w.team + ")" : ""} wins the Three-Point Contest`);
+    }
+    const sk = poss + ":" + pts + ":" + done;
+    if (sk !== standKey) { standKey = sk; renderStandings(pts, done); }
+  }
+  // Standings: every round so far, finished rounds best first; nothing from later rounds (no spoilers)
+  function renderStandings(livePts, done) {
+    const box = $("standings"); box.textContent = "";
+    for (const sg of CONTEST.stages) {
+      if (sg.first > poss) break;
+      const rows = sg.shooters.map((slot, k) => {
+        const at = sg.first + k;
+        return { slot, at, pts: at < poss ? P[at].contest.points : at === poss ? livePts : null };
+      });
+      const complete = rows.every((r) => r.at < poss || (done && r.at === poss));
+      if (complete) rows.sort((a, b) => (b.pts ?? -1) - (a.pts ?? -1) || a.at - b.at);
+      const t = el("table", "stand");
+      const head = el("thead"); const hr = el("tr");
+      hr.append(el("th", null, sg.label + (complete ? "" : " (in progress)")), el("th", null, "")); head.appendChild(hr);
+      const body = el("tbody");
+      for (const r of rows) {
+        const tr = el("tr", r.at === poss && !complete ? "now" : "");
+        const pl = roster.home[r.slot];
+        const name = el("td", null, pl.name + " ");
+        name.appendChild(el("span", "muted", pl.team || ""));
+        tr.append(name, el("td", "n", r.pts === null ? "–" : String(r.pts)));
+        if (done && r.slot === CONTEST.winner && sg === CONTEST.stages[CONTEST.stages.length - 1]) tr.classList.add("win");
+        body.appendChild(tr);
+      }
+      t.append(head, body);
+      box.appendChild(t);
+    }
+    box.appendChild(el("p", "note", "Racks: four 1-point balls and a 2-point money ball; one rack (the shooter's pick) is all money balls; two deep shots worth 3. 40 points is perfect."));
+  }
+  function buildStages() {
+    $("periods").textContent = "";
+    $("periods").setAttribute("aria-label", "Jump to round");
+    for (const sg of CONTEST.stages) {
+      const btn = document.createElement("button");
+      btn.type = "button"; btn.dataset.stage = sg.key; btn.textContent = sg.label;
+      btn.addEventListener("click", () => goTo(sg.first));
+      $("periods").appendChild(btn);
+    }
+  }
+  if (CONTEST) {
+    document.querySelector(".board").hidden = true;
+    $("cboard").hidden = false;
+    offerTab("floorPane", false); offerTab("standPane", true); showTab("standPane");
+    $("prev").setAttribute("aria-label", "Previous shooter"); $("next").setAttribute("aria-label", "Next shooter");
+    $("prev").title = "Previous shooter"; $("next").title = "Next shooter";
+    $("scrub").setAttribute("aria-label", "Shooter");
+    $("about").innerHTML = "<strong>Three-Point Contest.</strong> Five racks round the arc, corner to corner: four " +
+      "1-point balls and a 2-point money ball on each, one rack of money balls where the shooter likes, and two " +
+      "3-point deep shots between the wings and the top. 70 seconds, 40 points at most. The top three of the first " +
+      "round shoot again in the final; a tie is settled by a 30-second shoot-off.";
+    buildStages();
   }
   $("scrub").max = Math.max(0, P.length - 1);
   $("scrub").addEventListener("input", (e) => goTo(+e.target.value));
@@ -864,6 +1109,7 @@ window.GAME = /*GAME_DATA*/null;
   const wrapAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
   const RIM_X = L - 5.25;                                        // world X of the right rim
   const BALL_R = 0.39;                                           // feet: a size 7 ball, 29.5 inches round
+  const RACK_TOP = 3.3 - BALL_R - 0.03;                          // contest racks: the balls sit with their centres 3.3 ft up
 
   // ---- animated players (3D only). One rigged model with motion-capture clips
   // (spatial/assets/player.glb, built by tools/build_player_assets.py), cloned per player.
@@ -1348,7 +1594,7 @@ window.GAME = /*GAME_DATA*/null;
       }
       // a hard stop or cut at speed: plant the foot (found in the frames, not an action)
       const P = CL.plant.marks.release;
-      for (let pl = 0; pl < 10; pl++) {
+      for (let pl = 0; pl < NP(p); pl++) {
         const cx = 6 + 2 * pl, vel = (i) => [(fr[i + 2][cx] - fr[i - 2][cx]) / (40 * dt), (fr[i + 2][cx + 1] - fr[i - 2][cx + 1]) / (40 * dt)];
         for (let i = 5; i < n - 6; i++) {
           const a = vel(i - 3), b = vel(i + 3), sa = Math.hypot(a[0], a[1]), sb = Math.hypot(b[0], b[1]);
@@ -1910,7 +2156,8 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     // ---- live text on the boards
     let boardKey = "";
     function paintBoards(score, period, clock) {
-      const key = score.join("-") + "|" + period + "|" + clock + "|" + colorsVersion;
+      const nm = boardNames();
+      const key = score.join("-") + "|" + period + "|" + clock + "|" + colorsVersion + "|" + nm.title;
       if (key === boardKey) return false;
       boardKey = key;
       const font = colors.font || "sans-serif";
@@ -1919,11 +2166,11 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       x.fillStyle = colors.home; x.fillRect(0, 0, 360, 64);
       x.textBaseline = "middle"; x.textAlign = "center"; x.fillStyle = "#ffffff";
       x.font = `700 40px ${font}`;
-      x.fillText(G.home.name.toUpperCase(), 180, 34, 340);
+      x.fillText(nm.title.toUpperCase(), 180, 34, 340);
       x.fillStyle = colors.away; x.fillRect(372, 8, 8, 48);
       x.fillStyle = colors.home; x.fillRect(644, 8, 8, 48);
       x.fillStyle = "#ffd27a";
-      x.fillText(`${G.away.abbr} ${score[1]}  ·  ${G.home.abbr} ${score[0]}`, 512, 34, 250);
+      x.fillText(`${nm.away} ${score[1]}  ·  ${nm.home} ${score[0]}`, 512, 34, 250);
       x.fillStyle = "#ffffff";
       x.fillText(period ? `${period}  ${clock}` : "LIVE", 840, 34, 340);
       ledTex.needsUpdate = true; tableTex.needsUpdate = true;
@@ -1933,7 +2180,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
         const x0 = 16 + i * 248;
         x.fillStyle = colors[side]; x.fillRect(x0, 16, 232, 52);
         x.fillStyle = "#ffffff"; x.font = `700 40px ${font}`; x.textAlign = "center";
-        x.fillText(G[side].abbr, x0 + 116, 44);
+        x.fillText(nm[side], x0 + 116, 44, 220);
         x.font = `700 104px ${font}`;
         x.fillText(String(score[side === "home" ? 0 : 1]), x0 + 116, 132);
       }
@@ -2010,9 +2257,9 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
         U.uHome.value = react.home * env; U.uAway.value = react.away * env;
         if (t > 3) { react = null; U.uHome.value = U.uAway.value = 0; }
       }
-      const c = fr.length > 26 ? fr[26] : null;
+      const c = fr.length > 26 ? fr[26] : CONTEST ? fr[1] : null;     // (the contest: its 70 seconds)
       const clock = c === null ? "" : c >= 60 ? clockText(c) : "0:" + String(Math.ceil(c)).padStart(2, "0");
-      if (paintBoards(score, c === null ? "" : periodName(p.period), clock)) anim = true;
+      if (paintBoards(score, c === null ? "" : CONTEST ? "3PT" : periodName(p.period), clock)) anim = true;
       scoreboard.visible = level === "full" && camera.position.y < 55;   // never between an overhead camera and the floor
       return anim;
     }
@@ -2236,6 +2483,54 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
     shadow.position.y = 0.04; shadow.renderOrder = 2;
     scene.add(shadow);
 
+    // Three-Point Contest: the racks and the deep-shot stands, each ball shown until he picks it
+    // up; money balls in stripes, deep balls in gold (the ball in play wears its own colours too)
+    let contest3D = null;
+    if (CONTEST) {
+      const tc = document.createElement("canvas"); tc.width = 64; tc.height = 32;
+      const moneyMat = new THREE.MeshLambertMaterial({ map: canvasTex(tc) });
+      const paintMoney = () => {
+        const x = tc.getContext("2d");
+        for (let k = 0; k < 6; k++) { x.fillStyle = k % 2 ? "#f5f2ea" : colors.accent || "#d0661c"; x.fillRect(0, k * 32 / 6, 64, 32 / 6 + 1); }
+        moneyMat.map.needsUpdate = true;
+      };
+      const deepMat = new THREE.MeshLambertMaterial({ color: 0xe6c25a });
+      const standMat = new THREE.MeshLambertMaterial({ color: 0x4a505b });
+      const g = new THREE.SphereGeometry(BALL_R, 16, 12), list = [], p0 = P[0];
+      const world = (x, y) => { const [cx, cy] = toCourt(p0, x, y); return [cy - L, cx]; };   // (as toWorld, below)
+      const add = (mesh, x, y, h) => { const [wx, wz] = world(x, y); mesh.position.set(wx, h, wz); mesh.castShadow = true; scene.add(mesh); return mesh; };
+      CONTEST.spots.racks.forEach(([x, y, ux, uy], spot) => {
+        const stand = add(new THREE.Group(), x, y, 0);              // a tray on two legs
+        stand.rotation.y = Math.atan2(-ux, uy);                        // (court x is world Z, court y world X)
+        const tray = new THREE.Mesh(new THREE.BoxGeometry(4.1, 0.22, 0.85), standMat);
+        tray.position.y = RACK_TOP - 0.11; tray.castShadow = true; stand.add(tray);
+        for (const e of [-1.85, 1.85]) {
+          const leg = new THREE.Mesh(new THREE.BoxGeometry(0.22, RACK_TOP - 0.2, 0.75), standMat);
+          leg.position.set(e, (RACK_TOP - 0.2) / 2, 0); leg.castShadow = true; stand.add(leg);
+        }
+        for (let b = 0; b < 5; b++) {
+          const [bx, by] = ballSlot(0, spot, b);
+          list.push({ mesh: add(new THREE.Mesh(g, ballMat), bx, by, RACK_TOP + BALL_R), kind: 0, spot, b });
+        }
+      });
+      CONTEST.spots.deep.forEach(([x, y], spot) => {
+        add(new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.6, RACK_TOP + 0.3, 12), standMat), x, y, (RACK_TOP + 0.3) / 2);
+        list.push({ mesh: add(new THREE.Mesh(g, deepMat), x, y, RACK_TOP + 0.3 + BALL_R), kind: 1, spot, b: 0 });
+      });
+      let seenTheme = -1;
+      contest3D = (s) => {
+        if (seenTheme !== colorsVersion) { seenTheme = colorsVersion; paintMoney(); }
+        const c = s.p.contest, f = s.time / dt, taken = new Set();
+        for (const sh of c.shots) if (f >= sh[5]) taken.add(sh[0] + ":" + sh[1] + ":" + sh[2]);
+        for (const o of list) {
+          o.mesh.visible = !taken.has(o.kind + ":" + o.spot + ":" + o.b);
+          if (o.kind === 0) o.mesh.material = o.spot === c.money_rack || o.b === 4 ? moneyMat : ballMat;
+        }
+        const v = contestBallValue(s.p, f);
+        ball.material = v === 3 ? deepMat : v === 2 ? moneyMat : ballMat;
+      };
+    }
+
     // the arena (stands, crowd, boards): built the first time it's switched on
     let arena = null, arenaLevel = "off";
     function setArena(lv) {
@@ -2304,6 +2599,10 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
         const cx = Math.max(-L - 6, Math.min(L + 6, bx - sg * 23 * step)), cz = Math.max(-W / 2 - 4, Math.min(W / 2 + 6, bz * 0.85 + 7));
         const v = lookFrom(bx + sg * 6, ty, bz * 0.85, cx, 11 + (step - 1) * 4, cz);
         return { ...v, kT: 3.2, kA: 1.6, swing: true };
+      }
+      if (CONTEST && s.players.length) {             // the contest: halfway between the shooter and the rim, closer in
+        const q = s.players[0], sx = q.y - L, sz = q.x;
+        return { x: (sx - RIM_X) / 2, y: 4, z: sz * 0.3, yaw: 0, pitch: 0.55, dist: 46 * step, kT: reduceMotion ? 4 : 1.3, kA: 4 };
       }
       if (reduceMotion) return { x: 0, y: 3, z: 0, yaw: 0, pitch: 0.42, dist: 92 * step, kT: 2, kA: 4 };
       // Broadcast: high on the near sideline, panning along the court with the ball
@@ -2380,7 +2679,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
       const from = g > 0 && tr && tr.from ? tr.from : null;
       const players = [];
       let holder = null;
-      for (let n = 0; n < 10; n++) {
+      for (let n = 0; n < NP(p); n++) {
         const key = (n < 5 ? "h" : "a") + lu[n];
         const sx = spline(fr, f, 6 + n * 2), sy = spline(fr, f, 7 + n * 2);
         let [x, y] = toCourt(p, sx[0], sy[0]);
@@ -2712,6 +3011,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
         if (grip < 1 && !holderFig) dirty = Math.max(dirty, 1);
       }
       bY = Math.max(BALL_R, bY);
+      if (contest3D) contest3D(st);
       ball.position.set(bX, bY, bZ);
       // a blocker's or contester's hand goes to the ball, now that it is where it will be drawn
       if (useRig) for (const q of st.players) { const f = figures[q.key]; if (f && f.rig && (f.rig.reachW > 0.01 || f.rig.reachFor)) anim.reachBall(f, bX, bY, bZ); }
@@ -3043,6 +3343,7 @@ if (aPart > 2.5) vColor.xyz = color.xyz * mix(vec3(0.07, 0.035, 0.018), vec3(0.5
         renderCoach(true);
         setText("gameClock", "Final");
         setText("homePts", st.home.score); setText("awayPts", st.away.score);
+        seriesLine([st.home.score, st.away.score]);
         setText("callText", `Final: ${st.away.abbr} ${st.away.score}, ${st.home.abbr} ${st.home.score}`);
         const rows = (side) => st[side].players.map((p) => ({ name: p.name, min: p.min, starter: false, pts: p.pts,
           orb: 0, drb: p.reb, ast: p.ast, stl: 0, blk: 0, tov: p.tov, pf: p.pf, fgm: p.fgm, fga: p.fga,

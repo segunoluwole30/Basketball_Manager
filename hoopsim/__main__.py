@@ -2,11 +2,12 @@
 
     python -m hoopsim new    [--seed N] [--teams N] [--out league.db] [--team ABBR]
     python -m hoopsim game   [--seed N] [--pbp]          # one game: box score (+ play-by-play)
-    python -m hoopsim season [--seed N] [--out league.db] # season + playoffs, awards, leaders
+    python -m hoopsim season [--seed N] [--games 82] [--out league.db] # season, awards, playoffs, leaders
     python -m hoopsim career [--seasons 10] [--seed N] [--load league.db] [--out league.db]
     python -m hoopsim play   [--team ABBR] [--load save.db]   # manage a team yourself
     python -m hoopsim watch  [--home ABBR --away ABBR] [--possessions 40]   # spatial prototype in a browser
     python -m hoopsim watch --full [--quarter 4]   # a full spatial game (or one quarter of it)
+    python -m hoopsim watch --contest [--load save.db] [--season 2025]   # a Three-Point Contest
     python -m hoopsim web    [--load save.db] [--port 8000]   # play as GM in your browser
 """
 from __future__ import annotations
@@ -18,6 +19,7 @@ from . import generate_league, load_league, save_league
 from .engine import play_game
 from .models import League, Player, TeamBox
 from .playoffs import ranked, team_records
+from . import awards as season_awards
 from .season import play_full_season, run_offseason
 from .stats import career_per_game, leaders, player_label, totals_from_careers
 
@@ -137,29 +139,30 @@ def cmd_game(args) -> None:
 
 
 def print_standings(league: League) -> None:
-    rec = team_records(league)
-    for conf in sorted({t.conference for t in league.teams.values()}):
-        print(f"{conf:<26}{'W':>4}{'L':>4}{'PCT':>7}{'NET':>7}")
-        for tid in ranked(league, [t.id for t in league.teams.values() if t.conference == conf]):
-            w, l, diff = rec[tid]
-            print(f"{league.teams[tid].full_name:<26}{w:>4}{l:>4}{w / max(1, w + l):>7.3f}"
-                  f"{diff / max(1, w + l):>+7.1f}")
-        print()
+    from .clinch import standings_lines
+    for line in standings_lines(league):
+        print(line)
 
 
 def print_playoffs(league: League) -> None:
-    names = {1: "First round", 2: "Second round", 3: "Third round", 4: "Fourth round"}
+    names = {0: "Play-in", 1: "First round", 2: "Second round", 3: "Third round", 4: "Fourth round"}
     for s in sorted(league.playoffs, key=lambda s: (s.round, s.id)):
         stage = "Finals" if s.conference is None else f"{s.conference} {names.get(s.round, 'round ' + str(s.round))}"
         hi, lo = league.teams[s.high_id].abbreviation, league.teams[s.low_id].abbreviation
         print(f"  {stage:<22} ({s.high_seed}) {hi} {s.high_wins}-{s.low_wins} {lo} ({s.low_seed})")
 
 
+def print_season_awards(league: League, named: dict) -> None:
+    """The regular-season awards, as announced when the regular season ends."""
+    print(f"Regular-season awards ({named['season']}-{(named['season'] + 1) % 100:02d})")
+    for line in season_awards.report(named, league.user_team_id):
+        print(line)
+    print()
+
+
 def print_awards(league: League, summary: dict) -> None:
-    labels = {"mvp": "MVP", "finals_mvp": "Finals MVP", "dpoy": "Defensive POY",
-              "roy": "Rookie of the Year", "sixth_man": "Sixth Man", "mip": "Most Improved"}
-    for key, label in labels.items():
-        print(f"  {label:<20}{player_label(league, summary['awards'].get(key))}")
+    """Finals MVP and the All-Star Weekend (the season's awards come before the playoffs)."""
+    print(f"  {'Finals MVP':<20}{player_label(league, summary['awards'].get('finals_mvp'))}")
     a = summary.get("all_star")
     if a:
         teams = ", ".join(f"{k} {v}" for k, v in a["score"].items())
@@ -182,16 +185,25 @@ def print_leaders(league: League, season: int) -> None:
 def cmd_season(args) -> None:
     league = make_league(args)
     set_engine(league, args)
-    summary = play_full_season(league, random.Random(args.seed))
+    if getattr(args, "games", None):            # a shorter season
+        from .generate import generate_schedule
+        league.games = {}
+        league.rules.games_per_season = args.games
+        generate_schedule(league, random.Random(args.seed))
+
+    def at_awards(named):                       # printed when the regular season ends
+        print_standings(league)
+        print_season_awards(league, named)
+
+    summary = play_full_season(league, random.Random(args.seed), on_awards=at_awards)
     if args.out:
         save_league(league, args.out)
         print(f"Saved to {args.out}\n")
-    print_standings(league)
     print("Playoffs")
     print_playoffs(league)
     champ = league.teams[summary["champion"]]
     print(f"\nChampions: {champ.full_name} (won the finals {summary['finals']})\n")
-    print("Awards")
+    print("Finals and All-Star honours")
     print_awards(league, summary)
     print()
     print_leaders(league, summary["season"])
@@ -259,6 +271,8 @@ def cmd_watch(args) -> None:
 
     anim = "embed" if getattr(args, "animated", False) else None      # 3D: carry the animated players in the page
     league = load_league(args.load) if args.load else generate_league(seed=args.seed)
+    if getattr(args, "contest", False):
+        return _watch_contest(args, league, anim)
     by_abbr = {t.abbreviation.lower(): t.id for t in league.teams.values()}
     ids = sorted(league.teams)
     home, away = ids[0], ids[1]
@@ -303,6 +317,39 @@ def cmd_watch(args) -> None:
         webbrowser.open(Path(path).resolve().as_uri())
 
 
+def _watch_contest(args, league, anim) -> None:
+    """A Three-Point Contest page: the saved league's (this season's, or --season's), or
+    else one shot now with the league's eight best shooters (by rating, and 3P% if the
+    season has started), on --seed."""
+    import webbrowser
+    from pathlib import Path
+
+    from . import allstar
+    from .spatial.contest import page_data
+    from .spatial.export import write_html
+
+    record = allstar.contest_record(league, args.season) if args.load else None
+    season = args.season or league.season
+    if record is None:
+        if args.load and args.season:
+            raise SystemExit(f"no recorded Three-Point Contest for {args.season} in that save")
+        from .stats import season_totals
+        totals = season_totals(league)
+        def shooter(p):
+            t = totals.get(p.id) or {}
+            pct = allstar._season_pct(league, p.id, totals) if t.get("tpa") else None
+            return allstar.contest_skill(p, pct)
+        field = sorted((p for p in league.players.values() if p.team_id is not None and not p.retired),
+                       key=lambda p: -shooter(p))[:8]
+        record = allstar.run_contest(league, [p.id for p in field], random.Random(args.seed), totals)["record"]
+        print("(no contest recorded in this league yet: shot one now with its eight best shooters)")
+    path = write_html(page_data(record, season), args.out, animation=anim)
+    w = next(r for r in record["field"] if r["p"] == record["winner"])
+    print(f"Three-Point Contest {season}: {w['name']} ({w['team']}) wins -> {path.resolve()}")
+    if not args.no_open:
+        webbrowser.open(Path(path).resolve().as_uri())
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="hoopsim")
     sub = ap.add_subparsers(dest="cmd")
@@ -326,6 +373,7 @@ def main() -> None:
     season.add_argument("--teams", type=int, default=12)
     season.add_argument("--league", help="start from a league file (JSON) instead of generating one")
     season.add_argument("--out", help="save the finished season to this file")
+    season.add_argument("--games", type=int, help="games per team (default 82)")
 
     career = sub.add_parser("career", help="simulate many seasons (draft, free agency, ageing...)")
     career.add_argument("--engine", choices=["statistical", "spatial", "hybrid"], help="match engine: statistical (fast, default), spatial (players on a court, ~0.7 s a game) or hybrid (spatial for your team's games only)")
@@ -358,6 +406,9 @@ def main() -> None:
     watch.add_argument("--animated", action="store_true",
                        help="embed the 3D view's animated players in the page (about 1.8 MB more)")
     watch.add_argument("--quarter", type=int, help="with --full: export just this period (5 = first overtime)")
+    watch.add_argument("--contest", action="store_true",
+                       help="the Three-Point Contest: a saved league's (--load), or one shot now by the best shooters")
+    watch.add_argument("--season", type=int, help="with --contest --load: that season's contest (default: this one)")
 
     web = sub.add_parser("web", help="play as general manager in your browser")
     web.add_argument("--load", help="open a saved game")

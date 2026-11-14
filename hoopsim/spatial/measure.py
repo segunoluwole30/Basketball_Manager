@@ -230,7 +230,7 @@ def _fullgame_batch(job: tuple) -> tuple[Counter, list]:
 def collect_fullgames(games: int, seed: int, jobs: int = 1, params=None, model=None,
                       seeds: Optional[list[int]] = None, offset: int = 0) -> dict:
     """``seeds``: spread the games over these leagues (default: league ``seed`` only).
-    ``params``/``model`` are only used in-process (jobs=1)."""
+    ``params``/``model`` are passed to the worker processes as well."""
     if seeds:
         n = len(seeds)
         work = [(sd, 0, games // n + (1 if k < games % n else 0), params, model, offset)
@@ -239,8 +239,6 @@ def collect_fullgames(games: int, seed: int, jobs: int = 1, params=None, model=N
         jobs = 1
     else:
         jobs = max(1, min(jobs, 2, games))             # this machine is shared: at most two processes
-        if params is not None or model is not None:
-            jobs = 1
         per = -(-games // jobs)
         work = [(seed, k * per, min(per, games - k * per), params, model, offset)
                 for k in range(jobs) if games - k * per > 0]
@@ -339,12 +337,17 @@ def main() -> None:
                     help="measure this many full games (pace, scoring, transition, minutes, fouls)")
     ap.add_argument("--jobs", type=int, default=1, help="processes for --games (at most 2)")
     ap.add_argument("--params", help="JSON file of SpatialParams to use instead of the defaults")
+    ap.add_argument("--values-file", help="decision values JSON to use instead of the saved ones")
     args = ap.parse_args()
-    if args.games:
-        report_fullgames(collect_fullgames(args.games, args.seed, args.jobs))
-        return
     model = HEURISTIC if args.values == "heuristic" else default_model()
+    if args.values_file:
+        model = DecisionModel.load(args.values_file)
     params = SpatialParams.load(args.params) if args.params else None
+    if args.games:
+        explicit = args.values_file or args.values == "heuristic"
+        report_fullgames(collect_fullgames(args.games, args.seed, args.jobs, params=params,
+                                           model=model if explicit else None))
+        return
     print(f"Decision values: {model.meta.get('source', '?')}\n")
     report(collect(args.possessions, args.seed, model=model, params=params))
 

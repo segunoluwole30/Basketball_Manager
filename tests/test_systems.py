@@ -125,7 +125,9 @@ class EffectTests(unittest.TestCase):
     def test_spatial_engine_tempo(self):
         fast = self.run_system(n=6, engine="spatial", offense="seven_seconds")
         slow = self.run_system(n=6, engine="spatial", offense="grit_grind")
-        self.assertGreater(fast["poss"], slow["poss"] + 5)
+        # 6 games each: 99.0 against 95.8 possessions with the values retrained in README
+        # "Values that match the engine" (the steadier-leagues dampers had made it ~7).
+        self.assertGreater(fast["poss"], slow["poss"] + 2.5)
 
 
 class AICoachTests(unittest.TestCase):

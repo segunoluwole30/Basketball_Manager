@@ -16,7 +16,8 @@ You're the general manager. During the season:
 | Command | What it does |
 |---|---|
 | `sim [N]`, `week`, `deadline`, `end` | play N days, a week, to the trade deadline, or the rest of the season |
-| `next` | after the regular season: playoffs, awards, then the offseason |
+| `next` | after the regular season (whose awards are printed when it ends): the playoffs, then the offseason |
+| `awards [SEASON]` | the season's awards: winners, finalists and their share of the vote, All-NBA, All-Defensive and All-Rookie teams |
 | `roster [ABBR]`, `player ID` | ratings, scouted potential, contracts, injuries, morale; full scouting report |
 | `lineup`, `start A B C D E`, `minutes ID=MIN`, `auto on/off` | set the starting five (PG..C) and minute targets, or let your assistant |
 | `tactics pace=16 three=14 defense=zone focus=perimeter crash=8 depth=9` | team tactics |
@@ -333,6 +334,15 @@ office** returns to the app. If an AI team makes you a trade offer on the way,
 it stops there, as the normal sim does. A watched game is simulated in full
 before you see it; to make decisions, coach it live instead.
 
+**Playoff games in the viewer.** A playoff game's scoreboard has a line under it
+with the series as it stood at tip-off, such as *East First Round · Game 3 ·
+BOS leads 2–0*. At the final buzzer it changes to the new score (*Series tied
+2–2*, *BOS wins 4–1*). Play-in games show the matchup and what is at stake
+(*East Play-in · 7 v 8 · Winner is the 7 seed*). This works when watching,
+coaching live and replaying. The line is worked out when the page is served, so
+playoff replays saved before it existed show it too, and regular-season games
+have no line.
+
 **Coaching live** (`spatial/live.py`). **🏀 Play live** plays on to your next game
 (regular season or playoffs) and puts you on the bench. The game is simulated one
 possession at a time, only a possession or two ahead of what you're watching, so
@@ -415,14 +425,37 @@ package (`hoopsim/web/static/`), so Node isn't needed to play.
 
 | Screen | What's on it |
 |---|---|
-| **Home** | record, conference standings, next games and recent results, team leaders, injuries, and an inbox: results, injuries, trades, offers from AI teams (accept or decline), season news. The top bar sims a day, a week, to the trade deadline or to the end of the regular season, then runs the playoffs (a day, a round or all). |
+| **Home** | record, conference standings, next games and recent results, team leaders, injuries, and an inbox: results, injuries, trades, offers from AI teams (accept or decline), season news and the awards. The top bar sims a day, a week, to the trade deadline or to the end of the regular season, then runs the playoffs (a day, a round or all). See *Days in the web app* below. However the regular season ends (Next day, Week, To end, Go to this day or a live game), **awards night** opens: a window with every award, its finalists and the All-NBA teams. |
 | **Squad** | sortable roster tables (overview, ratings, stats, contracts) for any team, finances. Click any name for the player card: attributes, scouted potential with its range, scouting notes, ability by position, player instructions, this season's line and a career section: small charts of points, rebounds and assists per game and current ability by season (ability from end-of-season snapshots, plus today's), and a season-by-season table for the regular season and the playoffs. |
 | **Tactics** | starting five by position (with each player's ability at that slot), minutes that must total 240 (with a "balance" helper), the assistant-coach toggle, team tactics and player instructions. |
 | **Transfers** | free agents with their asks and a contract form that shows how you'd pay (cap space, mid-level exception, minimum); a trade builder with live salary-matching and roster feedback and the other team's verdict. |
-| **League** | standings, leaders, schedule and results with box scores (current season), a daily scoreboard, the playoff bracket and past seasons. |
-| **Calendar** | The season a month at a time: your games (home/away, results, **B2B** badges), league games per night, opening night, Thanksgiving, Christmas, the All-Star break, the trade deadline and the playoffs. Click a day for every game on it, and **Sim to this day** to play up to it. See *Schedule* below. |
+| **League** | standings (with clinch and elimination markers, GB, last 10 and streak; click a team for its magic numbers), leaders, schedule and results with box scores (current season), a daily scoreboard, the playoff bracket (see *Playoff bracket* below), the **Awards** (this season's once the regular season is over, and every past season's) and past seasons (History links to each season's awards). |
+| **Calendar** | The season a month at a time: your games (home/away, results, **B2B** badges), league games per night, opening night, Thanksgiving, Christmas, the All-Star break, the trade deadline and the playoffs. Click a day for every game on it, and **Go to this day** to play every day before it and stop at its start. See *Schedule* below. |
 | **Stats** | *League leaders*: per-game points, rebounds, assists, steals and blocks, FG%, 3P% and FT%, and advanced lists (true shooting %, usage %, share of team FGA, points/rebounds/assists per 36), filtered by season, regular season or playoffs, and position; your players are highlighted. To qualify a player needs 60% of the most games any team has played (4 games in the playoffs), plus 5 FGA, 2 3PA or 2 FTA per game for the shooting lists and 15 minutes per game for the rate lists. *Team stats*: a sortable table of points for and against, pace, offensive, defensive and net rating and the four factors for offence and defence (eFG%, TOV%, ORB%/DRB%, FT rate, 3PA rate). *Game log*: every game a team has played this season with the score, running record and top scorer, linked to the box score and, for recorded games, the viewer. |
 | **Offseason** | one screen per step: team options, re-signing (asks and the chance he stays), the draft board pick by pick, every free-agency round, trade offers and roster cuts. Any decision, a whole step or the rest of the summer can be handed to your assistant. |
+
+**Days in the web app.** The league's date is the last day that is done; the
+top bar shows it, Home shows it with its day number, and the Calendar outlines it
+(the next day has a dashed outline). Every control moves the date one calendar
+day at a time:
+
+- **Next day** plays exactly the next day: all of that day's games, yours if you
+  have one, and the date moves by one. On a day you don't play it plays the
+  league's games; on a day with no games at all (the week before opening night,
+  Thanksgiving, Christmas Eve, the All-Star break, off days between playoff games)
+  only the date moves. Its tooltip says what the next day holds, and the toast
+  what happened (your result, "no game for you", or "no games"). Off days draw no
+  random numbers, so going a day at a time plays the same season as **To end**.
+- **Week** plays the next seven days, **To deadline** through the trade deadline,
+  **To end** the rest of the regular season. In the playoffs **Next day** is one
+  day too (games are every other day), and **Round** and **All playoffs** play on.
+- **Go to this day** (Calendar) plays every day *before* the chosen one and stops
+  at its start, FM-style: that day's games, yours included, are still to play.
+  Play your game live, watch it, or press **Next day** to sim it. Picking the day
+  after today does nothing (you're already there); a played day is refused.
+- **▶ Watch** and **🏀 Play live** play on to your next game; after **Go to this
+  day** that's the game on the chosen day.
+- A trade offer from an AI team stops any of them after the day it arrives.
 
 The offseason runs as resumable steps (`start_offseason`, `offseason_pending`,
 `answer_offseason` in `season.py`); `run_offseason` drives the same steps with a
@@ -581,16 +614,18 @@ and training refits them so each value predicts the points the possession
 actually went on to score:
 
 ```bash
-python -m hoopsim.spatial.train                 # 5 rounds x 20,000 possessions, ~2.5 min
+python -m hoopsim.spatial.train --resume --check 64   # 12 rounds x 120 full games (~15 min), then checks
+python -m hoopsim.spatial.check_values                # do the saved values match the engine?
 python -m hoopsim.spatial.measure               # learned values (default)
 python -m hoopsim.spatial.measure --values heuristic
 ```
 
-Each round plays possessions with the current values, tries a random option 10–25%
-of the time so every option gets tested, records every decision with the
-possession's eventual points, and refits by least squares (pulled toward the
-previous weights). It trains on leagues 100–102 and is tested on leagues 0–2. It's
-deterministic, and the results are stable across extra rounds.
+Each round plays games with the current values, tries a random option 10–25%
+of the time so every option gets tested, records every decision with the points
+its possession went on to score, and refits by least squares. It trains on leagues
+100–102 and is tested on leagues 0–2. It's deterministic. Training used to play
+stand-alone half-court possessions and jump to each round's fit; it now plays full
+games and takes damped steps (see *Values that match the engine*).
 
 What it learned:
 - A shot is worth about 0.9–1.05 × its expected points + 0.2–0.4 (the
@@ -1076,7 +1111,8 @@ times a game:
 * **Offensive rebounds:** the rebounder snapped up to 9 ft onto the ball.
 
 Now everyone walks or jogs to the lane in dead-ball time, and the rebounder runs to the
-loose ball. Teleports fell to about 0.1 a game, with box-score calibration unchanged.
+loose ball. Teleports fell to about 0.1 a game, with box-score calibration unchanged
+(and to none in 200 games after "Last audit flags").
 
 ### Patient offence, human movement and spacing
 The next audit flagged hurried offences (1.6 passes per half-court possession, 7.6% of
@@ -1551,6 +1587,324 @@ Still off or worth watching:
   and .56+ in the stronger-shooting leagues. Taking it down (`three_make_adj`) costs
   points per 100, which is already short in seed 0.
 
+### Values that match the engine
+The decision values (*Learned decision values*) were last trained before "Defence that
+recovers" was finished. "Shots with room", "Star scoring" and "Steadier leagues" were all
+calibrated with those stale values, because retraining broke the calibration: a 3-round
+resumed retrain gave seeds 0 / 1 / 2 11 / 13 / 11 of 13 (seed 0: 106.8 points, 110.1 per
+100), and running the same fits on full games for five rounds took the three share to
+.436 / .445 / .460 at 112-113 points per 100. So no change that needed a retrain could be
+made safely.
+
+**Why.** The engine's outcomes were not the problem. By zone, full games (seeds 0-2) were
+close to the NBA: rim .660 (NBA .666), short paint .468 (.449), mid-range .444 (.423),
+threes .370 (.360). The problem was the values and how they were trained:
+* **The values were not worth what their options scored.** Recording every decision in
+  full games with the points its possession went on to score, the stale values overrated
+  post-ups by 0.32, holding by 0.14, pick-and-rolls by 0.11 and drives by 0.10, against
+  0.04 for catch-and-shoot threes.
+* **The shots the players valued were not the shots the engine played.** A decision saw
+  make chance x points. The engine also fouls (23% of rim attempts, with free throws) and
+  blocks. So a rim attempt was valued at 1.28 points, made 0.97 from the floor and scored
+  1.41 in all. A pull-up's contest was guessed from the man's current gap: mid-range
+  pull-ups were valued as if he'd be 9.2 ft away and went up 3.6 ft contested, step-back
+  threes 6.1 ft against 3.9. Both were valued 0.2-0.28 points over what they made.
+  Least squares can't fit a value that is right for threes and wrong for twos in
+  different directions, so the weight on expected points fell with every retrain
+  (0.94 -> 0.69). Shot quality counted for less and less.
+* **Training didn't play the game.** It played stand-alone half-court possessions between
+  starters: threes were 54% of shots there (40% in full games), with no transition flows,
+  early offence, inbounds, fatigue, bench or ends of quarters.
+* **Training didn't converge.** Each round jumped to the least-squares fit of the last
+  round's games. Options that are nearly equal swapped back and forth: in full games,
+  holding the ball was worth 1.08, 1.03, 1.07, 0.97, 1.10, 0.87, 1.07, 0.88 over eight
+  rounds (on one fixed sample of decisions), and points per possession went 1.12, 1.10,
+  1.12, 1.10, 1.14, 1.09, 1.14, 1.07. Where a retrain stopped decided the calibration.
+* **Exploring spoiled the returns.** 10% of training decisions are random. Every decision
+  before a random one in its possession was credited with its bad outcome, so keeping
+  the ball alive looked worse than it is, and shooting looked better.
+
+**Changes.** In the payoff model (all in `SpatialParams`, off in `LEGACY_PARAMS`, which
+still reproduces the legacy pin):
+* **Whole-shot values** (`shot_value_whole`): a shot's expected points include the block
+  chance and the shooting foul with its free throws (an and-one or two or three shots),
+  computed by the same code `take_shot` uses (`block_chance`, `foul_chance`,
+  `free_throw_pct`).
+* **Pull-up contests predicted** (`pullup_contest`): from where his man is and how fast
+  he gets to the pull-up point, stopping a stride off as on any jumper, never more room
+  than the old guess. Predicted against actual: 4.1 against 4.15 ft (mid-range), 4.0 against 3.8 ft (threes).
+* **Holding knows whether the defence is set**: a `flow` feature for the hold option (a
+  flow out of transition). Holding in a flow was overrated by 0.21.
+
+In training (`train.py`, `fullgame.py`):
+* **Full games** (`--full-games`, 120 per round by default) with a recorder in `FullGame`:
+  a decision is credited with what the possession scored from its half-court segment on
+  (a non-shooting foul restarts the half court; the possession goes on).
+* **On-policy returns**: decisions before a random one in the same possession aren't
+  recorded (`HalfCourtGame.on_policy_decisions`).
+* **Damped steps** (`--step 0.4`): values move 40% of the way to each round's fit, and
+  the last 6 rounds are averaged. Each round prints every option's value minus what it
+  scored; it settles within about ±0.03 (post-ups ±0.1, a few hundred a round).
+* `train` defaults are now `--rounds 12 --full-games 120 --step 0.4 --average 6`
+  (about 15 minutes). `--full-games 0` is the old half-court training.
+
+Re-centred for fresh values (outcomes toward the NBA, plus two decision knobs the stale
+values had been compensating):
+
+| | before | after | why |
+|---|---|---|---|
+| `rim_make_adj` | -0.025 | -0.015 | rim .660 against .666 |
+| `short_make_adj` (new) | - | -0.02 | short paint .468 against .449 |
+| `three_make_adj` | -0.023 | -0.026 | fresh values shoot better threes |
+| `dribble_contest` (new) | - | 0.6 | honest pull-ups went in at .38 / .29 from mid / three (NBA ~.41 / ~.33): a man giving ground contests a pull-up at 0.6 of a closeout |
+| `foul_scale` | 1.05 | 1.0 | whole-shot values like contact; fouls had risen to 20.5 |
+| `patience` | 0.5 | 0.45 | fresh values hold longer; pace had fallen ~1.5 |
+| `patience_three` | 0.9 | 1.2 | 0.9 offset stale values that underrated threes; fresh values took .43-.46 (1.3: .36-.39) |
+
+**The retrain.** Resumed from the previous values: 16 rounds of 120 games while the
+payoff model and training changed, then 10 + 10 + 10 + 10 + 8 resumed rounds as the
+re-centring moved (`train --start ... --rounds N`), the last 8 under the final settings
+(the committed file is their last 6 averaged).
+Over the last rounds every option's value minus scored stays within
+±0.03 for every option but post-ups (±0.1). Two independent 6-round continuations of the same settings gave option
+values within 0.01 of each other (post-ups 0.03); their 64-game measures differ by about
+what the measure's own noise is (±1.2 points per 100, ±.007 eFG).
+
+Full games, 64 per league (`measure --games 64 --jobs 2`, seeds 0 / 1 / 2 / 3 / 4). "Before" is
+the stale values with the engine as it was; "after" is the retrained values with the
+changes above:
+
+| | before | after | NBA 2025-26 |
+|---|---|---|---|
+| pace | 98.2 / 100.1 / 101.7 / 101.4 / 100.3 | 97.4 / 98.5 / 100.4 / 100.6 / 100.0 | 99.4 |
+| points | 111.6 / 116.7 / 115.2 / 115.8 / 115.3 | 111.2 / 113.4 / 114.0 / 114.4 / 115.5 | 115.6 |
+| points per 100 | 113.3 / 116.4 / 113.3 / 114.2 / 114.7 | 113.0 / 115.2 / 113.4 / 113.5 / 114.7 | 115.8 |
+| transition share | .155 / .158 / .165 / .163 / .155 | .152 / .156 / .165 / .161 / .151 | .150 |
+| transition points per play | 1.22 / 1.19 / 1.27 / 1.25 / 1.26 | 1.23 / 1.23 / 1.20 / 1.17 / 1.17 | 1.26 |
+| FTA per 100 | 25.4 / 24.6 / 23.0 / 23.5 / 24.2 | 23.7 / 24.2 / 23.1 / 22.4 / 24.0 | 23.6 |
+| fouls per 100 | 20.7 / 19.7 / 19.5 / 19.0 / 19.2 | 19.3 / 19.3 / 18.9 / 18.4 / 19.1 | 20.0 |
+| turnovers per 100 | 14.7 / 14.2 / 14.5 / 13.7 / 14.2 | 14.4 / 14.2 / 14.7 / 14.1 / 14.4 | 14.6 |
+| three share | .400 / .420 / .429 / .434 / .413 | .403 / .419 / .426 / .436 / .420 | .415 |
+| eFG | .549 / .558 / .561 / .554 / .555 | .550 / .552 / .554 / .551 / .561 | .546 |
+| 3P% | .37 / .37 / .36 / .36 / .36 | .35 / .37 / .36 / .36 / .37 | .36 |
+| ORB% | .255 / .279 / .226 / .245 / .258 | .256 / .278 / .252 / .252 / .245 | .260 |
+| within tolerance (of 13) | 13 / 12 / 12 / 13 / 13 | 12 / 13 / 13 / 12 / 12 | |
+
+Seed means (0-2) stay 13/13: pace 98.8, points 112.9, points per 100 113.9, transition
+.158 at 1.22, three share .416, eFG .552, ORB% .262, turnovers 14.4, FTA 23.7, fouls 19.2.
+The misses: seed 0's points (111.2 against a floor of 111.6) and transition points per play
+in seeds 3 and 4 (1.17). Pace is about a possession lower than before (fresh values
+hold a little longer). A team's top scorer per game is 25.6-29.7 (27.0-30.7 before).
+Games take as long as before: 1.64 s against 1.62 s for the previous engine and values,
+side by side on the same (busy) machine. The statistical engine is untouched
+(`python -m hoopsim.calibrate` 17/17).
+
+The values retrained the old way would have been: 3 resumed half-court rounds, seeds 0 /
+1 / 2 11 / 13 / 11 (points 106.8 / 112.7 / 113.0); five undamped full-game rounds,
+three share .436 / .445 / .460.
+
+The realism audit (`audit --games 48 --seed 7`) goes from 24 ok / 1 watch / 1 off to
+24 / 2 / 0. Rim / short / mid / three 30.6 / 18.1 / 9.9 / 41.4% (30.7 / 17.3 / 10.1 /
+42.0), corner threes 24.8% (25.3), early shots 14.6% (14.0), late 19.8%, passes 3.10.
+Teleports read 0.00 per game this sample (they're a separate task) and distance per player is still a
+watch. One shot row went from ok to watch: very tight shots (0-2 ft) 11.8% against
+10.0% (NBA 5-11%). Valued whole, a contested finish now counts its free throws, and
+players take a few more of them.
+
+**The guard.**
+* `python -m hoopsim.spatial.check_values` plays 36 full games on the measure leagues
+  (no exploring) and compares every option's mean value with what it scored, failing
+  any off by more than 0.10 (options with fewer than 600 decisions aren't judged).
+  `--measure 64` also runs the full-game measure on seeds 0-2 and lists every target
+  out of tolerance, per seed and on the seed means.
+* `python -m hoopsim.spatial.train --check 64` runs both after training and says so if
+  the new values move the engine out of calibration.
+* `tests/test_values_match.py` (`ConvergedTests`, ~25 s): the committed values must match
+  the engine on 20 games within 0.12 per option, and twos and threes within 0.12 of each
+  other. An engine change that changes what options are worth fails it until the values
+  are retrained. The old values failed it on five options, by 0.13-0.28 (shots, drives
+  carried on, post-ups, holding, twos).
+
+Tests: `tests/test_values_match.py` also covers the switches (off in `LEGACY_PARAMS`), the
+whole-shot formula against its parts, a pull-up into a sagging man, pull-ups never given
+more room than the old guess, the dribble contest, the short-paint adjustment, the hold
+`flow` feature, on-policy recording, the full-game recorder and the damped step.
+Re-measured with the new values: the pull-up value test uses the predicted contest; set plays
+add 7.8% passes (test floor 8% -> 6%); early shots on seed 3 are 13.7% (floor 14% -> 13%;
+audit 14.6%); Seven Seconds against Grit and Grind is 99.0 against 95.8 possessions in six
+games each (gap required 5 -> 2.5). `measure --values-file` and `train --start/--out` take any values file; `measure --games`
+passes values and params to its worker processes.
+
+Still off or worth watching:
+* Post-ups are rare in the measure leagues and noisy: the values rate them 0.1-0.17 over
+  what they score there (on the training leagues within ±0.1).
+* Shot values still miss by zone in ways a linear model with one `is_three` flag can't
+  see: short-paint shots score ~0.1 more than valued, catch-and-shoot mid-range ~0.1
+  less (offensive rebounds of short misses).
+* Points per 100 still sit 1-2 below the NBA's 115.8 with eFG at or above it: the measure
+  counts about 2% more possessions than Basketball-Reference's formula.
+
+### Last audit flags
+After "Values that match the engine" the audit (`audit --games 48`) read 24 ok / 2 watch /
+0 off on seed 7 and 23 / 2 / 1 on seed 8: very tight shots 11.8 / 11.7% (NBA 5-11%),
+distance per player 3.73 / 3.74 miles per 48 minutes (NBA 3.1-3.6) and teleports 0.00 /
+0.10 a game (NBA 0). The spatial engine also ignored the foul-drawing rating (see "Foul
+drawing and the top scorers"). Each was traced to its cause.
+
+**Foul drawing** (`SpatialParams.foul_drawing` 0.10, `foul_drawing_centre` 11.8; off in
+`LEGACY_PARAMS`). As in the statistical engine, each point of the shooter's
+`drawing_fouls` rating multiplies his shooting-foul odds by exp(0.10), capped at 0.6 a
+shot. It's in `foul_chance`, which `take_shot` and the whole-shot values both use, so a
+good foul drawer's contested finish is worth more to him and he takes more of them. The
+foul-weighted average rating in spatial games is ~12.0; the centre is a little lower
+because the paint closeouts below take some contact out. Measure league 0, 180 games:
+
+| | before | after | NBA 2025-26 |
+|---|---|---|---|
+| team FTA per 100 | 23.6 | 24.7 | 23.6 |
+| top 10 scorers: points / FTA per game | 25.4 / 3.9 | 26.5 / 5.5 | 28.8 / 7.8 |
+| 11th-30th scorers: FTA per game | 3.5 | 3.7 | |
+
+The top scorers get to the line 40% more often, but still less than in the statistical
+engine (~7) or the NBA: spatial stars take fewer shots at the rim than their real
+counterparts. Team free throws sit about one per 100 above where they were (inside the
+tolerance); centring them back exactly would take ~0.8 points a game from leagues
+already at the bottom of the points range.
+
+**Very tight shots.** Every attempt was logged with how it came about (its source,
+whether it was gathered, the closest defender 0.3 and 0.6 s earlier):
+* 37-42% of finishes off a catch at the dunker spot went up with the man touching the
+  shooter, and a third of cuts. The shooter's own man was the closest defender 93% of
+  the time, and he had been on him since before the catch.
+* The cause was the closeout on the catch: any catch inside 20 ft drew a closeout to
+  2.5 ft off the catch point, rim-side. At the dunker spot that's a defender in the
+  catcher's body, and the gather toward the rim went into him.
+* Not the cause (each tried on the same 48 games): the predicted contests (the shoot
+  decision predicts 2.6-3.0 ft for these finishes, the actual is 2.9-3.1), the angled
+  gathers (ruling out release points within 2.2 ft instead of 1.6: 11.5 → 11.1%), an
+  earlier pick-up on drives (`gather_contact` 1.2: no change), fewer fouls at the rim
+  (rim 0.42 → 0.32 with more in the short paint: 11.6 → 11.1%), off-ball defenders
+  playing further off big men (3-4 ft: 11.3 / 11.0%).
+
+The fix: a defender recovering to a catch in the paint (within 10 ft of the rim,
+`closeout_paint_range`) walls up between the man and the rim 3.5 ft off the catch, a
+step away with his arms up (`closeout_paint` 3.5; 2.5 as before from 10 to 20 ft; 0:
+off). The finisher goes up into a contest instead of a collision. Dunker-spot finishes
+very tight: 42 / 37% (rim / short paint) → 24 / 14%. At 4 ft the short-paint share rose
+to 20.3% (floaters over the wall); 3.5 ft keeps it at 17.9%.
+
+**Distance run.** Every frame split by phase and role (24 games, seed 7; miles per 48
+minutes, with mph):
+
+| | before | after |
+|---|---|---|
+| half court: offence / defence | 3.09 / 3.29 | 3.09 / 3.26 |
+| open court: offence / defence | 4.59 / 5.37 (6.7 mph) | 4.61 / 4.38 (5.5 mph) |
+| dead ball: offence / defence | 2.42 / 2.97 | 2.44 / 2.86 |
+| all | 3.69 | 3.51 |
+
+Jitter wasn't it: 0.2% of the distance was back-and-forth between frames, and body
+separation 2%. Substitutions take the man's spot and don't move anyone. The extra
+running was the defence getting back on walk-ups: each defender ran 67 ft to cover 53
+(attackers 51 for 46). Three reasons, fixed in `OpenCourtTuning`:
+* **No brakes** (`brake` 0.8, from `brake_range` 30 ft): open-court movement only eased
+  in, so a sprinting defender ran 3-6 ft past his spot and came back. On walk-ups (and
+  dead-ball throw-ins) defenders now brake in time, as in the half court (where braking starts 10 ft out,
+  too late to stop a full sprint). On a push they sprint at the ball as before.
+* **A rim run on every walk-up** (`walkup_rim` False): the deepest defender sprinted to
+  7 ft from the rim, often under it, then came 15-20 ft back out to his man. Now only a
+  push sends one to the rim; on a walk-up he picks up a man like the others.
+* **Jobs re-picked every 0.3 s** (`role_stick` 4 ft): the nearest defender to each
+  attacker changed as they ran, and every swap was a cut across the floor. On a walk-up
+  a defender keeps his man unless another is 4 ft better placed, and the half court
+  starts with those matchups (after a push, scrambled matchups as before).
+
+Walk-up defenders now run 53 ft for 47.
+
+**Teleports** (moves over 32 ft/s between frames). Each one was printed with the frames
+around it: 6 in 48 games of seed 8, then 200 games on other leagues.
+* **Fouls in the penalty** (5 of 6): the clock hook called the free throws after the
+  tick's movement but before its frame, so the first frame of the walk to the lane
+  carried two ticks of running. The tick's frame is now recorded first.
+* **The inbounder after a make** (1 of 6): he was put back on the floor at the catch, so
+  if he had already stepped in during the throw he jumped 4-6 ft back to the baseline.
+  He now walks out and back in (`OpenCourt.walk`, as dead-ball throw-ins already did).
+* **A shove on a sprinter** (1 in 200 games once those were fixed): body separation
+  pushed a defender sprinting back at 26 ft/s another 0.6 ft. A shove now only takes
+  what his own step leaves under 30 ft/s (`MAX_STEP_SPEED`); any overlap left is settled
+  next tick. Legacy pin unchanged.
+
+Substitutions, quarter changes, offensive-rebound resets and free-throw lineups were
+clean. 200 games (100 each from seeds 11 and 23, 34 leagues): no teleports.
+
+**Re-centred and retrained.** `three_make_adj` -0.026 → -0.0275 (eFG had come out at .563
+on the seed means, over the .561 limit: the paint closeouts give finishers room). The
+values were retrained (`train --resume`, 12 rounds of 120 games), then continued twice
+(`--start ... --rounds 6`, new game seeds); the committed values are the second
+continuation. `check_values`: every option within ±0.06 of what it scored (post-ups
+-0.00 on 480 decisions). The first retrain alone gave the converged test (20 games) a
+hold gap of 0.14; the 36-game check had it at 0.03: holding is noisy in small samples.
+
+Audit, 48 games (seeds 7 / 8):
+
+| | before | after | NBA |
+|---|---|---|---|
+| distance per player per 48 min | 3.73 / 3.74 mi | 3.52 / 3.54 | 3.1-3.6 |
+| average speed | 4.66 / 4.68 mph | 4.40 / 4.43 | 3.9-4.8 |
+| top speed seen | 21.24 / 21.41 mph | 19.96 / 20.64 | 15-21.5 |
+| teleports per game | 0.00 / 0.10 | 0.00 / 0.00 | 0 |
+| very tight (0-2 ft) | 11.8 / 11.7% | 9.9 / 9.4% | 5-11% |
+| closest defender 2-4 / 4-6 / 6+ ft (seed 7) | 32.3 / 29.4 / 26.5% | 33.6 / 31.0 / 25.6% | 28-38 / 28-36 / 22-32% |
+| rim / short / mid / threes (seed 7) | 30.6 / 18.1 / 9.9 / 41.4% | 31.0 / 17.9 / 9.3 / 41.8% | 28-36 / 12-20 / 9-16 / 38-44% |
+| corner threes | 24.8 / 25.8% | 26.2 / 27.5% | 20-28% |
+| defender between his man and the rim | 85.5 / 85.4% | 87.9 / 87.9% | 80-97% |
+| ok / watch / off | 24 / 2 / 0, 23 / 2 / 1 | 26 / 0 / 0, 26 / 0 / 0 | |
+
+Full games, 64 per league (`measure --games 64 --jobs 2`, seeds 0 / 1 / 2 / 3 / 4):
+
+| | before | after | NBA 2025-26 |
+|---|---|---|---|
+| pace | 97.4 / 98.5 / 100.4 / 100.6 / 100.0 | 96.9 / 98.2 / 99.6 / 99.3 / 99.1 | 99.4 |
+| points | 111.2 / 113.4 / 114.0 / 114.4 / 115.5 | 109.3 / 113.4 / 113.8 / 112.1 / 114.8 | 115.6 |
+| points per 100 | 113.0 / 115.2 / 113.4 / 113.5 / 114.7 | 112.3 / 115.2 / 114.1 / 112.9 / 115.3 | 115.8 |
+| transition share | .152 / .156 / .165 / .161 / .151 | .152 / .156 / .159 / .161 / .158 | .150 |
+| transition points per play | 1.23 / 1.23 / 1.20 / 1.17 / 1.17 | 1.21 / 1.25 / 1.24 / 1.20 / 1.23 | 1.26 |
+| FTA per 100 | 23.7 / 24.2 / 23.1 / 22.4 / 24.0 | 24.8 / 24.6 / 25.1 / 21.8 / 26.1 | 23.6 |
+| fouls per 100 | 19.3 / 19.3 / 18.9 / 18.4 / 19.1 | 20.3 / 20.2 / 19.7 / 17.9 / 20.4 | 20.0 |
+| turnovers per 100 | 14.4 / 14.2 / 14.7 / 14.1 / 14.4 | 15.5 / 14.8 / 15.0 / 14.2 / 14.9 | 14.6 |
+| three share | .403 / .419 / .426 / .436 / .420 | .397 / .413 / .435 / .426 / .422 | .415 |
+| eFG | .550 / .552 / .554 / .551 / .561 | .547 / .555 / .565 / .556 / .562 | .546 |
+| ORB% | .256 / .278 / .252 / .252 / .245 | .259 / .273 / .235 / .240 / .256 | .260 |
+| within tolerance (of 13) | 12 / 13 / 13 / 12 / 12 | 11 / 13 / 11 / 12 / 12 | |
+
+Seed means (0-2) stay 13/13: pace 98.2, points 112.2, points per 100 113.9, transition
+.156 at 1.23, three share .415, eFG .556, ORB% .256, turnovers 15.1, FTA 24.8. The misses:
+seed 0's points (109.3) and points per 100 (112.3), seed 2's eFG (.565) and ORB% (.235),
+seed 3's fouls (17.9), seed 4's eFG (.562). A 64-game run is a single draw: on a second
+set of game seeds the same engine moved points per 100 by up to 1.5 a league. A full
+game takes about as long as before (1.61-1.68 s against 1.56-1.70 s for the previous
+engine on the same machine). The statistical engine is untouched (`python -m
+hoopsim.calibrate` 17/17).
+
+Tests: `tests/test_last_flags.py` covers the foul-drawing slope, centre and cap, whole-shot
+values seeing it (off in `LEGACY_PARAMS`), and good foul drawers getting to the line in
+full games; the paint closeout and its switch, and very tight shots on 24 games of seed
+3 with and without it (9.5% against 11.1%); free-throw walks starting from the last
+frame shown, the inbounder never jumping and no teleports in six recorded games; no
+walk-up rim runs, braking into a spot, and distance per player in range. Re-measured:
+the steadier-leagues team-spread test plays 12 games a side (was 6): an inside team's
+offensive rebounding edge is smaller even undamped now that paint closeouts wall up
+rim-side (.194 / .259 for Seven Seconds / Grit and Grind undamped, .208 / .246 damped;
+the test asks the damper to take 0.015 off the gap, was 0.03). A set play's read that
+shoots on the catch now records a frame of him holding the ball first (recording only).
+
+Still worth watching:
+* The top scorers' free throws (5.5 a game against 7.8): more of their shots would have
+  to be at the rim, not a steeper rating.
+* Corner threes on seed 8 (27.5%) sit near the top of their range.
+* Seed 0, the league whose defenders are better than its scorers, is still the
+  low-scoring one, as before.
+
 ### Where the defence picks up
 On a walk-up (after a make, or a team that doesn't push), the defence gets back and waits
 instead of picking up the ball full court:
@@ -1831,7 +2185,7 @@ weekend. Everything happens on its date as you sim:
 | 14 | **Rising Stars** teams and the **Three-Point Contest** field |
 | 3 | Injury replacements by the commissioner (a reserve moves into an injured starter's spot; injured shooters are replaced by the next in line) |
 | 2 (Fri) | **Rising Stars**: Rookies against Sophomores (a new league without both draws two teams of young players) |
-| 1 (Sat) | **Three-Point Contest**: five racks of five (the last ball of each rack is a 2-point money ball, one rack is all money balls) and two 3-point deep shots: 40 points at most. Eight shooters, the top three reach the final, ties go to a shoot-off. |
+| 1 (Sat) | **Three-Point Contest**, shot ball by ball (see below): five racks of five and two 3-point deep shots, 40 points at most in 70 seconds. Eight shooters, the top three reach the final, ties go to a 30-second shoot-off. **Watch** it in the match viewer. |
 | 0 (Sun) | **All-Star Game**: East against West, with its MVP |
 
 * **How players are chosen.**
@@ -1852,7 +2206,111 @@ weekend. Everything happens on its date as you sim:
   screen. `python -m hoopsim season` prints them with the awards.
 * **Calendar** marks the announcements and the weekend's events.
 * **API:** `GET /api/allstar`. Exhibition replays are served at `/api/replay/10000001` (the
-  game) and `/api/replay/10000002` (Rising Stars).
+  game) and `/api/replay/10000002` (Rising Stars); the Three-Point Contest at
+  `/api/replay/10000003?season=YYYY`.
+
+### The Three-Point Contest (`allstar.run_contest`, viewer: contest mode)
+
+**Format** (the NBA's, as of the 2025 contest). Five racks round the arc, corner to
+corner: corner, wing, top of the key, wing, corner. Each holds four 1-point balls and a
+2-point money ball (the last); one rack, the shooter's pick, is all money balls. Two
+"deep shots", a single ball each six feet behind the line, stand between the wings and the
+top, worth 3. The course is shot in order: rack 1, rack 2, deep shot, rack 3, deep shot,
+rack 4, rack 5: 27 balls, 16 + 4×2 + 5×2 + 2×3 = **40 points** at most, in **70 seconds**
+(a ball counts if it left his hands before the buzzer). Round 1: all eight, the top seed
+shooting last; the best three go to the final, lowest first-round score first. A tie for
+the last final place or for the title goes to a **30-second shoot-off** on the same course
+(again until someone is ahead).
+
+**Each ball.** A rack ball's make chance is the shooter's skill: half from his
+three-point rating (0.33 + 0.018 × rating), half from his real 3P% this season shrunk
+toward average (a 37% shooter rated 17 makes about 60% from a rack, nobody near him). Then: his
+form on the night (± about 3.5 points), a little lower for the first ball at a new spot
+(-3) and for money balls (-1), 18 points lower from the deep spots, falling as his arms
+tire over the 27 balls (about -6 by the end, less with stamina), and a touch of composure
+in the final. Time: about 1.4 s to the first release, his own rhythm between balls (about
+1.8-2.2 s; nobody quicker than 1.55), 3-4 s to the next station. Running behind the clock
+he hurries: quicker releases, 5 points worse. Each shooter always picks the same money
+rack (most the last corner).
+
+**Calibration** (fields rated like an All-Star field, many contests): round-one scores
+average about 22, 5th to 95th percentile about 15 to 30; winners average about 26-27, 10th
+to 90th percentile about 22 to 31, like the real contests of recent years (2019-2025
+winners scored 24-31). Shooters finish with a few seconds left, around 60-65 s.
+
+**The record.** Every ball is kept: per round and shooter, the money rack, each release
+(tenths of a second) and whether it went in, plus the field's names and teams (about
+2-3 KB a season). It lives in `league.all_star["three"]["record"]` and, once the season
+is over, in the season's history (`all_star.three_point_record`), so past contests can
+be watched too. Saves from before this have only the results: the All-Star screen still
+shows them, but there is no Watch link (the old simulation's random numbers can't be
+replayed).
+
+**Watching.** `hoopsim/spatial/contest.py` turns a record into viewer data, the same
+every time: one "possession" per shooter's round, ten frames a second, the shooter
+walking the arc and each ball going from the rack to his hands and up to the rim. The
+viewer's contest mode (`G.contest`) shows that end of the floor in 2D; the racks with the
+balls still on them (money balls striped, deep balls gold); a contest board in place of
+the scoreboard (round and shooter, his score out of 40, the 70-second clock, every ball on
+the course: made, missed, still to shoot); the standings round by round (no spoilers:
+later shooters show "–"); and the champion at the end. In 3D: racks and deep-shot stands
+with their balls, the animated player's catch and jump shot, the shot trail (green or
+red), the arena boards with the shooter and the score to beat. Play/pause, speed, Prev and
+Next shooter, and buttons to jump to the final or a shoot-off.
+
+* **Web:** **Watch** on the Three-Point Contest panel (League → All-Star), next to past
+  champions under past weekends, on the news item, and on the contest's calendar day.
+* **CLI:** `python -m hoopsim watch --contest --load my.db [--season 2025]` exports a saved
+  contest; without a recorded one (or without `--load`) it shoots one now with the
+  league's eight best shooters on `--seed`.
+
+## Season awards (`hoopsim/awards.py`, web: **League → Awards**)
+The regular-season awards are announced the day the regular season ends, before the
+playoffs, as the NBA does. Everything comes from regular-season box scores, so the
+playoffs can't change them. The Finals MVP is named after the Finals.
+
+| Award | Who wins it |
+|---|---|
+| **MVP** | Production and impact (Game Score per game plus 0.15 × plus-minus per game), plus 20 × (team win% − 0.5), a bonus for being his team's best player and a little for availability. Voters reward winning. |
+| **Defensive Player of the Year** | Steals, blocks and defensive rebounds, the scouts' defensive ratings (reputation), his team's defensive rating against the league's and its record, all scaled by minutes. |
+| **Rookie of the Year** | Production plus a little team success, among this season's rookies. |
+| **Sixth Man** | Production, for players who came off the bench in more games than they started. |
+| **Most Improved** | The jump in production and scoring from last season (20+ games then), damped for players who were already stars. A league's first season has none. |
+| **All-NBA** (3 teams), **All-Defensive** (2), **All-Rookie** (2) | Five players each, positionless (as the NBA has been since 2023-24). All-NBA leans less on team success than the MVP. |
+
+* **The vote.** 100 media members fill in NBA ballots: 10-7-5-3-1 points for MVP,
+  5-3-1 for the other awards, 5-3-1 for All-NBA's three teams and 2-1 for the
+  two-team selections. Each voter sees a player's score with some noise of his own,
+  so a close race can go either way. Every award lists its top three with their share
+  of the most points possible (and first-place votes for the MVP). The vote has its
+  own random stream, so announcing the awards never changes the season.
+* **Eligibility** is the NBA's 65-game rule, scaled to the season: 65/82 of the games
+  (65 of 82, 16 of 20) with 20+ minutes (scaled to the game's length), plus up to two
+  (scaled) games of 15-20 minutes. It applies to MVP, DPOY, Most Improved, All-NBA and
+  All-Defensive. As in the NBA, Rookie of the Year, All-Rookie and Sixth Man are exempt,
+  but voters don't pick part-timers: Rookie of the Year and Sixth Man need half the
+  season's games and All-Rookie a quarter. A selection is short when too few players
+  qualify (a small league's rookie class).
+* **Left out:** Clutch Player of the Year (box scores have no clutch-time split) and
+  Coach of the Year (the game has no coaches).
+* **Effects.** Winners' morale goes up (+6 for an award, +3 for a team selection). The
+  honours go on the season's career line (`mvp`, `dpoy`, `roy`, `sixth_man`, `mip`,
+  `finals_mvp`; `all_nba`, `all_defense` and `all_rookie` hold the team: 1, 2 or 3) and
+  show on the player card ("2× All-NBA", and "MVP this season" before the season's
+  line is filed). There are no award-based contract rules (no supermax) to feed.
+* **Announcement.** In the browser, awards night opens over whatever screen you're on,
+  with your players highlighted; the inbox gets one item per award and one for the
+  teams, and League → Awards keeps every season. `python -m hoopsim season` prints them
+  between the standings and the playoffs, and `play` prints them when the regular
+  season ends (`awards` shows them again).
+* **State and saves.** The announcement is stored on the league (`league.awards`) and
+  saved with it; `finish_season` adds the Finals MVP and files the whole thing in the
+  season's history (`season_awards`). Saves from before this feature keep working: one
+  whose regular season is over names its awards when it's loaded (web) or before the
+  playoffs start, one already in the playoffs names them from its regular-season box
+  scores when the Finals end, and older seasons in the history show their winners (and
+  any All-NBA teams on career lines, e.g. imported real leagues).
+* **API:** `GET /api/awards?season=` and `POST /api/awards/seen` (closes awards night).
 
 ## Real leagues and the editor
 
@@ -1889,8 +2347,23 @@ How ratings are derived:
   steal, block and rebound percentages, defensive box plus/minus, size, dunk share.
   These z-scores are then scaled to the spread of generated leagues.
   * **Shot load.** The engines give shots to the best scorers, so usage rate is added to
-    the scoring ratings (half for threes). A 30%-usage star out-shoots a 15%-usage
-    spot-up shooter with the same percentages.
+    the scoring ratings (0.65 of its z-score, half that for threes). A 30%-usage star
+    out-shoots a 15%-usage spot-up shooter with the same percentages. The same ratings
+    also set how well he shoots, so the rest of the volume goes through the pass-first
+    tendency (2 points less per unit of load); see "Efficiency of the next tier".
+  * **A soft top for scoring.** Other z-scores stop at ±2.8, but the scoring ones bend
+    toward 3.6 past 2.0 (`soft_top`, the same curve as the engine's usage ceiling). With
+    the hard clamp about 60 players had the same top scoring z-score; now the best
+    scorers keep a notch over the next tier (the statistical engine's scoring skill of
+    the real top 10 is 0.4 above the next 20 scorers', from 0.2).
+  * **Foul drawing** (`foul_drawing`). Free-throw attempts against what the player's shot
+    mix would earn at the engine's base rates (a rim attacker is expected to get to the
+    line more than a spot-up shooter), shrunk toward the league by 40 attempts. The
+    engine already gives a high-usage scorer more whistles, so that part comes out too.
+    The rest is put in the engine's units (each point is ×1.105 on his shooting-foul
+    odds) and centred so the shot-weighted rating is the engine's centre: team free
+    throws stay where a generated league has them. Players with few shots lean on their
+    other ratings, as old saves do.
   * **Shares on a log scale.** Rebound and assist rates count on a log scale, so the
     top bigs and playmakers aren't pushed to the rating cap. Part of a player's height
     is taken out of his rebound ratings, because the engines already favour tall
@@ -1901,11 +2374,15 @@ How ratings are derived:
 * **Level:** overall ability comes from impact (shrunk box plus/minus and minutes,
   with salary as a prior when there are few minutes). It is mapped onto the ability
   distribution of a generated league. A real league plays like a generated one (median
-  rostered ability 93, 90th percentile ~125), so the engines stay calibrated.
+  rostered ability 93, 90th percentile ~125), so the engines stay calibrated. The level
+  lands on the ratings other than the four scoring ones, which come from shooting and
+  shot load alone.
 * **Other attributes:**
   * potential from age;
-  * shot tendencies as above; passing and cutting tendencies from assist rate and
-    assisted shots;
+  * shot tendencies as above; the passing (pass-first) tendency from assists for his
+    share of the ball (assist rate over usage rate), so a star who scores and passes
+    isn't held back as a pass-first player, less 2 points per unit of shot load;
+    cutting from assisted shots at the rim;
   * injury proneness partly from games missed;
   * physique from the roster's height and weight;
   * salary rules approximately 2026-27 (cap $165M, tax $201M, minimum $1.27M, MLE
@@ -1924,7 +2401,12 @@ compared with 2025-26 (players with 30+ games and 15+ minutes):
 
 The best scorers used to average close to 40 points, as in generated leagues; that was
 the engine's and is fixed (see "Star scoring" under the match engine; the table above is
-from before it: now 0.87 and −0.5). (The minutes shape, which gave about 130 players 30+
+from before it). With foul drawing, the soft top for scoring and the pass-first tendency
+(see "Foul drawing and the top scorers") the correlation is 0.885 and the top-60 bias
++0.3; team wins against 2025-26 correlate 0.70 (mean miss 8.2) when 2025-26 wins are
+estimated from the players' win shares. With the efficiency fix (see "Efficiency of the
+next tier", six seasons) the correlation is 0.894, the bias −0.24 and team wins 0.75
+(mean miss 7.5). (The minutes shape, which gave about 130 players 30+
 minutes, is fixed: see "Minutes" below.)
 
 **Minutes** (`hoopsim/lineup.py` `plan_rotation`). The coach shares out the 240 minutes by
@@ -1971,7 +2453,8 @@ agents, along with veterans unsigned since last season.
 ### In-game editor (`hoopsim/editor.py`, web: **Editor**)
 Like Football Manager's editor, it shows **true** ratings, with no scouting fog. You
 can change any player's:
-* ratings, hidden ratings and tendencies (1-20 sliders);
+* ratings (including drawing fouls, with the scoring ratings), hidden ratings and
+  tendencies (1-20 sliders);
 * potential (never below current ability);
 * name, birth date, nationality, position(s), height, wingspan, weight and jersey;
 * morale, an injury (heal it), contract (salary, end season, option) and team;
@@ -2003,7 +2486,8 @@ used. API:
 ```bash
 python -m hoopsim new --seed 1 --teams 12 --out league.db   # generate, save, print summary
 python -m hoopsim game --seed 1 --pbp                       # one game: play-by-play + box score
-python -m hoopsim season --seed 1                           # season + playoffs, awards, leaders
+python -m hoopsim season --seed 1                           # season, awards, playoffs, leaders
+python -m hoopsim season --seed 1 --teams 6 --games 20      # a short one
 python -m hoopsim career --seasons 20 --seed 1              # 20 years: drafts, free agency, ageing
 python -m hoopsim.calibrate --seasons 3                     # compare sim averages with the NBA
 python -m unittest discover -s tests -t .                   # run tests
@@ -2019,8 +2503,13 @@ League ── rules: LeagueRules (cap, roster limits, quarter length, shot clock
 ```
 
 **Player**
-- `Attributes`: 20 visible 1–20 ratings (scoring, playmaking, defence,
-  rebounding, physical, mental). 10 is a league-average pro.
+- `Attributes`: 21 visible 1–20 ratings (scoring, playmaking, defence,
+  rebounding, physical, mental). 10 is a league-average pro. `drawing_fouls` (getting
+  to the free-throw line) is the newest: it is shown with the scoring ratings, read by
+  the statistical engine's shooting fouls, and doesn't count toward current ability
+  (`ABILITY_ATTRIBUTES` are the other 20). Saves and league files from before it get
+  one from finishing, strength, close range, ball handling and vertical
+  (`derived_drawing_fouls`).
 - `HiddenAttributes`: consistency, clutch, injury proneness, work ethic,
   professionalism, ambition, loyalty. These feed the engine and development, not the UI.
 - `current_ability` (CA, 1–200) is *derived*: a position-weighted mean of the
@@ -2043,7 +2532,11 @@ That target is PA × an age development curve, which peaks at 27. Ageing vets lo
 physical attributes first. Point guards shoot threes about as well as shooting
 guards, and half of power forwards and a third of centres are drawn as stretch bigs
 (+5 three-point, +1 mid-range, -1 close range on the template; the level shift still
-lands them on their target CA). Salaries follow a steep curve on CA. Rosters are filled
+lands them on their target CA). Foul drawing follows finishing, strength, close range,
+ball handling and vertical, plus a personal spread (sd 2.5): about 10 on average with
+an sd of 3.5, and 14 for a league's 30 best players. It is drawn from its own random
+numbers, so every other rating of a generated league is what it was before the rating
+existed (the same goes for its summer development). Salaries follow a steep curve on CA. Rosters are filled
 by a snake draft with noisy scouting, so there are strong and weak teams without
 absurd gaps. `auto_lineup` (in `lineup.py`) brute-forces the best starting five and
 shares out 240 minutes. The schedule is NBA-shaped (see below).
@@ -2102,13 +2595,39 @@ Point differential follows in both cases. When a step splits the tied teams, eac
 group starts again from the top. The NBA's "record against playoff teams" steps
 are left out, and point differential settles those cases. The same procedure picks
 each division's winner and the playoff seeds. The League screen's standings have
-a **Conference / Division** toggle, with division leaders marked ⓓ and DIV and
-CONF record columns. Rest matters in both engines: on the
+a **Conference / Division** toggle, with division leaders marked ⓓ, DIV and
+CONF record columns and the clinch markers (see *Playoff race* below). Rest matters in both engines: on the
 second night of a back-to-back, players who logged 10+ minutes the night before
 start the game tired (`Tuning.b2b_start_energy` = 0.85) and shoot slightly worse
 (`b2b_form` = 0.975). Over six 30-team statistical seasons, tired teams against
 rested ones won 46.4% and lost by 1.2 points (NBA: roughly 1.5). Playoffs start six
 days after the regular season (the play-in week) and are played every other day.
+
+**Playoff bracket** (League screen, *Playoffs* tab; `web/bracket.py`, served in
+`/api/playoffs` as `bracket`). The play-in comes first, three games per
+conference. Below it is the bracket: the East's first round, conference
+semifinals and conference finals on the left, the Finals in the middle and the
+West on the right, mirrored. Each box shows the seeds, abbreviations and team
+names, the series score and a status line (*BOS leads 2–0*). The winner of a
+finished series is highlighted and your team is marked. Click a box for its
+games, with box score and watch links where they exist. Slots that haven't been
+drawn yet show the teams already through and *TBD* for the rest, and fill in as
+series finish. During the regular season the tab shows the projected bracket from
+the current standings, with dashed boxes. On narrow screens (phones) the bracket
+is shown round by round, East and West side by side. Game lists, the daily
+scoreboard and the box score show the series score of each playoff game too.
+
+`/api/playoffs` → `bracket`: `{projected, conferences: [{conference, play_in:
+[slot × 3], rounds: [[slot, …] per round], round_labels}], finals: slot}`. A
+slot is `{id (series id, or null if not drawn yet), round, conference, label,
+play_in, matchup, teams: [{id, abbr, name, seed} × 2], wins, over, winner_id,
+best_of, games, status, projected}`. It is `null` before any game has been
+played. Each playoff game view (`games`, `/api/game/{id}`, schedules) has `series:
+{title, game, play_in, status}`, where `status` is the series score after the
+game. The viewer's page data (`/api/replay/{id}`, `/api/live/page`) has
+`series: {series_id, title, round, conference, play_in, matchup, game, best_of,
+wins_needed, home, away, home_wins, away_wins, status}`, with the series as it
+stood before the game.
 
 The browser app's **Calendar** screen shows the season a month at a time:
 
@@ -2119,10 +2638,95 @@ The browser app's **Calendar** screen shows the season a month at a time:
 - Summary cards show games, home/away split, back-to-backs and the longest road
   trip. Any team's schedule can be viewed.
 - Clicking a day lists every game on it, with box score and watch links.
-- **Sim to this day** plays up to it. It stops early for a trade offer, as the
-  other sim buttons do.
+- **Go to this day** plays every day before it and stops at the start of that
+  day, its games (yours included) still to play: coach yours live, watch it, or
+  sim it with **Next day**. It stops early for a trade offer, as the other sim
+  buttons do. The next day to play has a dashed outline.
 
 The routes are `/api/calendar`, `/api/calendar/day/{day}` and `POST /api/sim/to`.
+
+## Playoff race: clinch and elimination markers (`hoopsim/clinch.py`)
+
+The standings mark teams the way NBA.com and Basketball-Reference do. A marker
+appears only once it's mathematically certain, and it appears as soon as the
+check below can prove it, usually weeks before the end of the season.
+
+| Marker | Meaning |
+|---|---|
+| **w** | clinched the best record in the league |
+| **z** | clinched the conference's #1 seed. This is NBA.com's *z* (best record in the conference, so home court through the conference finals). |
+| **y** | clinched the division |
+| **x** | clinched a top-6 seed, so a playoff spot without the play-in |
+| **pi** | clinched at least a play-in spot (top 10) |
+| **o** | eliminated from playoff and play-in contention (can't finish in the top 10) |
+
+A row shows its strongest marker (w, then z, y, x, pi, o). In NBA-sized
+conferences (an 8-team bracket and at least 10 teams) the places follow the NBA's
+format: 1–6 go straight in and 7–10 go to the play-in (see *Play-in*). In smaller
+leagues, or with `LeagueRules.play_in` off, there's no play-in:
+**x** means a bracket place (for example top 4 of 6) and **o** means missing the
+bracket. Division titles are only marked when a conference has more than one
+division with more than one team.
+
+**How it's decided.** The check uses every team's remaining schedule, including who
+plays whom, not just the number of games left:
+
+- **Clinching place k** (in the conference, the division or the league): let the
+  team lose all its remaining games. Losing more can only hurt it, so this is its
+  worst case. Then ask whether some set of k rivals can *all* finish level with it
+  or better. For a given set that's a max-flow problem, like the classic baseball
+  elimination problem. Each rival in the set wins its games against everyone
+  outside the set, and the games between set members, which two of them can't
+  both win, are shared out by the flow. If no set of k can do it, the place is
+  clinched.
+- **Eliminated from place k**: let the team win out. Then ask whether some set of
+  `group size - k` rivals can all stay behind it. Set members lose to everyone
+  outside the set, and the games among them must all be won by somebody. If no
+  such set exists, the team is out.
+- Any subset of a feasible set is also feasible, so a depth-first search over
+  rivals, sorted from the most to the least likely, skips infeasible branches. It
+  finds a witness or proves there's none. The search is capped at 1,500 flow checks
+  per question. Hitting the cap counts as "not proven", which can delay a marker
+  but never make it wrong.
+- **Ties.** The real tie-breakers (`playoffs._Tiebreak`) can depend on games not
+  yet played and, in the end, on point differential. A tie is therefore counted
+  against the team when clinching and for it when eliminating. One case is settled
+  exactly: if at most one rival can still finish exactly level, any tie is a
+  two-team tie, whose first step is the season series. Under "loses out" or "wins
+  out", that series is already fixed, so a series the team has already won (or
+  lost) decides the tie. Three-team ties and split series stay pessimistic. Markers
+  that depend on them can come a few days later than a perfect solver's.
+- When the regular season is over, the final standings decide every marker.
+
+A brute-force test enumerates every remaining outcome of tiny leagues, with point
+differentials both ways. It checks that no marker is ever wrong and that at least
+three quarters of the true clinches and eliminations are shown. Every miss in
+those runs was a tie case.
+
+**Magic numbers.** Click a team in the standings for its races (best record, #1
+seed, division, top 6, top 10). Each race shows *clinched*, *out of reach*,
+or "clinched with N more wins" and "out after N more losses". These numbers count
+only the team's own results: win N more and the place is yours whatever else
+happens. They're sound upper bounds, found with the same checks plus a binary
+search.
+
+**Speed.** The markers for 30 teams take 5–25 ms at any point of the season, and
+one team's details 2–60 ms. The web app caches both until the next game is played.
+Nothing is stored in the save, so old saves show markers as soon as they load.
+
+**Where they show.** Every place markers appear:
+
+- The League screen's standings, in both the Conference and Division views. A
+  legend sits on top, the marker sits before each team name (hover for its
+  meaning), and the columns are GB, L10 and STRK. Clicking a team shows its race.
+- The Home screen's standings.
+- `GET /api/standings`, which has `marker`, `markers` and a `legend`. One team's
+  race is at `GET /api/standings/race/{team_id}`.
+- The CLI's `standings` command (and `python -m hoopsim season`), with GB, L10 and
+  streak columns, and in the status line.
+- After each sim, new markers become inbox news: "Playoff spot clinched" for your
+  team, and a "Playoff race" digest for the rest of the league. The CLI prints them
+  after the day's results.
 
 ## Storage (`hoopsim/db.py`)
 
@@ -2142,7 +2746,7 @@ clock -> turnover? (handler security vs defenders' hands, press/zone)
       -> non-shooting foul? (bonus free throws from the 5th team foul)
       -> shooter (weighted by scoring skill; shares level off past 22%) -> zone: rim / close / mid / three
          (player tendencies x team 3PT rate x offensive focus x defence scheme)
-      -> block? -> shooting foul? (and-ones) -> make? (shooter vs matchup defender
+      -> block? -> shooting foul? (drawing fouls, shot share; and-ones) -> make? (shooter vs matchup defender
          and rim protector, home edge, clutch, form) -> assist
       -> miss: rebound battle (rating + height + crash-the-glass) -> putback or reset
 ```
@@ -2224,7 +2828,8 @@ A star's own shot is nearly always his offence's best-valued option, so he kept 
   the 1st option (×2.5). A needed three or a heave still goes to the shooters.
 * **The go-to scorer draws the fouls.** Shooting-foul odds are multiplied by
   `exp(2.5 × (share − 0.215))`, so a 33% option draws about a third more. Team free
-  throws stay the same.
+  throws stay the same. (On top of this, the `drawing_fouls` rating now sets how often
+  each player gets to the line: see below.)
 
 **What changed (spatial engine, `HalfCourtGame.usage_bias`):** a player's running share of
 his team's shots while he's on the floor costs value on his own shots and on passes to him:
@@ -2256,10 +2861,10 @@ switches both off.
 | top-60 scorers, points bias | +1.1 | −0.5 |
 | players with 28+ / 22+ / 20+ (real: 5 / 26 / 44) | 11-14 / 30-35 / 43-44 | 5-7 / 30-33 / 43-44 |
 
-The builder's "Shot load" stays as it is: weakening it lowered the correlation. A gap
-remains: the real league's very best scorers (28+ in 2025-26) come out about 4 points
-short. Their ratings sit at the cap with the next 30 scorers, and they draw fewer free
-throws than in life (about 6 a game against 9-10).
+The builder's "Shot load" stays as it is: weakening it lowered the correlation. The gap
+this left at the very top (the real league's best scorers came out about 4 points short,
+drawing about 5 free throws a game against 8) is narrowed by foul drawing; see "Foul
+drawing and the top scorers" below.
 
 **Team level** stays put:
 * Statistical calibration is 17/17. Points went from 112.6 to 113.7, free throws from
@@ -2278,12 +2883,152 @@ throws than in life (about 6 a game against 9-10).
 * Set plays now add about 10% to possession time rather than 16%
   (`tests/test_plays.py`). The usage penalty lengthens a plain offence too.
 
+### Foul drawing and the top scorers
+
+Two things kept the real league's best scorers about 4 points a game short: nothing
+player-specific said who gets to the free-throw line (the best scorers drew about 5 free
+throws a game against 8 in life), and about 60 players shared the top scoring ratings,
+so the engine couldn't tell the league's best scorer from the 30th.
+
+**A foul-drawing rating.** `Attributes.drawing_fouls` (1-20; see "Data model"):
+* **Statistical engine.** Shooting-foul odds are multiplied by
+  `exp(foul_drawing × (rating − foul_drawing_centre))` (0.10 a point; centre 11.85, the
+  shot-weighted average rating, so team free throws stay put), on top of the shot-share
+  term above. It replaces the old strength term (0.05 a point of strength), which the
+  rating now carries. The same factor picks who is fouled in the bonus. The odds are
+  capped at 0.6 a shot, for edited extremes.
+* **Generation**, **development**, **old saves** and the **editor**: see "Generation",
+  "Data model" and "In-game editor". It doesn't count toward current ability, and it is
+  drawn from its own random numbers, so generated leagues are otherwise unchanged.
+* **Builder**: free-throw attempts beyond the shot mix and usage (see "How ratings are
+  derived"). The top 10 scorers of 2025-26 rate 11-18.
+* **Spatial engine:** the same factor on its shooting-foul chance (`SpatialParams.
+  foul_drawing`, re-centred for spatial games), in whole-shot values too; see "Last
+  audit flags".
+
+**The top of the scoring ratings (builder).** Scoring z-scores bend toward 3.6 instead of
+stopping at 2.8 (`soft_top`), so the elite rate a notch above the next tier (engine
+scoring skill 0.4 above the next 20 scorers', from 0.2). The pass-first tendency is now
+assists for his share of the ball: it used to follow the assist rate alone, so the
+creators who score and pass were treated as pass-first and lost shots (the statistical
+engine takes 3% of a player's shot weight off per point of the tendency). In starting
+lineups the real top 10 used to get a smaller raw share of the shots than the next 20
+(0.29 against 0.31); now they get the same (0.32).
+
+**Real league against 2025-26** (statistical engine, three seasons, players with 30+
+games and 15+ minutes; "top 10" are the real top 10 scorers):
+
+| | 2025-26 | before | after |
+|---|---|---|---|
+| points per game, correlation | | 0.871 | 0.885 |
+| top-60 scorers, points bias | | −0.45 | +0.30 |
+| players with 28+ / 22+ / 20+ | 5 / 26 / 44 | 5-7 / 30-33 / 43-44 | 8-13 / 34-36 / 40-47 |
+| top 10: points per game | 28.8 | 24.8 | 26.0 |
+| top 10 without the three who share a team in 2026-27: points vs real | | −2.4 | −0.9 |
+| top 10: free throws per game (top 5) | 7.8 (8.0) | 5.3 (5.1) | 6.7 (6.9) |
+| top 10: shot plays per 36 minutes | 28.0 | 24.9 | 26.2 |
+| real 11th-30th scorers: points per game | 24.0 | 24.5 | 25.7 |
+| top 10 assist men: assists per game | 8.3 | 8.3 | 7.6 |
+| team free throws per game | 23.5 | 21.1 | 22.1 |
+| team wins vs 2025-26 (from win shares), correlation / mean miss | | 0.66 / 8.4 | 0.70 / 8.2 |
+
+**Generated leagues** (30 teams, seeds 0 / 1 / 2):
+
+| | NBA 2025-26 | before | after |
+|---|---|---|---|
+| top scorer (ppg) | 33.5 | 33.5 / 32.3 / 32.1 | 34.3 / 33.5 / 32.8 |
+| players 28+ / 22+ ppg | 5 / 26 | 3, 4, 1 / 21, 21, 14 | 6, 5, 2 / 19, 23, 19 |
+| top 10 scorers: free throws per game | 7.8 | 5.9 / 6.8 / 4.7 | 7.7 / 7.8 / 7.0 |
+| team points per game | | 112.8 / 115.1 / 111.9 | 112.1 / 114.5 / 112.5 |
+| team free throws per game | | 21.8 / 22.1 / 21.5 | 21.4 / 21.6 / 21.8 |
+
+`python -m hoopsim.calibrate` stays 17/17: points 113.7 → 112.9, free throws 21.9 → 22.1,
+free-throw % 0.788 → 0.795 (the ball handlers who now draw more fouls shoot them better
+than the strong bigs who drew them before). The spatial engine is untouched.
+
+**Gaps that remain** (the first is narrowed in "Efficiency of the next tier" below):
+* **The next tier scores too efficiently.** The real 11th-30th scorers now get to the line
+  as often as in life (6.2 a game), but their field-goal efficiency was already too high
+  (eFG 0.569 against 0.544), so they score 1.7 points too many and the 28+ and 22+ counts
+  run high. Weakening the builder's shot load doesn't fix it (it lowers the correlation
+  and leaves their eFG where it is).
+* **The best scorers take too few shots.** 26 shot plays per 36 minutes against 28: their
+  scoring ratings are at 19-20, and the engine's usage ceiling bends a 32% raw share to
+  29%. A later knee (0.245) gave them 0.6 points more but 9-14 players at 28+.
+* **Three of the real top 10 share a team in the 2026-27 rosters** and take shots from each
+  other: about 7 points short each.
+* Free throws for the top 10 are 6.7 a game against 7.8: the builder takes out the part
+  of a star's free-throw rate that his usage explains, and in the engine his share is a
+  little lower than his real usage.
+
+### Efficiency of the next tier
+
+The real 11th-30th scorers shot an eFG of 0.570 in the simulation against 0.544 in life,
+and the 31st-60th 0.563 against 0.545, while the top 10 (0.568 against 0.571) and the
+role players were about right.
+
+**Why.** In the NBA efficiency doesn't rise with usage: by real usage rate, eFG goes from
+0.59 (under 14%) to about 0.54 (over 26%). In the simulation it went the other way, 0.54
+to 0.57. Three things in the builder put a player's role into his shooting ratings, and
+the statistical engine turns every point of a shooting rating into more shots *and*
+about 0.6% more makes:
+* **The impact level.** Ratings are shifted to land on the ability that box plus/minus
+  gives, and the shift moved the shooting ratings with the rest. A high-impact player
+  was rated a better shooter than his percentages. Lowering the shot load did little
+  for that reason: the shift put the shooting points back.
+* **The shot load** (usage added to the scoring ratings) at full weight. Together with
+  the soft top, the 11th-30th scorers sat at 17-19 in every zone, a notch below the top
+  10, so their percentages came out like the top 10's.
+* **Volume inside the accuracy stats.** Finishing counted free throws per 36 minutes (now
+  the foul-drawing rating's job) and close range counted its attempts (the shot load's).
+
+**What changed (builder only):**
+* The four scoring ratings no longer take the impact shift: it goes to the other
+  ratings, so ability is unchanged.
+* The shot load is 0.65 (threes 0.33), down from 1.0 (0.5).
+* Finishing and close range are accuracy only (and dunks for finishing).
+* The volume the ratings no longer carry goes through the pass-first tendency: 2 points
+  less per unit of load (the z-score of log usage), so a 30%-usage scorer is about 4
+  points less pass-first than before and takes about 12% more of the shot weight.
+
+Tried and left out: lowering only the three-point load (gave volume to low-usage
+spot-up shooters), a softer top, and a clamp-aware shot-tendency fit (no change: the
+tendencies weren't the limit).
+
+**Real league against 2025-26** (statistical engine, six seasons, seeds 0-5; players with
+30+ games and 15+ minutes; tiers are real scoring ranks):
+
+| | 2025-26 | before | after |
+|---|---|---|---|
+| eFG, top 10 | 0.571 | 0.568 | 0.559 |
+| eFG, 11th-30th | 0.544 | 0.570 | 0.560 |
+| eFG, 31st-60th | 0.545 | 0.563 | 0.552 |
+| eFG, 61st-120th | 0.543 | 0.547 | 0.541 |
+| league eFG | 0.546 | 0.553 | 0.546 |
+| points per game: top 10 / 11th-30th | 28.8 / 24.0 | 26.0 / 25.6 | 26.6 / 25.1 |
+| players with 28+ / 22+ / 20+ | 5 / 26 / 44 | 7-13 / 34-36 / 40-47 | 8-10 / 27-32 / 39-42 |
+| points per game, correlation | | 0.885 | 0.894 |
+| top-60 scorers, points bias | | +0.19 | −0.24 |
+| top 10 assist men: assists per game | 8.3 | 7.6 | 7.45 |
+| team wins (from win shares), correlation / mean miss | | 0.71 / 8.25 | 0.75 / 7.5 |
+| team points per game | | 114.6 | 113.4-114.0 |
+
+Generated leagues don't use the builder and are unchanged; so is `python -m
+hoopsim.calibrate` (17/17). The engines are untouched.
+
+**Still open:** the 11th-30th scorers are 0.016 too efficient and the top 10 0.012 too
+little, and the 28+ count is 8-10 against 5. The rest of the gap is the engine's: the
+same ratings set a player's share of the shots and his accuracy, so a high-usage scorer
+with ordinary percentages can't be both. The pass-first tendency carries part of the
+volume, but it also steers assists (+5% of a passer's weight a point), which is why the
+assist men lose a little; a larger step cost more assists.
+
 ## Season loop (`hoopsim/season.py`)
 
 ```python
 league = generate_league(seed=1)
 rng = random.Random(1)
-summary = play_full_season(league, rng)   # regular season, playoffs, awards
+summary = play_full_season(league, rng)   # regular season, awards, playoffs, Finals MVP
 report = run_offseason(league, rng)        # everything between seasons
 ```
 
@@ -2296,11 +3041,26 @@ report = run_offseason(league, rng)        # everything between seasons
 - **Morale** updates weekly from playing time versus role, winning (weighted by
   ambition) and injuries. It feeds game-day form and re-signing decisions.
 - **Trade deadline** at 60% of the season.
+- **Days**: `play_regular_season` plays the days that have games;
+  `play_regular_day` plays one calendar day (the All-Star events dated on it, its
+  games if there are any, and the league's date moves to it). The web app's sims
+  use it, so every control moves the date a calendar day at a time.
 - **Playoffs** (`playoffs.py`): the top two thirds of each conference (rounded down
-  to a power of two) are seeded by record, then point differential. Best-of-7
+  to a power of two) are seeded by record and the tiebreakers. Best-of-7
   series use 2-2-1-1-1 home court, and the conference champions meet in the finals.
-- **Awards**: MVP, Finals MVP, Defensive POY, Rookie of the Year, Sixth Man and Most
-  Improved. Each player's season line (stats, age, CA) goes into `player.career`.
+- **Play-in** (`playoffs.py`, NBA format): when a conference has an eight-team
+  bracket and at least ten teams, seeds 7 to 10 play single games first. On the
+  first night 7 hosts 8 (the winner is the 7 seed) and 9 hosts 10 (the loser is
+  out). Two nights later the 7 v 8 loser hosts the 9 v 10 winner, and the winner
+  of that game is the 8 seed. Round one starts six days after the regular season,
+  as before. Play-in games are postseason games (`Game.playoff`, in a `Series`
+  with `round` 0, `best_of` 1 and `play_in` set to `"7v8"`, `"9v10"` or
+  `"decider"`), but they aren't counted in playoff stats, and the teams knocked out
+  in the play-in go into the draft lottery. `LeagueRules.play_in = False` turns it off.
+  Smaller leagues, with four-team brackets, have no play-in.
+- **Awards** (`awards.py`, see *Season awards*): named when the regular season ends,
+  before the playoffs; the Finals MVP after the Finals. Each player's season line
+  (stats, age, CA, honours) goes into `player.career` at the end of the season.
 
 **Offseason**, in order:
 1. **Retirements**: likelier with age and declining ability, and much likelier

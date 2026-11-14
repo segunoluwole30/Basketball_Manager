@@ -119,8 +119,9 @@ export function PlayerCard() {
                   <div className="stat-sub">{p.injury ? <span className="bad">{p.injury.description}, out {p.injury.games} g</span> : "healthy"}</div></div>
               </div>
 
-              {(p.all_star_now || Object.values(p.honours ?? {}).some((v: any) => v > 0)) && (
+              {(p.all_star_now || p.awards_now?.length > 0 || Object.values(p.honours ?? {}).some((v: any) => v > 0)) && (
                 <div className="notes as-honours">
+                  {p.awards_now?.map((a: string) => <span key={a} className="chip chip-star">🏆 {a} this season</span>)}
                   {p.all_star_now && <span className="chip chip-star">★ All-Star this season</span>}
                   {p.honours?.all_star > 0 && <span className="chip chip-star">{p.honours.all_star}× All-Star</span>}
                   {p.honours?.asg_mvp > 0 && <span className="chip">{p.honours.asg_mvp}× All-Star MVP</span>}
@@ -134,6 +135,7 @@ export function PlayerCard() {
                   {p.honours?.mip > 0 && <span className="chip">Most Improved</span>}
                   {p.honours?.all_nba > 0 && <span className="chip">{p.honours.all_nba}× All-NBA</span>}
                   {p.honours?.all_defense > 0 && <span className="chip">{p.honours.all_defense}× All-Defensive</span>}
+                  {p.honours?.all_rookie > 0 && <span className="chip">All-Rookie</span>}
                 </div>
               )}
               {p.draft && <p className="muted small">{p.draft.pick ? `Pick #${p.draft.pick} in the ${p.draft.year} draft.` : `Undrafted in ${p.draft.year}.`}</p>}

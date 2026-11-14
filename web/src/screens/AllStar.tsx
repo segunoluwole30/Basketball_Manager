@@ -194,12 +194,12 @@ function ThreePoint({ c }: { c: any }) {
   };
   const winner = names[String(c.winner)];
   return (
-    <Panel title="Three-Point Contest">
+    <Panel title="Three-Point Contest" actions={c.watch_url ? <a className="btn btn-small" href={c.watch_url} target="_blank" rel="noopener">Watch</a> : undefined}>
       {winner && <p className="as-champ">🏆 <PlayerName p={winner} /> ({winner.team}) wins with {c.final[String(c.winner)].points} in the final.</p>}
       {table("Final", c.final)}
       {table("First round (top three advance)", c.first)}
       {c.shootoffs.length > 0 && <p className="muted small">Ties settled by shoot-off ({c.shootoffs.map((s: any) => s.stage).join(", ")}).</p>}
-      <p className="muted small">Each rack's last ball is a 2-point money ball; one rack is all money balls; the ★ deep shots are worth 3. 40 points is perfect.</p>
+      <p className="muted small">Five racks round the arc, corner to corner: each rack's last ball is a 2-point money ball, one rack (the shooter's pick) is all money balls, and the two ★ deep shots between the wings and the top are worth 3. 70 seconds; 40 points is perfect.</p>
     </Panel>
   );
 }
@@ -216,7 +216,8 @@ function Past({ past }: { past: any[] }) {
               <td>{p.season}-{String((p.season + 1) % 100).padStart(2, "0")}</td>
               <td>{Object.entries(p.score).map(([k, v]) => `${k.replace(" All-Stars", "")} ${v}`).join(", ")}</td>
               <td><PlayerName p={{ id: p.mvp, name: p.mvp_name }} /></td>
-              <td>{p.three_point_champion != null ? <PlayerName p={{ id: p.three_point_champion, name: p.three_point_champion_name }} /> : "–"}</td>
+              <td>{p.three_point_champion != null ? <PlayerName p={{ id: p.three_point_champion, name: p.three_point_champion_name }} /> : "–"}
+                {p.three_point_watch_url && <> <a className="link small" href={p.three_point_watch_url} target="_blank" rel="noopener">watch</a></>}</td>
               <td>{p.rising_stars_mvp != null ? <PlayerName p={{ id: p.rising_stars_mvp, name: p.rising_stars_mvp_name }} /> : "–"}</td>
             </tr>
           ))}

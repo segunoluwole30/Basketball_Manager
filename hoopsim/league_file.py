@@ -17,6 +17,7 @@ Format (``"format": "hoopsim-league", "version": 1``)::
                    "position": "PG", "birth_date": "1998-01-28",
                    "height_cm": 185, "weight_kg": 88,
                    "attributes": {"three_point": 17, ...},             # 1-20, missing = 10
+                                                                       # (drawing_fouls missing: from the others)
                    "potential_ability": 140,                         # optional
                    "contract": {"salary": 30000000, "expires_season": 2028},
                    "draft_year": 2019, "draft_pick": 3,                  # optional
@@ -55,7 +56,7 @@ def _ratings(cls, d: dict | None, where: str):
     for k, v in d.items():
         if not isinstance(v, (int, float)) or not ATTR_MIN <= v <= ATTR_MAX:
             raise LeagueFileError(f"{where}: {k} must be {ATTR_MIN}-{ATTR_MAX}, got {v!r}")
-    return cls(**{k: int(round(v)) for k, v in d.items()})
+    return cls.from_dict({k: int(round(v)) for k, v in d.items()})   # Attributes: derives drawing_fouls if missing
 
 
 def _position(v, where) -> Position:
@@ -68,7 +69,7 @@ def _position(v, where) -> Position:
 CAREER_NUMBERS = ("gp", "gs", "min", "pts", "fgm", "fga", "tpm", "tpa", "ftm", "fta",
                   "orb", "drb", "ast", "stl", "blk", "tov", "pf", "plus_minus")
 CAREER_HONOURS = ("all_star", "asg_mvp", "three_point_champion", "rising_stars_mvp", "mvp", "dpoy", "roy",
-                  "sixth_man", "mip", "clutch_poy", "finals_mvp", "all_nba", "all_defense")
+                  "sixth_man", "mip", "clutch_poy", "finals_mvp", "all_nba", "all_defense", "all_rookie")
 
 
 def _career(lines, by_abbr: dict, season: int, where: str) -> list[dict]:

@@ -94,6 +94,21 @@ class OpenCourtTuning:
     # own half; a zone sits back near the top of the key; only a press picks up full court.
     pickup: dict = field(default_factory=lambda: {
         "man": (50.0, 40.0), "switch": (50.0, 40.0), "zone": (36.0, 30.0)})   # (ball, off the ball)
+    # Getting back on a walk-up or a dead-ball throw-in (README "Last audit flags"):
+    # defenders brake in time to stop at their spot, decelerating at this share of their
+    # acceleration limit from ``brake_range`` ft out, as defenders do in the half court
+    # (SpatialParams.defender_brake, from 10 ft: too late to stop a full sprint); 0: ease
+    # in only, which ran them 3-6 ft past their spot and back. (On a push they sprint at
+    # the ball as before.) And nobody sprints to the rim on a walk-up: the deepest man
+    # only protects it on a push (``walkup_rim`` False); otherwise he picks up a man like
+    # the others, instead of running under the basket and back out again.
+    brake: float = 0.8
+    brake_range: float = 30.0
+    walkup_rim: bool = False
+    # ... and on a walk-up a defender keeps the man he picked up unless another is this
+    # much nearer (ft): re-picking every 0.3 s swapped men back and forth on the way
+    # back. The half court starts with those matchups.
+    role_stick: float = 4.0
 
 
 DEFAULT_OPEN_TUNING = OpenCourtTuning()
@@ -278,7 +293,12 @@ class OpenCourt:
             self.defense_targets()
             for a in self.g.everyone:
                 boost = self.speed_for(a)
-                a.move(dt, self.now, boost)
+                if self.out_of_bounds(a):
+                    self.walk(a, dt, boost)    # the inbounder: move() would pull him onto the floor
+                elif a in self.defense and not self.push:   # getting back on a walk-up: brake in time
+                    a.move(dt, self.now, boost, 1.0, self.t.brake, self.t.brake_range)
+                else:
+                    a.move(dt, self.now, boost)
             self.g.separate()
             self.record_frame()
             if self.flight is None and self.holder is not None and self.now >= self.ready_at:
@@ -294,6 +314,21 @@ class OpenCourt:
         self.result.seconds = max(0.0, min(self.clock, self.now - self.clock_from))
         self.result.elapsed = self.now
         return self.result
+
+    @staticmethod
+    def out_of_bounds(a: Agent) -> bool:
+        return abs(a.x) > C.WIDTH / 2 - 0.5 or a.y > FULL - 0.5 or a.y < 0.5
+
+    def walk(self, a: Agent, dt: float, boost: float) -> None:
+        """Agent.move without keeping him on the floor (stepping out to inbound, and back in)."""
+        dx, dy = a.tx - a.x, a.ty - a.y
+        d = math.hypot(dx, dy)
+        speed = min(a.max_speed * boost, d * a.ease)
+        want = (dx / d * speed, dy / d * speed) if d > 0.05 else (0.0, 0.0)
+        a.steer(want, dt)
+        a.travelled += math.hypot(a.vx, a.vy) * dt
+        a.x += a.vx * dt
+        a.y += a.vy * dt
 
     def speed_for(self, a: Agent) -> float:
         if a is self.holder:
@@ -340,8 +375,8 @@ class OpenCourt:
             self.shot_from = self.now          # the shot clock starts on the catch
             if self.clock_stopped:
                 self.clock_from = self.now
-            inb = f["passer"]
-            inb.place(inb.x, FULL - 1.0)       # step back in
+            # The inbounder steps back in on his own (walk): placing him in jumped
+            # him back to the baseline if he had already stepped in during the throw.
             self.ready_at = self.now + 0.2
             self.lanes = self.assign_lanes()
         else:
@@ -428,14 +463,25 @@ class OpenCourt:
                                            off_line, d))
 
     def assign_roles(self, ball: tuple[float, float]) -> None:
-        """Deepest defender to the rim, nearest (of the rest) to the ball, the others to
-        the most dangerous attackers."""
+        """Deepest defender to the rim (on a push), nearest (of the rest) to the ball, the
+        others to the most dangerous attackers. On a walk-up a defender keeps the job he
+        had unless another is ``role_stick`` ft better placed for it: re-picking from
+        scratch every 0.3 s swapped men back and forth as they ran, and every swap was a
+        cut across. (On a push it's a scramble: the nearest man, every time.)"""
+        stick = 0.0 if self.push else self.t.role_stick
+        old = self.roles
+
+        def keeps(d, role) -> float:
+            return stick if old.get(id(d)) == role else 0.0
+
         free = list(self.defense)
         roles: dict[int, tuple] = {}
-        rim = min(free, key=lambda d: C.dist_to_rim(d.pos))
-        roles[id(rim)] = ("rim", None)
-        free.remove(rim)
-        stopper = min(free, key=lambda d: C.dist(d.pos, ball) + 0.5 * max(0.0, d.y - ball[1]))
+        if self.push or self.t.walkup_rim:
+            rim = min(free, key=lambda d: C.dist_to_rim(d.pos) - keeps(d, ("rim", None)))
+            roles[id(rim)] = ("rim", None)
+            free.remove(rim)
+        stopper = min(free, key=lambda d: C.dist(d.pos, ball) + 0.5 * max(0.0, d.y - ball[1])
+                      - keeps(d, ("ball", None)))
         roles[id(stopper)] = ("ball", None)
         free.remove(stopper)
         threats = sorted((a for a in self.offense if a is not self.holder),
@@ -443,10 +489,39 @@ class OpenCourt:
         for a in threats:
             if not free:
                 break
-            d = min(free, key=lambda d: C.dist(d.pos, a.pos))
+            d = min(free, key=lambda d: C.dist(d.pos, a.pos) - keeps(d, ("man", a)))
             roles[id(d)] = ("man", a)
             free.remove(d)
         self.roles = roles
+
+    def handover_guards(self) -> list[int]:
+        """The half court's matchups after a walk-up: whoever each defender picked up on
+        the way back (the ball stopper takes the ball), the rest by ``matchups``; after a
+        push, ``matchups`` (scrambled)."""
+        if self.t.role_stick <= 0 or self.push:
+            return matchups(self.offense, self.defense)
+        guards = [-1] * len(self.offense)
+        taken = set()
+        for j, d in enumerate(self.defense):
+            role = self.roles.get(id(d))
+            if role is None:
+                continue
+            kind, man = role
+            if kind == "ball":
+                man = self.holder
+            if kind == "rim" or man is None or man not in self.offense:
+                continue
+            i = self.offense.index(man)
+            if guards[i] < 0:
+                guards[i] = j
+                taken.add(j)
+        for i in sorted(range(len(self.offense)), key=lambda i: C.dist_to_rim(self.offense[i].pos)):
+            if guards[i] < 0:
+                free = [j for j in range(len(self.defense)) if j not in taken]
+                j = min(free, key=lambda j: C.dist(self.defense[j].pos, self.offense[i].pos))
+                guards[i] = j
+                taken.add(j)
+        return guards
 
     def ball_pos(self) -> tuple[float, float]:
         if self.flight:
@@ -577,7 +652,7 @@ class OpenCourt:
             "holder": h,
             "shot_clock": 24.0 - used,
             "game_clock": self.game_clock,
-            "guards": matchups(self.offense, self.defense),
+            "guards": self.handover_guards(),
             "mode": mode,
             "decide_in": decide,
         }
@@ -758,7 +833,8 @@ class DeadBallInbound(OpenCourt):
                 if self.out_of_bounds(a) or (a is self.inbounder and not self.caught):
                     self.walk(a, dt, self.speed_for(a))     # move() would keep him on the floor
                 else:
-                    a.move(dt, self.now, self.speed_for(a))
+                    a.move(dt, self.now, self.speed_for(a), 1.0,
+                           self.t.brake if a in self.defense else 0.0, self.t.brake_range)
             self.g.separate()
             self.record_frame()
             if self.caught and self.flight is None and self.now >= self.ready_at:
@@ -780,21 +856,6 @@ class DeadBallInbound(OpenCourt):
         self.result.seconds = max(0.0, min(self.clock, self.now - self.clock_from))
         self.result.elapsed = self.now
         return self.result
-
-    @staticmethod
-    def out_of_bounds(a: Agent) -> bool:
-        return abs(a.x) > C.WIDTH / 2 - 0.5 or a.y > FULL - 0.5 or a.y < 0.5
-
-    def walk(self, a: Agent, dt: float, boost: float) -> None:
-        """Agent.move without keeping him on the floor (stepping out to inbound, and back in)."""
-        dx, dy = a.tx - a.x, a.ty - a.y
-        d = math.hypot(dx, dy)
-        speed = min(a.max_speed * boost, d * a.ease)
-        want = (dx / d * speed, dy / d * speed) if d > 0.05 else (0.0, 0.0)
-        a.steer(want, dt)
-        a.travelled += math.hypot(a.vx, a.vy) * dt
-        a.x += a.vx * dt
-        a.y += a.vy * dt
 
     def speed_for(self, a: Agent) -> float:
         t = self.t

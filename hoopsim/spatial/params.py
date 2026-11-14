@@ -51,9 +51,10 @@ class SpatialParams:
     # --- shot model ------------------------------------------------------------
     contest_inside: float = 1.126         # multiplies the contest penalty at the rim and close
     contest_outside: float = 1.7          # ... and on mid-range and three-point jumpers (was 1.602; README "Defence that recovers")
-    rim_make_adj: float = -0.025          # added to the open make chance at the rim (README "Patient offence": -0.03; "Defence that recovers")
-    three_make_adj: float = -0.023        # added to the open make chance from three (was -0.0204; README "Shots with room")
-    foul_scale: float = 1.05              # multiplies shooting-foul chances (search chose 1.28; held at 1, see README; 1.05: README "Steadier leagues")
+    rim_make_adj: float = -0.015          # added to the open make chance at the rim (README "Patient offence": -0.03; "Defence that recovers": -0.025; "Values that match the engine": rim FG .660 against .666)
+    three_make_adj: float = -0.0275       # added to the open make chance from three (was -0.0204; README "Shots with room": -0.023; "Values that match the engine": -0.026; "Last audit flags")
+    short_make_adj: float = -0.02         # ... and in the short paint (README "Values that match the engine": .468 against .449)
+    foul_scale: float = 1.0               # multiplies shooting-foul chances (search chose 1.28; held at 1, see README; 1.05 in README "Steadier leagues", 1.0 again in "Values that match the engine")
     # --- turnovers and rebounds ------------------------------------------------
     dribble_turnover_per_sec: float = 0.05    # (0.04 before README "Steadier leagues") with a defender in your face (was 0.0576, then 0.045; on-ball men stay closer since README "Defence that recovers")
     pass_steal_scale: float = 0.037       # was 0.213, when ~5% of passes were lost (NBA ~2-2.5%), then 0.045 (README "Defence that recovers")
@@ -82,11 +83,11 @@ class SpatialParams:
     # shot, a drive without an edge, a post-up) lose this many points of value with
     # ``patience_full`` or more on the shot clock, fading to nothing at ``patience_none``.
     # Great looks (worth ``patience_great``+ points) and beaten defenders are taken anyway.
-    patience: float = 0.5                 # was 0.3 (README "Shots with room": closeouts stop further off, so more looks pass the bar)
+    patience: float = 0.45                # 0.5 before README "Values that match the engine"; was 0.3 (README "Shots with room": closeouts stop further off, so more looks pass the bar)
     patience_full: float = 17.0           # was 14, then 16 (README "Defence that recovers"; "Shots with room")
     patience_none: float = 3.0            # was 4 (README "Defence that recovers")
     patience_great: float = 1.25
-    patience_three: float = 0.9           # (1.0 before README "Steadier leagues") ... scaled by this for threes (0.25 when closeouts overran; README "Defence that recovers"; then 0.8)
+    patience_three: float = 1.2           # ... scaled by this for threes (0.25 when closeouts overran; README "Defence that recovers"; then 0.8, 1.0, 0.9 in README "Steadier leagues" with stale values, 1.2 in "Values that match the engine")
     patience_hold: float = 0.3            # ... and standing on the ball by this share of it
     # Off-ball spacing: after a catch, a perimeter man this close (ft) to the ball or a
     # teammate's spot fills the nearest open spot instead (0: off).
@@ -168,6 +169,39 @@ class SpatialParams:
     # is a post-up, so both bigs there every time made post-heavy teams post about once a
     # possession, with the turnovers and offensive rebounds that brings.
     inside_pair: float = 0.4
+    # Values that match the engine (README "Values that match the engine"): the expected
+    # points a decision sees for a shot are the whole shot as it's played, with the block
+    # chance and the shooting foul and its free throws, not just make chance x points.
+    # Rim attempts are fouled ~23% of the time and blocked ~5%: their make-only value
+    # ran 0.3 points over what they made from the floor and 0.13 under what they scored,
+    # while catch-and-shoot threes were valued about right. So the learned weight on
+    # expected points fell with every retrain (0.94 -> 0.69) and shot quality counted for
+    # less and less. 1: whole shot, 0: make chance x points.
+    shot_value_whole: float = 1.0
+    # A pull-up's contest is predicted from where his man is and how fast he can get to
+    # the pull-up point, stopping a stride off as on any jumper (see ``pullup_contest`` in
+    # sim.py). 1: on, 0: the old guess (the man's current gap).
+    pullup_contest: float = 1.0
+    # ... and contested as pull-ups are: the man giving ground on the dribble contests a
+    # jumper off the dribble at this share of a closeout's effect. Contested ~3.8 ft off,
+    # pull-ups went in at .38 from mid-range and .29 from three (NBA ~.41 and ~.33).
+    dribble_contest: float = 0.6
+    # Foul drawing (README "Last audit flags"): as in the statistical engine, each point
+    # of the shooter's ``drawing_fouls`` rating multiplies his shooting-foul odds by
+    # exp(``foul_drawing``) from ``foul_drawing_centre``, the odds capped at 0.6 a shot.
+    # The foul-weighted average rating in spatial games is ~12.0; the centre is a bit
+    # lower because the paint closeouts below take some contact out. It's in
+    # ``foul_chance``, so whole-shot values see it too. 0: off.
+    foul_drawing: float = 0.10
+    foul_drawing_centre: float = 11.8
+    # Very tight shots (README "Last audit flags"). A defender recovering to a catch in
+    # the paint (within ``closeout_paint_range`` ft of the rim) walls up between the man
+    # and the rim ``closeout_paint`` ft off the catch, a step away with his arms up,
+    # instead of 2.5 ft (as on any catch inside 20 ft), which put him in the catcher's
+    # body when the finisher gathered: a third of dunker-spot finishes went up with the
+    # man touching him. 0: off.
+    closeout_paint: float = 3.5
+    closeout_paint_range: float = 10.0
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -268,7 +302,13 @@ LEGACY_PARAMS = SpatialParams(
     team_bias_span=0.0,
     rebound_rating=0.25,
     post_strip=1.0,
+    shot_value_whole=0.0,
+    short_make_adj=0.0,
+    pullup_contest=0.0,
+    dribble_contest=1.0,
     inside_pair=1.0,
+    foul_drawing=0.0,
+    closeout_paint=0.0,
 )
 
 # Searched fields: (low, high). Everything else stays at its default.

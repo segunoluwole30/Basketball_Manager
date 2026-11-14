@@ -43,6 +43,9 @@ ACCEL_PER_POINT = 0.6       # ... per point of speed rating
 SCREEN_BRAKE = 1.4          # a screen stops a defender this much harder (body contact)
 TRACK_MODES = ("setup", "probe", "drive", "pass", "post", "pullup")   # off-ball defenders track their man
 SEPARATE_PASSES = 2         # body-separation passes per tick (was 1)
+# Nobody covers more than this in a tick (ft/s): a sprinter shoved by a body he ran
+# into was carried past 32 ft/s, a "teleport" (README "Last audit flags").
+MAX_STEP_SPEED = 30.0
 
 # Animation cues in recorded possessions ("actions": [frame, player, action, other]):
 # what a player starts doing at that frame, for the viewer; recording them changes
@@ -93,6 +96,7 @@ class SpatialTuning:
     shooting_foul: dict = field(default_factory=lambda: {RIM_ZONE: 0.42, CLOSE_ZONE: 0.20, MID_ZONE: 0.06, THREE_ZONE: 0.025})
     block_base: dict = field(default_factory=lambda: {RIM_ZONE: 0.14, CLOSE_ZONE: 0.09, MID_ZONE: 0.02, THREE_ZONE: 0.01})
     free_throw: float = 0.775
+    fouled_make: float = 0.45             # a fouled shot goes in at this share of its make chance
     # dribble_turnover_per_sec, pass_steal_scale, errant_pass, defensive_rebound_edge
     # and the help trigger distance live in SpatialParams (params.py).
     pass_speed: float = 40.0                  # ft/s
@@ -192,10 +196,11 @@ class Agent:
         self.vy += sy
 
     def move(self, dt: float, now: float, speed_boost: float = 1.0, accel_boost: float = 1.0,
-             brake: float = 0.0) -> None:
+             brake: float = 0.0, brake_range: float = 10.0) -> None:
         """``accel_boost``: acceleration multiplier (a closeout sprint); ``brake``: slow
         down in time to stop at the target, decelerating at this share of the
-        acceleration limit (0: ease in only)."""
+        acceleration limit (0: ease in only), from ``brake_range`` ft out (a full
+        sprint needs ~20)."""
         if now < self.stuck_until:             # caught on a screen: body contact stops him
             self.steer((0.0, 0.0), dt, SCREEN_BRAKE * self.accel)
         else:
@@ -203,7 +208,7 @@ class Agent:
             d = math.hypot(dx, dy)
             top = self.max_speed * speed_boost
             speed = min(top, d * self.ease)    # ease in to the target
-            if brake > 0 and d < 10.0:         # ... braking in time: a body can't stop dead
+            if brake > 0 and d < brake_range:  # ... braking in time: a body can't stop dead
                 speed = min(speed, math.sqrt(2.0 * brake * self.accel * accel_boost * d))
             want = (dx / d * speed, dy / d * speed) if d > 0.05 else (0.0, 0.0)
             self.steer(want, dt, self.accel * accel_boost)
@@ -325,7 +330,8 @@ class HalfCourtGame:
                  THREE_ZONE: "three_point"}[z]
         per_point = t.three_skill_per_point if z == THREE_ZONE else t.skill_per_point
         prob = t.make_open[z] + per_point * (shooter.a(skill) - 10)
-        prob += self.p.rim_make_adj if z == RIM_ZONE else self.p.three_make_adj if z == THREE_ZONE else 0.0
+        prob += (self.p.rim_make_adj if z == RIM_ZONE else self.p.three_make_adj if z == THREE_ZONE
+                 else self.p.short_make_adj if z == CLOSE_ZONE else 0.0)
         prob += 0.003 * (shooter.a("composure") - 10)
         if defender is None:
             defender, contest_d = self.nearest_defender(p)
@@ -333,6 +339,8 @@ class HalfCourtGame:
         d_skill = defender.a("interior_defense" if z in (RIM_ZONE, CLOSE_ZONE) else "perimeter_defense")
         quality = 1 + 0.03 * (d_skill - 10) + 0.06 * (defender.height - shooter.height)
         scale = self.p.contest_inside if z in (RIM_ZONE, CLOSE_ZONE) else self.p.contest_outside
+        if catch is False and z in (MID_ZONE, THREE_ZONE):
+            scale *= self.p.dribble_contest           # a man giving ground contests a pull-up less
         prob -= t.contest_max[z] * scale * level * max(0.4, quality)
         d_rim = C.dist_to_rim(p)
         if d_rim > 25:
@@ -351,10 +359,50 @@ class HalfCourtGame:
 
     def shot_value(self, shooter: Agent, p=None, contest_d=None, defender=None, moving=False,
                    catch: Optional[bool] = None, post: bool = False, lob: bool = False) -> float:
+        """Expected points of a shot from ``p`` with the nearest defender (or ``defender``)
+        ``contest_d`` ft away. With ``shot_value_whole`` it's the whole shot as
+        ``take_shot`` plays it: the block chance, and the shooting foul with its free
+        throws (an and-one or two or three shots); otherwise make chance x points."""
         p = p or shooter.pos
+        if defender is None:
+            defender, contest_d = self.nearest_defender(p)
         prob, z = self.make_prob(shooter, p, contest_d, defender, moving, catch, post, lob)
         points = 3 if z == THREE_ZONE else 2
-        return prob * points
+        w = self.p.shot_value_whole
+        if w <= 0:
+            return prob * points
+        ft = self.free_throw_pct(shooter)
+        fouled = self.foul_chance(shooter, z, contest_d)
+        made_fouled = prob * self.t.fouled_make
+        whole = ((1.0 - fouled) * prob * points
+                 + fouled * (made_fouled * (points + ft) + (1.0 - made_fouled) * points * ft))
+        whole *= 1.0 - self.block_chance(shooter, defender, z, contest_d)
+        return prob * points + w * (whole - prob * points)
+
+    def block_chance(self, shooter: Agent, defender: Agent, z: str, dd: float) -> float:
+        """The chance the nearest defender, ``dd`` ft away, blocks the shot."""
+        if dd >= 4.0:
+            return 0.0
+        closeness = max(0.0, min(1.0, (4.0 - dd) / 2.5))
+        return (self.t.block_base[z] * math.exp(0.15 * (defender.a("blocking") - 10))
+                * closeness * (1 + 0.15 * (defender.height - shooter.height)))
+
+    def foul_chance(self, shooter: Agent, z: str, dd: float, share: Optional[float] = None) -> float:
+        """The chance a shot is fouled, the nearest defender ``dd`` ft away (the go-to
+        scorer draws more: ``foul_draw``; ``share``: his shot share, default as of now; and
+        so does a good foul drawer: ``foul_drawing``)."""
+        level = max(0.0, min(1.0, (6.0 - dd) / 5.0))
+        if share is None and self.p.foul_draw:
+            share = self.usage_share(shooter)
+        draw = math.exp(self.p.foul_draw * (share - 0.22)) if self.p.foul_draw else 1.0
+        if self.p.foul_drawing:                # his foul-drawing rating, as in the statistical engine
+            draw *= math.exp(self.p.foul_drawing * (shooter.a("drawing_fouls") - self.p.foul_drawing_centre))
+            return min(0.6, self.t.shooting_foul[z] * self.p.foul_scale * (0.3 + 0.7 * level) * draw)
+        return self.t.shooting_foul[z] * self.p.foul_scale * (0.3 + 0.7 * level) * draw
+
+    def free_throw_pct(self, shooter: Agent) -> float:
+        return max(0.35, min(0.95, self.t.free_throw + 0.018 * (shooter.a("free_throw") - 10))
+                   * (1.0 - shooter.fatigue_shot))
 
     # ------------------------------------------------------------------ possession
     def play_possession(self, side: str, start: Optional[dict] = None) -> None:
@@ -386,6 +434,7 @@ class HalfCourtGame:
         self.play: Optional[dict] = None        # the entry action being run (plays.py)
         self.second_actions = 0
         self.decisions: list[tuple[str, list[float]]] = []
+        self.explored: Optional[int] = None    # index of the last random (exploring) decision
         self.result: Optional[str] = None
         self.points = 0
 
@@ -452,7 +501,7 @@ class HalfCourtGame:
         if self.result is None:
             self.result = "stalled"
         if self.recorder is not None:
-            for kind, feats in self.decisions:
+            for kind, feats in self.on_policy_decisions():
                 self.recorder.setdefault(kind, []).append((feats, float(self.points)))
         self.stats["seconds"] += self.now
         self.stats[f"end_{self.result}"] += 1
@@ -545,8 +594,17 @@ class HalfCourtGame:
             moved |= pushed
             pairs = [(i, j) for i, j in pairs if i in pushed or j in pushed]
         half = C.WIDTH / 2
+        cap = MAX_STEP_SPEED * self.t.dt
         for i in moved:                       # nobody is shoved off the floor
-            people[i].x, people[i].y = max(-half, min(half, xs[i])), max(0.0, ys[i])
+            a = people[i]
+            x, y = max(-half, min(half, xs[i])), max(0.0, ys[i])
+            # ... nor faster than a body can go: the shove only takes what his own
+            # step this tick leaves (the overlap left over is settled next tick).
+            sx, sy = a.x - a.vx * self.t.dt, a.y - a.vy * self.t.dt
+            step = math.hypot(x - sx, y - sy)
+            if step > cap:
+                x, y = sx + (x - sx) * cap / step, sy + (y - sy) * cap / step
+            a.x, a.y = x, y
 
     def record_frame(self) -> None:
         if not self.record:
@@ -821,6 +879,13 @@ class HalfCourtGame:
         pace = p.pace(self.teams[self.side].tactics.pace)
         return -p.patience * f * max(0.3, 1.0 - 0.06 * (pace - 10))
 
+    def on_policy_decisions(self) -> list[tuple[str, list[float]]]:
+        """The decisions whose possession points say what they were worth: the last
+        random (exploring) one and everything after it. Earlier decisions were followed by
+        a random choice the players wouldn't make, which would teach them that keeping
+        the ball alive is worth less than it is."""
+        return self.decisions[self.explored or 0:]
+
     def maybe_cut(self, a: Agent, d: Agent) -> None:
         """Off-ball players cut to the rim when their man loses them. Smart players,
         poor shooters and players whose defender is sagging cut most."""
@@ -1017,9 +1082,12 @@ class HalfCourtGame:
     def closeout_gap(self, man: Agent) -> float:
         """Where a closeout stops: about 3 ft on shooters (hand up, still able to
         slide with a drive), more room for non-shooters so they can't drive past."""
-        if C.dist_to_rim(man.pos) < 20:
-            return 2.5
         p = self.p
+        d_rim = C.dist_to_rim(man.pos)
+        if d_rim < p.closeout_paint_range and p.closeout_paint > 0:
+            return p.closeout_paint      # a catch in the paint: wall up a step off him, rim-side
+        if d_rim < 20:
+            return 2.5
         return max(p.closeout_min, min(p.closeout_max, p.closeout_base - p.closeout_slope * (man.a("three_point") - 11)))
 
     def choose_stunter(self, exclude: Optional[Agent]) -> Optional[Agent]:
@@ -1159,7 +1227,7 @@ class HalfCourtGame:
                 scr = min(bigs, key=lambda a: C.dist(a.pos, h.pos))   # the nearer big sets it
                 options.append(("pnr", ("pnr", scr), [1.0, hold_curve(sc - 4), h.a("ball_handling") - 10.0,
                                                       scr.a("strength") - 10.0]))
-            options.append(("hold", ("hold",), [1.0, hold_curve(sc), sc / 24.0]))
+            options.append(("hold", ("hold",), [1.0, hold_curve(sc), sc / 24.0, float(not self.set_defense)]))
             if plays.can_reset(self):
                 options.append(("reset", ("reset",), [1.0, hold_curve(sc - 2.5),
                                                       self.scramble / self.p.scramble_max]))
@@ -1173,6 +1241,7 @@ class HalfCourtGame:
 
         if self.explore and rng.random() < self.explore:
             kind, action, feats = rng.choice(options)              # try something (training only)
+            self.explored = len(self.decisions)
         else:
             temperature = 0.03 + 0.006 * (20 - h.a("basketball_iq"))   # smarter = closer to the best option
             scored = [(self.model.value(k, f) + self.style_bias(h, k, a) + self.situation_bias(k, a)
@@ -1253,6 +1322,23 @@ class HalfCourtGame:
         d = math.hypot(dx, dy) or 1.0
         return max(0.0, (defender.vx * dx + defender.vy * dy) / d)
 
+    def pullup_contest(self, h: Agent, on: Agent, point: tuple[float, float], guess: float) -> float:
+        """How close his man will be when a pull-up from ``point`` goes up (``pullup_contest``):
+        the man starts from where he is now, not from the shooter's side, moves with the
+        ball, and like any jump-shot contest stops a stride off the shooter. The
+        old guess (his gap now, give or take) is the most room he can hope for. Pull-ups
+        valued with the old guess were expected 6-9 ft open and went up ~3.8 ft
+        contested: valued 0.2-0.28 points above what they made."""
+        p = self.p
+        if p.pullup_contest <= 0:
+            return guess
+        d0 = C.dist(on.pos, point)
+        time = C.dist(h.pos, point) / max(1.0, h.max_speed) + self.release_time(h, False)
+        arrive = d0 - on.max_speed * time               # the man on the ball moves with him
+        stop = max(p.contest_reach, p.contest_stop) if p.contest_stop > 0 else p.contest_reach
+        honest = max(min(d0, stop), arrive, 0.0)
+        return min(guess, guess + p.pullup_contest * (honest - guess))
+
     def pull_up_option(self, h: Agent) -> Optional[tuple]:
         """One or two hard dribbles in from the arc into a mid-range jumper."""
         d_rim = C.dist_to_rim(h.pos)
@@ -1264,6 +1350,7 @@ class HalfCourtGame:
         on = self.guarded_by(h)
         # His man follows him in; he gains a little separation on the stop.
         contest = max(0.0, C.dist(on.pos, h.pos) - 0.5 + 0.02 * (h.a("speed") - on.a("speed")) * 10)
+        contest = self.pullup_contest(h, on, point, contest)
         # Valued as it is shot: a set-and-rise jumper off the dribble (not on the move).
         ep = self.shot_value(h, p=point, contest_d=contest, defender=on, catch=False,
                              moving=self.p.pullup_on_the_move > 0)
@@ -1294,6 +1381,7 @@ class HalfCourtGame:
             return None
         # His man has to react before he can follow: the step buys about half of itself.
         contest = gap + 0.5 * C.dist(point, h.pos) + 0.03 * (h.a("ball_handling") - on.a("perimeter_defense"))
+        contest = self.pullup_contest(h, on, point, contest)
         ep = self.shot_value(h, p=point, contest_d=max(0.0, contest), defender=on, catch=False)
         feats = [1.0, ep, 1.0, 1.0, max(0.0, 6.0 - self.shot_clock) / 6.0]
         return ("shoot", ("pullup", THREE_ZONE, point), feats)
@@ -1805,6 +1893,11 @@ class HalfCourtGame:
                 and C.dist(spot, h.pos) > 0.25):
             self.begin_gather(h, moving, spot)
             return
+        if (self.record and released is None and not lob and self.catch_time == self.now
+                and self.frames and self.frames[-1][5] != self.index[id(h)]):
+            # Caught and shot in the same tick (a set play's read on the catch): show
+            # him with the ball first. Recording only: the play is the same either way.
+            self.record_frame()
         catch = released if released is not None else (None if lob else self.just_caught(moving))
         defender, dd = self.nearest_defender(spot)
         prob, z = self.make_prob(h, spot, dd, defender, moving, catch, post=post, lob=lob)
@@ -1829,9 +1922,7 @@ class HalfCourtGame:
             self.shots_on_floor[id(a)] += 1
         # Block?
         if dd < 4.0:
-            closeness = max(0.0, min(1.0, (4.0 - dd) / 2.5))
-            p_block = (t.block_base[z] * math.exp(0.15 * (defender.a("blocking") - 10))
-                       * closeness * (1 + 0.15 * (defender.height - h.height)))
+            p_block = self.block_chance(h, defender, z, dd)
             if rng.random() < max(0.0, p_block):
                 self.count_attempt(h, z)
                 self.credit(defender, "blk")
@@ -1842,10 +1933,9 @@ class HalfCourtGame:
                 land = C.clamp((h.x + rng.uniform(-6, 6), h.y + rng.uniform(2, 8)))
                 self.start_rebound(h.pos, land, 0.6)
                 return
-        draw = math.exp(self.p.foul_draw * (share - 0.22)) if self.p.foul_draw else 1.0
-        fouled = rng.random() < t.shooting_foul[z] * self.p.foul_scale * (0.3 + 0.7 * level) * draw
+        fouled = rng.random() < self.foul_chance(h, z, dd, share)
         if fouled:
-            prob *= 0.45
+            prob *= t.fouled_make
         made = rng.random() < prob
         bucket = "tight" if dd < 2 else "close" if dd < 4 else "open" if dd < 6 else "wide"
         ctx = ("drive" if self.mode == "drive" else "putback" if self.now - self.orb_time < 2.0
@@ -2116,7 +2206,7 @@ class HalfCourtGame:
             spots[a] = ((-1) ** i * (10 + 3 * i), 24.0)
         held, self.holder = self.holder, shooter          # the official hands him the ball
         self.walk_to(spots)                                # line up for the free throws (no teleport)
-        pct = max(0.35, min(0.95, self.t.free_throw + 0.018 * (shooter.a("free_throw") - 10)) * (1.0 - shooter.fatigue_shot))
+        pct = self.free_throw_pct(shooter)
         made = 0
         last_missed = False
         for _ in range(n):
@@ -2228,6 +2318,10 @@ class HalfCourtGame:
             self.act(fouler, "foul", self.holder)
             if self.bonus:
                 self.say(f"Foul on {fouler.p.name}: in the penalty, two shots")
+                # This tick's movement is done: show it before the walk to the lane
+                # (otherwise the first walk frame carries two ticks of running).
+                self.record_frame()
+                self.now += self.t.dt
                 self.free_throws(self.holder, 2, fouler)
             else:
                 self.credit(fouler, "pf")

@@ -118,12 +118,20 @@ export interface GameState {
   save_path?: string;
   unsaved?: boolean;
   day?: number;
+  /** the date the league is at (the last day done) and the day Next day plays */
+  today_date?: string;
+  next_date?: string;
+  next_day_games?: number;
+  next_day_game?: GameView | null;
+  next_day_mine?: boolean;
   deadline_in?: number | null;
   season_over?: boolean;
   open_offers?: number;
   unread?: number;
   offseason_step?: string | null;
   offseason_kind?: string | null;
+  /** This season's awards, once announced (end of the regular season). */
+  awards?: { season: number; seen: boolean } | null;
 }
 
 export interface GameView {
@@ -146,6 +154,8 @@ export interface GameView {
   at_home?: boolean;
   won?: boolean;
   score?: string;
+  /** Playoff games: the series and its score after this game (before it, if unplayed). */
+  series?: { title: string; game: number; play_in: string; status: string };
 }
 
 export interface InboxItem {
@@ -161,4 +171,7 @@ export interface InboxItem {
   offer?: { team_id: number; you_give: number[]; you_get: number[] };
   player_id?: number;
   game_ids?: number[];
+  awards_season?: number;
+  replay_id?: number;        // an All-Star exhibition's recording
+  watch_url?: string;        // something to watch in the viewer (the Three-Point Contest)
 }

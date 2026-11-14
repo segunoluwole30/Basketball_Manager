@@ -7,7 +7,7 @@ import { Badge, Empty, Fetched, longDate, Panel, PlayerName, shortDate, Stat, Ta
 const KIND_BADGE: Record<string, [string, string]> = {
   results: ["neutral", "Results"], injury: ["bad", "Injury"], trade: ["good", "Trade"], offer: ["warn", "Offer"],
   league: ["neutral", "League"], season: ["info", "Season"], playoffs: ["info", "Playoffs"],
-  offseason: ["info", "Offseason"], welcome: ["info", "Board"],
+  offseason: ["info", "Offseason"], welcome: ["info", "Board"], awards: ["good", "Awards"],
 };
 
 function OfferItem({ m }: { m: InboxItem }) {
@@ -57,6 +57,12 @@ export function Inbox({ items }: { items: InboxItem[] }) {
                 <div className="inbox-body">
                   {m.body.map((line, i) => <p key={i}>{line}</p>)}
                   {m.kind === "offer" && <OfferItem m={m} />}
+                  {m.awards_season != null && (
+                    <a className="btn btn-small" href={`#/league?tab=awards&season=${m.awards_season}`}>See the awards</a>
+                  )}
+                  {(m.watch_url || m.replay_id) && (
+                    <p><a className="btn btn-small" href={m.watch_url ?? `/api/replay/${m.replay_id}`} target="_blank" rel="noopener">Watch</a></p>
+                  )}
                   {m.kind === "results" && m.game_ids?.length ? (
                     <div className="row gap wrap">{m.game_ids.slice(-6).map((g) => <button key={g} className="btn btn-small btn-ghost" onClick={() => setBox(g)}>Box score #{g}</button>)}</div>
                   ) : null}
@@ -117,7 +123,13 @@ export function Home({ go }: { go: (r: string) => void }) {
             {s.stage === "awards" && (
               <div className="callout">The season is over. <button className="btn btn-primary btn-small" onClick={() => go("offseason")}>Begin the offseason</button></div>
             )}
-            {s.stage === "season_over" && <div className="callout">The regular season is over: start the playoffs from the top bar.</div>}
+            {s.stage === "season_over" && (
+              <div className="callout">
+                The regular season is over and the awards are in.
+                <button className="btn btn-small" onClick={() => go(`league?tab=awards&season=${s.season}`)}>See the awards</button>
+                <span className="muted small">Start the playoffs from the top bar.</span>
+              </div>
+            )}
             <div className="home-grid">
               <Panel title="Inbox" className="span-2">
                 <Inbox items={d.inbox} />
@@ -127,7 +139,7 @@ export function Home({ go }: { go: (r: string) => void }) {
                   <Table dense rows={d.standings} rowKey={(r: any) => r.team_id} rowClass={(r: any) => (r.team_id === s.team.id ? "row-me" : "")}
                     columns={[
                       { key: "rank", label: "#", num: true, desc: false },
-                      { key: "abbr", label: "Team", desc: false },
+                      { key: "abbr", label: "Team", desc: false, render: (r: any) => <span className="team-cell"><span className={`clinch ${r.marker ? `clinch-${r.marker}` : ""}`}>{r.marker}</span>{r.abbr}</span> },
                       { key: "w", label: "W", num: true },
                       { key: "l", label: "L", num: true },
                       { key: "gb", label: "GB", num: true, desc: false, render: (r: any) => (r.gb ? r.gb.toFixed(1) : "–") },

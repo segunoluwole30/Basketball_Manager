@@ -1,11 +1,13 @@
 import { AllStar } from "./AllStar";
+import { Bracket } from "./Bracket";
+import { AwardsView } from "./Awards";
 import { useState } from "react";
 import { GameView } from "../api";
 import { useFetch, useGame } from "../context";
 import { Empty, ErrorBox, Fetched, Loading, Modal, Panel, PlayerName, pct, shortDate, Table, Tabs } from "../components/ui";
 import { TeamPicker } from "./Squad";
 
-type Tab = "standings" | "leaders" | "schedule" | "results" | "playoffs" | "allstar" | "history";
+type Tab = "standings" | "leaders" | "schedule" | "results" | "playoffs" | "awards" | "allstar" | "history";
 
 export function BoxScoreModal({ id, onClose }: { id: number; onClose: () => void }) {
   const f = useFetch<any>(`/api/game/${id}`);
@@ -16,7 +18,7 @@ export function BoxScoreModal({ id, onClose }: { id: number; onClose: () => void
         <Empty>{g.played ? "Box scores are kept for the current season only." : "Not played yet."}</Empty>
       ) : (
         <div className="box">
-          <div className="muted small">{shortDate(g.date)}{g.playoff ? " · playoffs" : ""}</div>
+          <div className="muted small">{shortDate(g.date)}{g.series ? ` · ${g.series.title}${g.series.play_in ? "" : ` · Game ${g.series.game}`} · ${g.series.status}` : g.playoff ? " · playoffs" : ""}</div>
           <table className="table table-dense linescore">
             <thead><tr><th>Team</th>{g.box.away.periods.map((_: number, i: number) => <th key={i} className="num">{i < 4 ? `Q${i + 1}` : `OT${i - 3}`}</th>)}<th className="num">T</th></tr></thead>
             <tbody>
@@ -56,6 +58,40 @@ export function BoxScoreModal({ id, onClose }: { id: number; onClose: () => void
   );
 }
 
+function RaceModal({ teamId, onClose }: { teamId: number; onClose: () => void }) {
+  const f = useFetch<any>(`/api/standings/race/${teamId}`);
+  const d = f.data && f.data.team_id === teamId ? f.data : null;
+  const status = (r: any) => {
+    if (r.clinched) return <b className="race-in">Clinched</b>;
+    if (r.eliminated) return <span className="race-out">Out of reach</span>;
+    const parts = [];
+    if (r.wins_to_clinch != null) parts.push(`clinched with ${r.wins_to_clinch} more win${r.wins_to_clinch === 1 ? "" : "s"}`);
+    if (r.losses_to_elimination != null) parts.push(`out after ${r.losses_to_elimination} more loss${r.losses_to_elimination === 1 ? "" : "es"}`);
+    return parts.length ? parts.join(" · ") : <span className="muted">open</span>;
+  };
+  return (
+    <Modal title={d ? <>{d.marker && <span className={`clinch clinch-${d.marker}`}>{d.marker}</span>} {d.name}</> : "Playoff race"} onClose={onClose}>
+      {f.error ? <ErrorBox error={f.error} /> : !d ? <Loading what="Working out the race" /> : (
+        <>
+          <table className="table table-dense race-table">
+            <thead><tr><th>Race</th><th>Status</th></tr></thead>
+            <tbody>
+              {d.races.map((r: any) => (
+                <tr key={r.key}><td>{r.marker && <span className={`clinch clinch-${r.marker}`}>{r.marker}</span>} {r.label}</td><td>{status(r)}</td></tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="muted small">
+            Win (or lose) that many of the remaining games and it's settled whatever else happens: these numbers count only
+            this team's own results, so results elsewhere can settle it sooner. A tie the tie-breakers can't settle yet
+            counts against the team when clinching and for it when eliminating.
+          </p>
+        </>
+      )}
+    </Modal>
+  );
+}
+
 function Standings() {
   const f = useFetch<any>("/api/standings");
   const [view, setView] = useState<"conference" | "division">(() => {
@@ -65,8 +101,15 @@ function Standings() {
     setView(v);
     try { localStorage.setItem("hoopsim-standings", v); } catch { /* private mode */ }
   };
+  const [race, setRace] = useState<number | null>(null);
+  const meaning = (m: string) => f.data?.legend?.find((x: any) => x.marker === m)?.meaning ?? "";
   const teamCell = (r: any) => (
-    <span>{r.name}{r.div_leader && <span className="div-lead" title="Division leader"> ⓓ</span>}</span>
+    <span className="team-cell">
+      <span className={`clinch ${r.marker ? `clinch-${r.marker}` : ""}`} title={r.markers?.map(meaning).join("; ") || undefined}
+        aria-label={r.marker ? meaning(r.marker) : undefined}>{r.marker}</span>
+      <span className="name-full">{r.name}</span><span className="name-abbr">{r.abbr}</span>
+      {r.div_leader && <span className="div-lead" title="Division leader"> ⓓ</span>}
+    </span>
   );
   const cols = (division: boolean) => [
     division ? { key: "div_rank", label: "#", num: true, desc: false } : { key: "rank", label: "#", num: true, desc: false },
@@ -77,12 +120,16 @@ function Standings() {
     division
       ? { key: "div_gb", label: "GB", num: true, desc: false, render: (r: any) => (r.div_gb ? r.div_gb.toFixed(1) : "–") }
       : { key: "gb", label: "GB", num: true, desc: false, render: (r: any) => (r.gb ? r.gb.toFixed(1) : "–") },
-    { key: "div_record", label: "DIV", title: "Record against division rivals", sort: (r: any) => +r.div_record.split("-")[0] },
-    { key: "conf_record", label: "CONF", title: "Record against the conference", sort: (r: any) => +r.conf_record.split("-")[0] },
-    { key: "net", label: "NET", title: "Point differential per game", num: true, render: (r: any) => (r.net > 0 ? `+${r.net}` : r.net) },
-    { key: "last10", label: "L10", sort: (r: any) => +r.last10.split("-")[0] },
-    { key: "streak", label: "STRK" },
+    { key: "div_record", label: "DIV", title: "Record against division rivals", className: "col-wide", sort: (r: any) => +r.div_record.split("-")[0] },
+    { key: "conf_record", label: "CONF", title: "Record against the conference", className: "col-wide", sort: (r: any) => +r.conf_record.split("-")[0] },
+    { key: "net", label: "NET", title: "Point differential per game", num: true, className: "col-wide col-net", render: (r: any) => (r.net > 0 ? `+${r.net}` : r.net) },
+    { key: "last10", label: "L10", title: "Last 10 games", sort: (r: any) => +r.last10.split("-")[0] },
+    { key: "streak", label: "STRK", title: "Current streak", sort: (r: any) => (r.streak ? (r.streak[0] === "W" ? 1 : -1) * +r.streak.slice(1) : 0) },
   ];
+  const table = (rows: any[], division: boolean) => (
+    <Table dense rows={rows} rowKey={(r: any) => r.team_id} rowClass={(r: any) => (r.team_id === f.data?.user_team_id ? "row-me" : "")}
+      onRowClick={(r: any) => setRace(r.team_id)} columns={cols(division)} />
+  );
   return (
     <Fetched f={f} what="Loading standings">
       {(d) => (
@@ -97,12 +144,19 @@ function Standings() {
             </span>
             <span className="muted small">ⓓ division leader. Ties: head-to-head, division winner, division and conference record, point differential (NBA order).</span>
           </div>
+          {d.legend?.length > 0 && (
+            <ul className="clinch-legend small" aria-label="Standings markers">
+              {d.legend.map((m: any) => (
+                <li key={m.marker}><span className={`clinch clinch-${m.marker}`}>{m.marker}</span> {m.meaning}</li>
+              ))}
+              <li className="muted">Markers appear once they're mathematically certain. Click a team for its magic numbers.</li>
+            </ul>
+          )}
           {view === "conference" ? (
             <div className="two-col">
               {d.conferences.map((c: any) => (
                 <Panel key={c.conference} title={`${c.conference}ern Conference`.replace("ernern", "ern")}>
-                  <Table dense rows={c.teams} rowKey={(r: any) => r.team_id} rowClass={(r: any) => (r.team_id === d.user_team_id ? "row-me" : "")}
-                    columns={cols(false)} />
+                  {table(c.teams, false)}
                 </Panel>
               ))}
             </div>
@@ -112,14 +166,14 @@ function Standings() {
                 <div key={c.conference} className="stack">
                   {d.divisions.filter((x: any) => x.conference === c.conference).map((x: any) => (
                     <Panel key={x.division} title={`${x.division} Division`}>
-                      <Table dense rows={x.teams} rowKey={(r: any) => r.team_id} rowClass={(r: any) => (r.team_id === d.user_team_id ? "row-me" : "")}
-                        columns={cols(true)} />
+                      {table(x.teams, true)}
                     </Panel>
                   ))}
                 </div>
               ))}
             </div>
           )}
+          {race != null && <RaceModal teamId={race} onClose={() => setRace(null)} />}
         </>
       )}
     </Fetched>
@@ -161,7 +215,7 @@ function GamesTable({ games, onBox, me }: { games: GameView[]; onBox: (id: numbe
         { key: "away", label: "Away", desc: false, render: (g) => <span className={g.away_id === me ? "me" : ""}>{g.away}</span> },
         { key: "score", label: "Score", sort: (g) => g.day, render: (g) => (g.played ? `${g.away_score} – ${g.home_score}${g.ot ? ` (${g.ot}OT)` : ""}` : "–") },
         { key: "home", label: "Home", desc: false, render: (g) => <span className={g.home_id === me ? "me" : ""}>{g.home}</span> },
-        { key: "res", label: "", render: (g) => (g.won === undefined ? (g.playoff ? <span className="muted small">PO</span> : "") : <b className={g.won ? "good" : "bad"}>{g.won ? "W" : "L"}</b>) },
+        { key: "res", label: "", render: (g) => (g.won === undefined ? (g.playoff ? <span className="muted small" title={g.series?.status}>PO</span> : "") : <b className={g.won ? "good" : "bad"}>{g.won ? "W" : "L"}</b>) },
         { key: "box", label: "", render: (g) => (
           <span className="row gap">
             {g.has_box && <button className="link small" onClick={(e) => { e.stopPropagation(); onBox(g.id); }}>box</button>}
@@ -213,7 +267,7 @@ function Results({ onBox }: { onBox: (id: number) => void }) {
               <button key={g.id} className="score-card" onClick={() => onBox(g.id)} disabled={!g.has_box}>
                 <div className={g.away_score! > g.home_score! ? "winner" : ""}><span>{g.away}</span><b>{g.away_score}</b></div>
                 <div className={g.home_score! > g.away_score! ? "winner" : ""}><span>{g.home}</span><b>{g.home_score}</b></div>
-                <div className="muted small">{g.ot ? `${g.ot}OT` : "Final"}{g.playoff ? " · PO" : ""}</div>
+                <div className="muted small">{g.ot ? `${g.ot}OT` : "Final"}{g.series ? ` · ${g.series.status}` : g.playoff ? " · PO" : ""}</div>
               </button>
             ))}
           </div>
@@ -223,70 +277,25 @@ function Results({ onBox }: { onBox: (id: number) => void }) {
   );
 }
 
-function Bracket({ onBox }: { onBox: (id: number) => void }) {
-  const { state } = useGame();
-  const f = useFetch<any>("/api/playoffs");
-  const me = state?.team?.id;
-  return (
-    <Fetched f={f} what="Loading the bracket">
-      {(d) => {
-        if (!d.series.length) {
-          return <Empty>{d.stage === "regular_season" ? "The playoffs start when the regular season ends." : d.stage === "season_over" ? "The bracket is set: start the playoffs from the top bar." : "No playoff bracket this season yet. Past champions are under History."}</Empty>;
-        }
-        const groups: Record<string, any[]> = {};
-        d.series.forEach((s: any) => { const k = s.conference ?? "Finals"; (groups[k] ??= []).push(s); });
-        return (
-          <div className="bracket">
-            {d.champion && <div className="callout">🏆 {state?.teams?.[String(d.champion)]?.name} are the champions!</div>}
-            {Object.entries(groups).map(([conf, series]) => {
-              const rounds = [...new Set(series.map((s) => s.round))].sort();
-              return (
-                <Panel key={conf} title={conf === "Finals" ? "Finals" : `${conf}`}>
-                  <div className="bracket-rounds">
-                    {rounds.map((r) => (
-                      <div key={r} className="bracket-round">
-                        <div className="muted small">{conf === "Finals" ? "Finals" : `Round ${r}`}</div>
-                        {series.filter((s) => s.round === r).map((s) => (
-                          <div key={s.id} className={`series ${s.high_id === me || s.low_id === me ? "series-me" : ""}`}>
-                            {[["high", s.high_seed, s.high, s.high_wins, s.high_id], ["low", s.low_seed, s.low, s.low_wins, s.low_id]].map(([k, seed, abbr, wins, id]) => (
-                              <div key={k as string} className={`series-team ${s.over && s.winner_id === id ? "winner" : s.over ? "loser" : ""}`}>
-                                <span className="muted small">{seed}</span> <span>{abbr}</span> <b>{wins}</b>
-                              </div>
-                            ))}
-                            <div className="series-games">
-                              {s.games.map((g: GameView, i: number) => (
-                                <button key={g.id} className="link small" onClick={() => onBox(g.id)} title={`${g.away} ${g.away_score} @ ${g.home} ${g.home_score}`}>G{i + 1}</button>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                </Panel>
-              );
-            })}
-          </div>
-        );
-      }}
-    </Fetched>
-  );
-}
-
-function History() {
+function History({ onAwards }: { onAwards: (season: number) => void }) {
   const f = useFetch<any>("/api/history");
   return (
     <Fetched f={f} what="Loading history">
       {(d) => !d.seasons.length ? <Empty>No completed seasons yet. Champions and awards appear here.</Empty> : (
         <div className="history">
           {d.seasons.map((s: any) => (
-            <Panel key={s.season} title={`${s.season}-${String((s.season + 1) % 100).padStart(2, "0")}`}>
+            <Panel key={s.season} title={`${s.season}-${String((s.season + 1) % 100).padStart(2, "0")}`}
+              actions={<button className="btn btn-small" onClick={() => onAwards(s.season)}>All awards</button>}>
               <p><b>{s.champion?.name}</b> beat {s.runner_up?.name} {s.finals} in the Finals.</p>
               <div className="awards">
                 {s.awards.map((a: any) => (
                   <div key={a.award}><span className="muted small">{a.award}</span><br />{a.player_id != null ? <PlayerName p={{ id: a.player_id, name: a.name }} /> : "–"}</div>
                 ))}
               </div>
+              {s.all_nba_first?.length > 0 && (
+                <p className="small"><span className="muted">All-NBA First Team:</span> {s.all_nba_first.map((p: any, i: number) => (
+                  <span key={p.id}>{i ? ", " : ""}<PlayerName p={p} /></span>))}</p>
+              )}
               <details>
                 <summary className="small">Final standings</summary>
                 <ol className="small">{s.standings.map((r: any) => <li key={r.team?.id}>{r.team?.name} {r.w}-{r.l}</li>)}</ol>
@@ -304,6 +313,7 @@ function History() {
 
 export function League({ params }: { params: URLSearchParams; go: (r: string) => void }) {
   const [tab, setTab] = useState<Tab>((params.get("tab") as Tab) || "standings");
+  const [awardSeason, setAwardSeason] = useState<number | undefined>(params.get("season") ? +params.get("season")! : undefined);
   const [box, setBox] = useState<number | null>(null);
   return (
     <div>
@@ -312,7 +322,7 @@ export function League({ params }: { params: URLSearchParams; go: (r: string) =>
         <Tabs value={tab} onChange={setTab} tabs={[
           { key: "standings", label: "Standings" }, { key: "leaders", label: "Leaders" },
           { key: "schedule", label: "Schedule" }, { key: "results", label: "Scores" },
-          { key: "playoffs", label: "Playoffs" }, { key: "allstar", label: "All-Star" },
+          { key: "playoffs", label: "Playoffs" }, { key: "awards", label: "Awards" }, { key: "allstar", label: "All-Star" },
           { key: "history", label: "History" }]} />
       </div>
       {tab === "standings" && <Standings />}
@@ -321,7 +331,8 @@ export function League({ params }: { params: URLSearchParams; go: (r: string) =>
       {tab === "results" && <Results onBox={setBox} />}
       {tab === "playoffs" && <Bracket onBox={setBox} />}
       {tab === "allstar" && <AllStar />}
-      {tab === "history" && <History />}
+      {tab === "awards" && <AwardsView key={awardSeason ?? "now"} initialSeason={awardSeason} />}
+      {tab === "history" && <History onAwards={(s) => { setAwardSeason(s); setTab("awards"); }} />}
       {box != null && <BoxScoreModal id={box} onClose={() => setBox(null)} />}
     </div>
   );

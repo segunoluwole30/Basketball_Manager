@@ -91,6 +91,14 @@ class Tuning:
     # about a third more (NBA: top scorers' FTA/FGA about 0.40, the league's 0.25).
     foul_draw: float = 2.5
     foul_draw_share: float = 0.215         # about the shot-weighted average share (keeps team FTA)
+    # Each point of a shooter's drawing_fouls rating multiplies his shooting-foul odds
+    # (and his chance of being the man fouled in the bonus) by exp(foul_drawing):
+    # 1.105 a point, 2.5x from a 6 to a 15 (NBA: free-throw rates run from about 0.1 to
+    # 0.6 of field-goal attempts, about 2.4x the rate his shot mix and usage suggest for
+    # the best foul drawers). Centred on the shot-weighted average rating so team free
+    # throws stay put.
+    foul_drawing: float = 0.10
+    foul_drawing_centre: float = 11.85
     # Fatigue
     drain_per_second: float = 0.00042      # stamina-10 player on court
     recover_per_second: float = 0.0011     # on the bench
@@ -664,11 +672,13 @@ class _GameSim:
         if late_clock:
             make_p *= t.late_clock_make_factor if late_clock == "hold" else t.chase_make_factor
 
-        # Shooting foul? The man the defence is loading up on draws the whistles.
-        p_foul = t.shooting_foul[zone] * math.exp(0.05 * (shooter.r("strength") - 10)
+        # Shooting foul? Players who draw fouls get them, and so does the man the defence
+        # is loading up on.
+        p_foul = t.shooting_foul[zone] * math.exp(t.foul_drawing * (shooter.p.attributes.drawing_fouls
+                                                                   - t.foul_drawing_centre)
                                                   - 0.04 * (defender.r("basketball_iq") - 10)
                                                   + t.foul_draw * (share - t.foul_draw_share))
-        if rng.random() < p_foul:
+        if rng.random() < min(p_foul, 0.6):
             fouler = defender
             if zone == RIM and rng.random() < 0.4:
                 fouler = max(defense.lineup, key=lambda d: d.r("interior_defense"))
@@ -814,7 +824,9 @@ class _GameSim:
             self.substitutions(offense)
             self.substitutions(defense)
             if bonus:
-                shooter = _pick(rng, offense.lineup, handler_w)
+                shooter = _pick(rng, offense.lineup,
+                                [w * math.exp(t.foul_drawing * (ig.p.attributes.drawing_fouls - t.foul_drawing_centre))
+                                 for w, ig in zip(handler_w, offense.lineup)])
                 result = "miss_ft" if self.free_throws(offense, shooter, 2) else "score"
                 return self._finish(offense, defense, result)
             self.advance(rng.uniform(2, 6))   # inbound and reset

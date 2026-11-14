@@ -14,6 +14,7 @@ import re
 import shlex
 from typing import Callable, Optional
 
+from . import awards as season_awards
 from .db import load_league, save_league
 from .generate import generate_league
 from .manager import (
@@ -24,7 +25,8 @@ from .manager import (
 from .contracts import cap_room, payment_route, payroll_for
 from .lineup import POSITIONS
 from .models import Attributes, League, Phase, Player
-from .playoffs import play_playoffs, ranked, start_playoffs, team_records
+from .clinch import race, race_changes, standings_lines
+from .playoffs import eliminated, play_playoffs, ranked, start_playoffs, team_records
 from .season import (
     finish_season, play_regular_season, regular_season_over, run_offseason, trade_deadline_day,
 )
@@ -248,6 +250,7 @@ Season
   sim [N]            play the next N days (default 1)     week     play 7 days
   deadline           play to the trade deadline           end      play the rest of the regular season
   next               regular season over: play the playoffs, then the offseason
+  awards [SEASON]    the season's awards: winners, finalists, All-NBA teams
 Your team
   roster [ABBR]      roster with ratings and contracts    player ID    full scouting report
   lineup             starters and minutes                 auto on|off  assistant sets the lineup?
@@ -302,8 +305,9 @@ class Game:
             extra = f" | trade deadline in {deadline - max(played_days, default=0)} days"
         if regular_season_over(lg):
             extra = " | regular season over: type 'next' for the playoffs"
+        mark = race(lg)[self.me.id]["marker"]
         return (f"[{lg.current_date:%b %d %Y}] {self.me.full_name} {self.record(self.me.id)} "
-                f"({place} in the {self.me.conference}){extra}")
+                f"({place} in the {self.me.conference}{', ' + mark if mark else ''}){extra}")
 
     # -- main loop ---------------------------------------------------------------
     def run(self) -> None:
@@ -345,6 +349,7 @@ class Game:
             return
         before = {g.id for g in lg.games.values() if g.played}
         hurt_before = {p.id for p in lg.roster(self.me.id) if p.injury}
+        race_before = race(lg)
         events = play_regular_season(lg, self.rng, days=days, manager=self.manager)
         new = sorted((g for g in lg.games.values() if g.played and g.id not in before
                       and self.me.id in (g.home_team_id, g.away_team_id)), key=lambda g: g.day)
@@ -357,6 +362,40 @@ class Game:
                 self.say(f"  INJURY: {p.name} - {p.injury.description}, out {p.injury.games_remaining} games")
         for e in events:
             self.say("  " + e)
+        for c in race_changes(lg, race_before, race(lg)):
+            you = c["team_id"] == self.me.id
+            self.say(f"  {'*** ' if you else ''}[{c['marker']}] {c['text']}{' ***' if you else ''}")
+        if regular_season_over(lg):
+            self.say("\nTHE REGULAR SEASON IS OVER. Type 'next' for the playoffs.")
+            self.print_awards(season_awards.ensure(lg))
+
+    def print_awards(self, named) -> None:
+        if not named:
+            return
+        s = named["season"]
+        self.say(f"\nAWARDS {s}-{(s + 1) % 100:02d}")
+        for line in season_awards.report(named, self.me.id):
+            self.say(line)
+
+    def cmd_awards(self, args):
+        lg = self.league
+        if args:
+            season = int(args[0])
+            entry = next((h for h in lg.history if h["season"] == season), None)
+            named = (entry or {}).get("season_awards") or (
+                season_awards.current(lg) if season == lg.season else None)
+            if named is None and entry:
+                self.say(f"  {season}: " + ", ".join(f"{k} {v}" for k, v in entry["award_names"].items() if v))
+                return
+        else:
+            named = season_awards.current(lg) or next(
+                (h["season_awards"] for h in reversed(lg.history) if h.get("season_awards")), None)
+        if named is None:
+            self.say("The season's awards are announced when the regular season ends.")
+            return
+        self.print_awards(named)
+        if named.get("finals_mvp") is not None:
+            self.say(f"  {'Finals MVP':<30}{player_label(lg, named['finals_mvp'])}")
 
     def result_line(self, g) -> str:
         lg = self.league
@@ -396,21 +435,22 @@ class Game:
         if not regular_season_over(lg):
             self.say("The regular season isn't over yet ('end' plays the rest).")
             return
+        if season_awards.current(lg) is None:          # a save from before awards night
+            self.print_awards(season_awards.ensure(lg))
         start_playoffs(lg)
-        made_it = any(self.me.id in (s.high_id, s.low_id) for s in lg.playoffs)
+        made_it = not eliminated(lg, self.me.id)
         self.say("\nPLAYOFFS" + ("" if made_it else " (you missed out this year)"))
         champ = play_playoffs(lg, self.rng)
         for s in sorted(lg.playoffs, key=lambda s: (s.round, s.id)):
-            stage = "Finals" if s.conference is None else f"{s.conference} round {s.round}"
+            stage = "Finals" if s.conference is None else (f"{s.conference} play-in" if s.play_in else f"{s.conference} round {s.round}")
             mark = " <-- you" if self.me.id in (s.high_id, s.low_id) else ""
             self.say(f"  {stage:<16} ({s.high_seed}) {lg.teams[s.high_id].abbreviation} {s.high_wins}-{s.low_wins} "
                      f"{lg.teams[s.low_id].abbreviation} ({s.low_seed}){mark}")
         summary = finish_season(lg)
         self.say(f"\n{lg.teams[champ].full_name.upper()} WIN THE TITLE ({summary['finals']})"
                  + ("  -- CONGRATULATIONS!" if champ == self.me.id else ""))
-        for key, label in (("mvp", "MVP"), ("finals_mvp", "Finals MVP"), ("dpoy", "Defensive POY"),
-                           ("roy", "Rookie of the Year"), ("sixth_man", "Sixth Man"), ("mip", "Most Improved")):
-            self.say(f"  {label:<20}{player_label(lg, summary['awards'].get(key))}")
+        self.say(f"  {'Finals MVP':<20}{player_label(lg, summary['awards'].get('finals_mvp'))}")
+        self.say(f"  {'MVP':<20}{player_label(lg, summary['awards'].get('mvp'))}  ('awards {summary['season']}' for all of them)")
         self.say("\nOFFSEASON. Your decisions follow; answer 'auto' to hand any of them to your assistant.")
         self.manager.autopilot -= {"fa_done"}
         report = run_offseason(lg, self.rng, self.manager)
@@ -470,7 +510,7 @@ class Game:
         draft = ("" if p.draft_year is None else
                  f" #{p.draft_pick} pick in {p.draft_year}." if p.draft_pick else f" Undrafted in {p.draft_year}.")
         self.say(f"  Current ability {p.current_ability}, potential {potential_text(lg, p)}.{draft}")
-        groups = [("Scoring", ["finishing", "close_range", "mid_range", "three_point", "free_throw"]),
+        groups = [("Scoring", ["finishing", "close_range", "mid_range", "three_point", "free_throw", "drawing_fouls"]),
                   ("Playmaking", ["passing", "ball_handling", "vision"]),
                   ("Defence", ["perimeter_defense", "interior_defense", "stealing", "blocking"]),
                   ("Rebounding", ["offensive_rebounding", "defensive_rebounding"]),
@@ -606,14 +646,9 @@ class Game:
 
     # -- league ---------------------------------------------------------------------------------
     def cmd_standings(self, args):
-        lg = self.league
-        rec = team_records(lg)
-        for conf in sorted({t.conference for t in lg.teams.values()}):
-            self.say(f"\n{conf:<28}{'W':>4}{'L':>4}{'NET':>7}")
-            for tid in ranked(lg, [t.id for t in lg.teams.values() if t.conference == conf]):
-                w, l, diff = rec[tid]
-                mark = " <--" if tid == self.me.id else ""
-                self.say(f"  {lg.teams[tid].full_name:<26}{w:>4}{l:>4}{diff / max(1, w + l):>+7.1f}{mark}")
+        self.say("")
+        for line in standings_lines(self.league, self.me.id):
+            self.say(line)
 
     def cmd_leaders(self, args):
         lg = self.league
