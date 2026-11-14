@@ -306,13 +306,24 @@ steady 8.2 ft/s reads as 8 and 9 ft/s by turns: drawn as recorded, every runner 
 track four times through a (1, 2, 1)/4 filter along the frames before interpolating it,
 which removes the ripple without delaying him (the filter looks as far ahead as behind; a
 sharp cut is rounded by a few inches) and never smooths across a jump (a substitution).
+Slow movement gets fourteen more passes, in full below 3 ft/s and none above 7: a player
+shuffling to a spot or shadowing his man is steered at full throttle every tick by the
+engine, a tremble at walking pace, while a cut or a sprint keeps its edge.
 **Eased feet.** A planted foot used to stop in one frame and leave in one frame, a visible
-jerk in the legs several times a second per player. The spot a landing foot is held to now
-slides to rest over 0.06 s, and a released foot returns to the clip on a critically damped
-spring from the speed it had. Measured at 60 frames a second over 40 s of play: frames in
-which a foot's acceleration relative to the body exceeds 600 ft/s² fell from 4.9% to 1.7%
-(0.6% with planting off), and a steady runner's drawn speed from 7.6-8.9 ft/s to a constant
-8.2. `hoopsim3D.smooth(false)` and `.plantFeet(false)` under `?debug` compare.
+jerk in the legs several times a second per player. A foot is now planted only once it has
+slowed to 8 ft/s over the floor (not while it is still sweeping in), the spot it is held
+to slides to rest over 0.06 s, and a released foot returns to the clip on a critically
+damped spring from the speed it had. Measured at 60 frames a second over 40 s of play:
+frames in which a foot's acceleration relative to the body exceeds 600 ft/s² fell from
+4.9% to 0.5%, the same as with planting off and the same as the hands; a steady runner's
+drawn speed went from 7.6-8.9 ft/s by turns to a constant 8.2; accelerations that reverse
+a tenth of a second later from 12% in the recorded frames to 3% as drawn. Foot slip while
+down is unchanged standing, walking and jogging (0.9, 3.1, 5.4 ft/s against 1.7, 4.7, 6.6
+with planting off) and higher at a sprint (5.5 against 3.5 before, 6.0 with planting off):
+a sprinting foot is rarely slow enough to hold. `hoopsim3D.smooth(false)` and
+`.plantFeet(false)` under `?debug` compare. **Frame rate.** F in the 3D view (or `?fps` in
+the address, for a phone) shows the frames a second the browser is managing, to tell a
+slow device from choppy animation.
 `hoopsim3D.step(ms)` draws one frame
 `ms` on and stops following the browser's own frames, so a script can record the viewer at
 a fixed 30 frames a second however slow the machine is.

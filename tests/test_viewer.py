@@ -544,12 +544,19 @@ console.log(JSON.stringify({ share: left / n, set, same: lookOf({ name: "A B" },
         """No 10 Hz shake from positions rounded to a tenth of a foot; feet ease into and out of a plant."""
         import subprocess, shutil
         src = self.template
-        self.assertIn("const TRACK_PASSES = 4;", src)
+        self.assertIn("const TRACK_PASSES = 4, TRACK_SLOW = 14, SLOW_LO = 3, SLOW_HI = 7;", src)
+        # more for slow movement (the engine steers a shuffle at full throttle every tick), none for a sprint or cut
+        self.assertIn("const w = clamp01((SLOW_HI - Math.max(va, vd)) / (SLOW_HI - SLOW_LO));", src)
         self.assertIn("const sx = spline(sm, f, n * 2), sy = spline(sm, f, n * 2 + 1);", src)   # players are drawn from the smoothed track
         self.assertIn("> 30) continue;   // (3 ft in a frame: a jump)", src)
         self.assertIn("smooth: (on) => { trackSmooth = !!on; smoothOf = new WeakMap(); dirty = 3; },", src)
         # a landing foot's hold slides to rest; a released one springs back from the speed it had
-        self.assertIn("f.hvx = (cvx + f.ovx) * cap; f.hvz = (cvz + f.ovz) * cap;", src)
+        self.assertIn("f.hvx = cvx + f.ovx; f.hvz = cvz + f.ovz;", src)
+        # ... and it is not held while it is still sweeping over the floor
+        self.assertIn("&& Math.hypot(cvx + f.ovx, cvz + f.ovz) < FOOT_SLIP) {", src)
+        # the frame rate on screen: F, or ?fps
+        self.assertIn('else if (k === "f") showFps(!fpsOn);', src)
+        self.assertIn('if (new URLSearchParams(location.search).has("fps")) showFps(true);', src)
         self.assertIn("const w = 1 / FOOT_EASE, e = Math.exp(-w * dta), ax = (f.ovx + w * f.ox) * dta, az = (f.ovz + w * f.oz) * dta;", src)
         self.assertNotIn("const e = Math.exp(-dta / FOOT_EASE); f.ox *= e; f.oz *= e;", src)
         if not shutil.which("node"):
